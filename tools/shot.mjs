@@ -12,6 +12,7 @@
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import net from 'node:net';
 import { dirname } from 'node:path';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, x, i, arr) => (x.startsWith('--') ? [...a, [x.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : 'true']] : a), []));
@@ -19,7 +20,8 @@ const size = (args.size ?? '960x540').split('x').map(Number);
 const out = args.out ?? 'shots/shot.png';
 const waitMs = Number(args.wait ?? 60000);
 const settleMs = Number(args.settle ?? 1500);
-const port = Number(args.port ?? 5199);
+const freePort = () => new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+const port = Number(args.port ?? (await freePort()));
 const exe = process.env.CHROME_BIN ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 let server;

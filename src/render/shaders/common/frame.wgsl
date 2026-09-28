@@ -14,9 +14,9 @@ struct Frame {
   screen : vec4f,               // x,y = render width,height (px); z,w = reciprocals
   jitter : vec4f,               // xy = current jitter (NDC units), zw = previous
   sunDir : vec4f,               // xyz = unit vector toward the sun, w = angular radius (rad)
-  sunIrradiance : vec4f,        // rgb = illuminance on a surface facing the sun (lux, after atmosphere), w = 1 if above horizon
+  sunIrradiance : vec4f,        // rgb = illuminance at the TOP of the atmosphere on a surface facing the sun (lux, ~1.27e5); shaders multiply by transmittance(surface height, sun zenith) from transmittanceLUT. w = 1 if above horizon
   moonDir : vec4f,              // xyz = toward the moon, w = angular radius (rad)
-  moonIrradiance : vec4f,       // rgb = lux, w = illuminated fraction
+  moonIrradiance : vec4f,       // rgb = top-of-atmosphere illuminance from the moon in lux (phase-dependent, ~0.3 at full moon); apply transmittance like the sun. w = illuminated fraction
   terrain : vec4f,              // x = N samples per side, y = cellSize (m), z = minHeight, w = maxHeight
   terrainOrigin : vec4f,        // xy = world (x,z) of sample (0,0), zw = world extent (m)
   misc : vec4u,                 // x = frame index, y = quality flags, z = per-frame random seed, w = reserved
