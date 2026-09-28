@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FPV Sim</title>
+  <link rel="icon" href="data:," />
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #osd { position: fixed; inset: 0; pointer-events: none; }
+    #ui { position: fixed; inset: 0; pointer-events: none; font: 13px/1.4 system-ui, sans-serif; color: #fff; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <canvas id="osd"></canvas>
+  <div id="ui"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
