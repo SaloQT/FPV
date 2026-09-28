@@ -5,9 +5,12 @@ export const STARLIGHT_FLOOR_NITS = 3e-5;
 const MIN_PRE = 1e-6;
 const MAX_PRE = 1e2;
 
-/** Allen: apparent magnitude of the moon from phase angle alpha (degrees, 0 = full), then lux = 10^(-0.4 (m + 14.18)). ~0.263 lux at full. */
+/**
+ * Allen: apparent magnitude of the moon from phase angle (0 = full), then lux = 10^(-0.4 (m + 14.18)); ~0.263 lux at full, ~0.024 at
+ * first quarter. The coefficients 1.49 and 0.043 are the degree-form fit (0.026, 4e-9) expressed per radian, so alpha is in RADIANS here.
+ */
 export function moonIlluminanceLux(phaseAngleRad: number): number {
-  const a = Math.abs(phaseAngleRad) * (180 / Math.PI);
+  const a = Math.abs(phaseAngleRad);
   const m = -12.73 + 1.49 * a + 0.043 * a * a * a * a;
   return Math.pow(10, -0.4 * (m + 14.18));
 }
@@ -28,16 +31,23 @@ export function skyIlluminanceLux(sunElevationRad: number): number {
   return Math.pow(10, SKY_LOG_LUX[SKY_LOG_LUX.length - 1]);
 }
 
+// Luminous vertical optical depth of the clean Hillaire atmosphere (Rayleigh + Mie + ozone); it fits the LUT's luminance-weighted transmittance.
+const LUMINOUS_TAU = 0.1;
+
+/** Kasten-Young relative air mass for a body at the given elevation (radians, clamped to the horizon). */
+function airMass(elevationRad: number): number {
+  const deg = Math.max(elevationRad, 0) * (180 / Math.PI);
+  return 1 / (Math.sin(Math.max(elevationRad, 0)) + 0.50572 * Math.pow(6.07995 + deg, -1.6364));
+}
+
 /** Approximate luminance (cd/m2) of a 0.18-albedo horizontal surface: direct sun + skylight + moon, floored at starlight. */
 export function estimateSceneLuminance(astro: AstroState, cameraHeight: number): number {
   const heightFactor = Math.exp(-Math.max(cameraHeight, 0) / 8500);
-  const sinSun = Math.sin(astro.sunElevation);
-  const tSun = Math.exp((-0.15 * heightFactor) / Math.max(sinSun, 0.05));
-  const sun = (0.18 / Math.PI) * SUN_TOA_LUX * tSun * Math.max(sinSun, 0);
+  const tSun = Math.exp(-LUMINOUS_TAU * heightFactor * airMass(astro.sunElevation));
+  const sun = (0.18 / Math.PI) * SUN_TOA_LUX * tSun * Math.max(Math.sin(astro.sunElevation), 0);
   const sky = (0.18 / Math.PI) * skyIlluminanceLux(astro.sunElevation);
-  const sinMoon = Math.sin(astro.moonElevation);
-  const tMoon = Math.exp((-0.15 * heightFactor) / Math.max(sinMoon, 0.05));
-  const moon = (0.18 / Math.PI) * moonIlluminanceLux(astro.moonPhaseAngle) * tMoon * Math.max(sinMoon, 0);
+  const tMoon = Math.exp(-LUMINOUS_TAU * heightFactor * airMass(astro.moonElevation));
+  const moon = (0.18 / Math.PI) * moonIlluminanceLux(astro.moonPhaseAngle) * tMoon * Math.max(Math.sin(astro.moonElevation), 0);
   return Math.max(sun + sky + moon, STARLIGHT_FLOOR_NITS);
 }
 

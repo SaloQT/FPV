@@ -37,8 +37,12 @@ export const FORMATS = {
   giDiffuse: 'rgba16float',
   /** rgb = specular radiance along the reflection ray (rough-filtered), a = confidence 0..1. Pre-exposed. */
   giSpecular: 'rgba16float',
-  /** Sun visibility 0..1 (soft penumbra, denoised). */
-  sunShadow: 'r16float',
+  /**
+   * Key-light (sun or moon, see Frame.misc.w) visibility 0..1 (soft penumbra, denoised).
+   * r32float because r16float is not a core WebGPU storage-texture format; it is written by compute (STORAGE_BINDING) and
+   * read with textureLoad (r32float is unfilterable without the float32-filterable feature).
+   */
+  sunShadow: 'r32float',
 } as const;
 
 /** Colour targets, in attachment order, for every pipeline that draws into the G-buffer pass. */
@@ -245,5 +249,27 @@ export interface RenderModule {
   encodeRT?(enc: GPUCommandEncoder, rc: RenderContext, f: FrameInfo): void;
   encodeSky?(pass: GPURenderPassEncoder, rc: RenderContext, f: FrameInfo): void;
   encodeForward?(pass: GPURenderPassEncoder, rc: RenderContext, f: FrameInfo): void;
+  destroy?(): void;
+}
+
+// ───────────────────────────── Post-processing contract ─────────────────────────────
+
+/**
+ * Owns steps 8 of the frame graph: reads gbuf.hdr (+ depth/motion), writes the final image into `target` (the swapchain view).
+ * `preExposure` is the factor already baked into every HDR-domain value this frame; `prevPreExposure` the one used last frame
+ * (TAA/bloom history is stored pre-exposed, so rescale it by preExposure / prevPreExposure).
+ */
+export interface PostProcessor {
+  init(rc: RenderContext): void | Promise<void>;
+  /** Output (canvas) size or render size changed; `rc.gbuf` already holds the new textures. */
+  resize(rc: RenderContext, out: { width: number; height: number }): void;
+  update?(rc: RenderContext, f: FrameInfo): void;
+  encode(
+    enc: GPUCommandEncoder,
+    rc: RenderContext,
+    f: FrameInfo,
+    target: GPUTextureView,
+    o: { outWidth: number; outHeight: number; preExposure: number; prevPreExposure: number },
+  ): void;
   destroy?(): void;
 }

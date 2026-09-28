@@ -1,0 +1,143 @@
+import { localSolarHours, withLocalSolarHours } from '../game/clock';
+import { formatHours } from '../game/units';
+import type { GamepadConfig, StickRole } from '../input/gamepadMap';
+import {
+  bearing, button, choice, fixed, numberChoice, percent, slider, solarDate, toggle, withSolarDate,
+  type Control, type DateControl, type MenuPreset, type MenuSection, type MenuTab, type NumberControl, type SelectControl, type SelectOption,
+  type SliderControl, type TabId, type ToggleControl,
+} from './menuSchema';
+
+const degrees = fixed(0, '°');
+const times = (unit: string) => fixed(2, unit);
+
+const QUALITY: readonly SelectOption[] = [
+  { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' },
+];
+const TARGET_FPS = [60, 120, 144, 165, 240, 360].map((value) => ({ value, label: `${value} fps` }));
+const MODES: readonly SelectOption[] = [{ value: 'acro', label: 'Acro' }, { value: 'angle', label: 'Angle' }, { value: 'horizon', label: 'Horizon' }];
+const TRACKS: readonly SelectOption[] = [
+  { value: 'race', label: 'Race' }, { value: 'freestyle', label: 'Freestyle' }, { value: 'mountain', label: 'Mountain' }, { value: 'sprint', label: 'Sprint' },
+];
+const TIME_SCALES = [
+  { value: 0, label: 'Frozen' }, { value: 1, label: 'Real time' }, { value: 10, label: '10x' }, { value: 60, label: '60x (1 min per s)' },
+  { value: 600, label: '600x (10 min per s)' },
+];
+const PHYSICS_RATES = [1000, 2000, 4000, 8000].map((value) => ({ value, label: `${value / 1000} kHz` }));
+const PROFILES: readonly SelectOption[] = [{ value: 'auto', label: 'Detect' }, { value: 'standard', label: 'Game controller' }, { value: 'radio', label: 'Radio / USB transmitter' }];
+const THROTTLE_MODES: readonly SelectOption[] = [
+  { value: 'auto', label: 'Automatic' }, { value: 'direct', label: 'Direct (stick = throttle)' }, { value: 'latched', label: 'Latched (stick ramps)' },
+  { value: 'hover', label: 'Hover-centred' },
+];
+const ORDERS: readonly SelectOption[] = [{ value: 'AETR', label: 'AETR (RadioMaster, Jumper, FrSky)' }, { value: 'TAER', label: 'TAER (Spektrum, Futaba)' }];
+
+function gpSlider(key: 'deadzone' | 'expo' | 'hoverThrottle', label: string, min: number, max: number, step: number, format: (v: number) => string, hint?: string): SliderControl {
+  return {
+    kind: 'slider', id: `gamepad.${key}`, label, hint, min, max, step, format,
+    read: (s) => s.gamepad[key], write: (v, s) => ({ gamepad: { ...s.gamepad, [key]: v } }),
+  };
+}
+
+function gpChoice(key: 'profile' | 'throttleMode' | 'radioOrder', label: string, options: readonly SelectOption[], hint?: string): SelectControl {
+  return {
+    kind: 'select', id: `gamepad.${key}`, label, hint, options,
+    read: (s) => s.gamepad[key], write: (v, s) => ({ gamepad: { ...s.gamepad, [key]: v } as GamepadConfig }),
+  };
+}
+
+function gpInvert(role: StickRole, label: string): ToggleControl {
+  return {
+    kind: 'toggle', id: `gamepad.invert.${role}`, label,
+    read: (s) => s.gamepad.cal[role].invert,
+    write: (v, s) => ({ gamepad: { ...s.gamepad, cal: { ...s.gamepad.cal, [role]: { ...s.gamepad.cal[role], invert: v } } } }),
+  };
+}
+
+const TIME_OF_DAY: SliderControl = {
+  kind: 'slider', id: 'timeOfDay', label: 'Time of day', min: 0, max: 23.75, step: 0.25, format: formatHours,
+  hint: 'Local solar time at the flying site. The , and . keys nudge it in flight.',
+  read: (s) => localSolarHours(s.timeMs, s.observer.longitudeDeg),
+  write: (v, s) => ({ timeMs: withLocalSolarHours(s.timeMs, s.observer.longitudeDeg, v) }),
+};
+
+const DATE: DateControl = {
+  kind: 'date', id: 'date', label: 'Date', hint: 'The season sets the sun path and day length.',
+  read: (s) => solarDate(s.timeMs, s.observer.longitudeDeg),
+  write: (v, s) => ({ timeMs: withSolarDate(s.timeMs, s.observer.longitudeDeg, v) }),
+};
+
+const SEED: NumberControl = {
+  kind: 'number', id: 'seed', label: 'World seed', hint: 'The same seed always builds the same terrain and track.', min: 0, max: 4294967295, random: true,
+  read: (s) => s.seed, write: (v) => ({ seed: v }),
+};
+
+/** Seed and track style, shared by the start screen and the Simulation tab. */
+export const TRACK_SETUP: readonly Control[] = [SEED, choice('trackStyle', 'Track style', TRACKS)];
+
+function section(title: string, ...controls: Control[]): MenuSection {
+  return { title, controls };
+}
+
+function tab(id: TabId, label: string, ...sections: MenuSection[]): MenuTab {
+  return { id, label, sections };
+}
+
+/** The settings tabs. `presets` are the airframes the physics module offers. */
+export function buildTabs(presets: readonly MenuPreset[]): readonly MenuTab[] {
+  const fov = (): SliderControl => slider('fov', 'Field of view', 30, 150, 1, degrees, 'Vertical angle of the FPV camera; racers use 100 to 140.');
+  return [
+    tab('graphics', 'Graphics',
+      section('Picture',
+        choice('quality', 'Quality', QUALITY, 'Higher tiers add lighting and terrain detail and cost GPU time.'),
+        slider('renderScale', 'Render scale', 0.25, 1, 0.05, percent, 'Share of the native resolution that is rendered.'),
+        toggle('dynamicResolution', 'Dynamic resolution', 'Lowers the render scale to hold the target frame rate.'),
+        numberChoice('targetFps', 'Target frame rate', TARGET_FPS),
+        toggle('vsync', 'V-sync', 'Browsers pace frames to the display refresh; this is a request, not a guarantee.')),
+      section('FPV video', fov(),
+        slider('lensDistortion', 'Lens distortion', 0, 1, 0.05, percent),
+        slider('videoNoise', 'Video noise', 0, 1, 0.05, percent, 'Analog and digital link artefacts.'))),
+    tab('camera', 'Camera',
+      section('FPV camera',
+        slider('cameraTiltDeg', 'Camera tilt', -10, 60, 1, degrees, 'Up-tilt of the camera; more tilt suits faster flying.'),
+        fov(),
+        slider('camVibration', 'Motor vibration', 0, 1, 0.05, percent, 'How much of the motor buzz shakes the picture.')),
+      section('On-screen display',
+        toggle('showOsd', 'Show OSD', 'Battery, speed, altitude and timer overlay.'),
+        slider('osdScale', 'OSD size', 0.5, 2, 0.05, times('x')))),
+    tab('controls', 'Controls',
+      section('Mouse',
+        slider('mouseSensitivity', 'Sensitivity', 0.1, 5, 0.05, times('x')),
+        toggle('invertY', 'Invert vertical'),
+        slider('mouseCentering', 'Stick centring', 0, 1, 0.05, percent, 'Spring that returns the mouse stick to centre; 0 holds it like a real gimbal.'),
+        slider('mouseExpo', 'Expo', 0, 1, 0.05, percent, 'Softens the stick around the centre.'),
+        slider('mouseDeadzone', 'Deadzone', 0, 0.3, 0.01, percent)),
+      section('Gamepad and radio',
+        { kind: 'gamepad', id: 'gamepad', label: 'Gamepad' },
+        gpChoice('profile', 'Device type', PROFILES),
+        gpChoice('throttleMode', 'Throttle mode', THROTTLE_MODES),
+        gpChoice('radioOrder', 'Radio channel order', ORDERS, 'Only used for radios and USB transmitters.'),
+        gpSlider('deadzone', 'Deadzone', 0, 0.4, 0.01, percent),
+        gpSlider('expo', 'Expo', 0, 1, 0.05, percent),
+        gpSlider('hoverThrottle', 'Hover throttle', 0.1, 0.6, 0.01, percent, 'Throttle at stick centre in hover-centred mode.'),
+        gpInvert('roll', 'Invert roll'), gpInvert('pitch', 'Invert pitch'), gpInvert('yaw', 'Invert yaw'), gpInvert('throttle', 'Invert throttle'))),
+    tab('simulation', 'Simulation',
+      section('Flight',
+        choice('mode', 'Flight mode', MODES, 'Acro is rate mode; Angle self-levels; Horizon self-levels near centre.'),
+        choice('quadPreset', 'Quad', presets.map((p) => ({ value: p.id, label: p.label }))),
+        toggle('autoRespawn', 'Automatic respawn', 'Respawn on its own after a crash instead of waiting for R.'),
+        numberChoice('physicsHz', 'Physics rate', PHYSICS_RATES, 'Higher rates are more accurate and cost CPU time.')),
+      section('Environment', TIME_OF_DAY, DATE,
+        numberChoice('timeScale', 'Time scale', TIME_SCALES),
+        slider('windSpeed', 'Wind speed', 0, 30, 0.5, fixed(1, ' m/s')),
+        slider('windDirDeg', 'Wind from', 0, 360, 5, bearing)),
+      section('Track', ...TRACK_SETUP,
+        slider('gateCount', 'Gates', 4, 40, 1, fixed(0)),
+        slider('laps', 'Laps', 1, 10, 1, fixed(0)),
+        slider('difficulty', 'Difficulty', 0, 1, 0.05, percent, 'Tighter turns and more altitude change.'),
+        button('new-track', 'New track', 'new-track', 'primary'))),
+    tab('audio', 'Audio',
+      section('Volume',
+        slider('masterVolume', 'Master', 0, 1, 0.05, percent),
+        slider('motorVolume', 'Motors', 0, 1, 0.05, percent),
+        slider('windVolume', 'Wind', 0, 1, 0.05, percent))),
+  ];
+}

@@ -19,7 +19,7 @@ struct Frame {
   moonIrradiance : vec4f,       // rgb = top-of-atmosphere illuminance from the moon in lux (phase-dependent, ~0.3 at full moon); apply transmittance like the sun. w = illuminated fraction
   terrain : vec4f,              // x = N samples per side, y = cellSize (m), z = minHeight, w = maxHeight
   terrainOrigin : vec4f,        // xy = world (x,z) of sample (0,0), zw = world extent (m)
-  misc : vec4u,                 // x = frame index, y = quality flags, z = per-frame random seed, w = reserved
+  misc : vec4u,                 // x = frame index, y = quality flags, z = per-frame random seed, w = KEY LIGHT flag: 0 => sunShadow texture holds the SUN's visibility, 1 => the MOON's. y bits: 1 = rtSpecular, 2 = bloom, 4 = taa
   params : vec4f,               // x = dt (s), y = PRE-EXPOSURE (multiply all HDR writes), z = near, w = far (unused: infinite)
   sky : vec4f,                  // x = planet radius (km), y = atmosphere top radius (km), z = camera height above datum (km), w = night-sky brightness scale
 };

@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+import { ACTION_LABELS, AXIS_LABELS, DEFAULT_BINDINGS, type Bindings } from '../input/bindings';
+import { buildHelp, keyCaps, startSummary } from './helpModel';
+
+const labels = (sections: ReturnType<typeof buildHelp>): string[] => sections.flatMap((s) => s.rows.map((r) => r.label));
+
+describe('help model', () => {
+  it('lists every action and every keyboard axis of the bindings exactly once', () => {
+    const all = labels(buildHelp().filter((s) => s.title !== 'Gamepad or radio'));
+    for (const label of Object.values(ACTION_LABELS)) expect(all.filter((l) => l === label), label).toHaveLength(1);
+    for (const label of Object.values(AXIS_LABELS)) expect(all.filter((l) => l === label), label).toHaveLength(1);
+  });
+
+  it('shows the bound keys of each row', () => {
+    const rows = buildHelp().flatMap((s) => s.rows);
+    expect(rows.find((r) => r.label === ACTION_LABELS['arm-toggle'])?.keys).toEqual(['Space']);
+    expect(rows.find((r) => r.label === ACTION_LABELS['toggle-help'])?.keys).toEqual(['F1']);
+    expect(rows.find((r) => r.label === AXIS_LABELS.rollLeft)?.keys).toEqual(['Q', 'Left']);
+  });
+
+  it('follows a rebinding', () => {
+    const custom: Bindings = { ...DEFAULT_BINDINGS, actions: { ...DEFAULT_BINDINGS.actions, respawn: ['KeyG'] } };
+    const rows = buildHelp(custom).flatMap((s) => s.rows);
+    expect(rows.find((r) => r.label === ACTION_LABELS.respawn)?.keys).toEqual(['G']);
+  });
+
+  it('marks an unbound action with no keys instead of dropping it', () => {
+    const custom: Bindings = { ...DEFAULT_BINDINGS, actions: { ...DEFAULT_BINDINGS.actions, pause: [] } };
+    const row = buildHelp(custom).flatMap((s) => s.rows).find((r) => r.label === ACTION_LABELS.pause);
+    expect(row?.keys).toEqual([]);
+  });
+
+  it('merges the two Shift keys into one cap', () => {
+    expect(keyCaps(['ShiftLeft', 'ShiftRight'])).toEqual(['Shift']);
+    expect(keyCaps(['KeyW'])).toEqual(['W']);
+    expect(keyCaps([])).toEqual([]);
+  });
+
+  it('describes the gamepad buttons of the default layout', () => {
+    const pad = buildHelp().find((s) => s.title === 'Gamepad or radio');
+    expect(pad?.rows.find((r) => r.label === 'Arm / disarm')?.keys).toEqual(['A']);
+    expect(pad?.rows.find((r) => r.label === 'Menu and settings')?.keys).toEqual(['Start']);
+  });
+
+  it('gives every section a title and rows with labels', () => {
+    for (const s of buildHelp()) {
+      expect(s.title.length).toBeGreaterThan(0);
+      expect(s.rows.length).toBeGreaterThan(0);
+      for (const r of s.rows) expect(r.label.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('start summary', () => {
+  it('shows the essential keys from the bindings', () => {
+    const rows = startSummary();
+    expect(rows.find((r) => r.label === 'Arm and disarm')?.keys).toEqual(['Space']);
+    expect(rows.find((r) => r.label === 'Throttle up and down')?.keys).toEqual(['W', 'S']);
+    expect(rows.find((r) => r.label === 'Yaw')?.keys).toEqual(['A', 'D']);
+    expect(rows.find((r) => r.label === 'Pause and settings')?.keys).toEqual(['Esc']);
+  });
+
+  it('follows a rebinding', () => {
+    const custom: Bindings = { ...DEFAULT_BINDINGS, actions: { ...DEFAULT_BINDINGS.actions, 'camera-cycle': ['KeyB'] } };
+    expect(startSummary(custom).find((r) => r.label === 'Change camera')?.keys).toEqual(['B']);
+  });
+});
