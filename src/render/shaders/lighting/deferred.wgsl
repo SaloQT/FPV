@@ -3,6 +3,7 @@
 #include "common/world_bindings.wgsl"
 #include "common/atmosphere_sample.wgsl"
 #include "common/pbr.wgsl"
+#include "rt/rt_map.wgsl"
 
 @group(2) @binding(0) var gAlbedo : texture_2d<f32>;
 @group(2) @binding(1) var gNormal : texture_2d<f32>;
@@ -18,19 +19,62 @@ const AMBIENT_SAMPLES : u32 = 16u;
 const GROUND_ALBEDO : f32 = 0.15;
 const HORIZON_EPS : f32 = -0.0145;
 
-// Bilinear read of an r32float texture (textureLoad only) at a screen uv; the RT-resolution textures cover the whole screen.
-fn loadBilinear(tex : texture_2d<f32>, uv : vec2f) -> f32 {
-  let dims = vec2i(textureDimensions(tex));
-  let p = uv * vec2f(dims) - 0.5;
-  let base = floor(p);
-  let f = p - base;
-  let i = vec2i(base);
-  let hi = dims - vec2i(1);
-  let a = textureLoad(tex, clamp(i, vec2i(0), hi), 0).x;
-  let b = textureLoad(tex, clamp(i + vec2i(1, 0), vec2i(0), hi), 0).x;
-  let c = textureLoad(tex, clamp(i + vec2i(0, 1), vec2i(0), hi), 0).x;
-  let d = textureLoad(tex, clamp(i + vec2i(1, 1), vec2i(0), hi), 0).x;
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+// Depth- and normal-aware upsample of the RT-resolution signals (sun shadow, GI, specular) to a full-resolution pixel. Every RT texel stands
+// for the full-res pixel rtSourcePixel() picks this frame (the RT passes use the same mapping), so its depth and normal are re-read from the
+// G-buffer there instead of binding the RT aux textures (this pass is at the 16 sampled-texture limit).
+struct RtSample { shadow : f32, diffuse : vec4f, specular : vec4f };
+
+const RT_DEPTH_SIGMA : f32 = 0.02;
+const RT_NORMAL_POWER : f32 = 8.0;
+const RT_MIN_WEIGHT : f32 = 1e-4;
+
+fn rtLoad(q : vec2i) -> RtSample {
+  return RtSample(textureLoad(sunShadowTex, q, 0).x, textureLoad(giDiffuseTex, q, 0), textureLoad(giSpecularTex, q, 0));
+}
+
+// Specular is accumulated premultiplied by its confidence so an unconfident (zero) neighbour does not darken a confident one.
+fn rtAdd(acc : ptr<function, RtSample>, s : RtSample, w : f32) {
+  (*acc).shadow += s.shadow * w;
+  (*acc).diffuse += s.diffuse * w;
+  (*acc).specular += vec4f(s.specular.rgb * s.specular.a, s.specular.a) * w;
+}
+
+fn rtResolve(acc : RtSample, wSum : f32) -> RtSample {
+  let inv = 1.0 / wSum;
+  return RtSample(acc.shadow * inv, acc.diffuse * inv, vec4f(acc.specular.rgb / max(acc.specular.a, RT_MIN_WEIGHT), acc.specular.a * inv));
+}
+
+fn sampleRT(px : vec2i, uv : vec2f, depth : f32, world : vec3f, n : vec3f) -> RtSample {
+  let rtDims = vec2i(textureDimensions(giDiffuseTex));
+  let fullDims = vec2i(textureDimensions(gDepth));
+  if (rtDims.x == fullDims.x && rtDims.y == fullDims.y) { return rtLoad(px); }
+  let div = select(4, 2, (fullDims.x + 1) / 2 == rtDims.x);
+  let z = frame.params.z / depth;
+  let p = uv * vec2f(rtDims) - 0.5;
+  let base = vec2i(floor(p));
+  let f = p - floor(p);
+  let hi = rtDims - vec2i(1);
+  var bilateral = RtSample(0.0, vec4f(0.0), vec4f(0.0));
+  var bilinear = bilateral;
+  var wSum = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let o = vec2i(k & 1, k >> 1);
+    let q = clamp(base + o, vec2i(0), hi);
+    let bil = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+    let s = rtLoad(q);
+    rtAdd(&bilinear, s, bil);
+    let src = rtSourcePixel(q, div, fullDims, frame.misc.x);
+    let dq = textureLoad(gDepth, src, 0);
+    if (dq <= 0.0) { continue; }
+    let nq = octDecode(textureLoad(gNormal, src, 0).xy);
+    // Distance to this pixel's tangent plane, not the depth difference: on a grazing slope a tap a pixel away is metres deeper yet still coplanar.
+    let planeDist = abs(dot(n, worldFromDepth((vec2f(src) + 0.5) * frame.screen.zw, dq) - world));
+    let w = bil * exp(-planeDist / (RT_DEPTH_SIGMA * z)) * pow(max(dot(n, nq), 0.0), RT_NORMAL_POWER);
+    rtAdd(&bilateral, s, w);
+    wSum += w;
+  }
+  if (wSum > RT_MIN_WEIGHT) { return rtResolve(bilateral, wSum); }
+  return rtResolve(bilinear, 1.0);
 }
 
 // Radiance (nits, not pre-exposed) of the ground seen from above: a Lambertian bounce of the key lights and the zenith sky.
@@ -96,7 +140,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let moonUp = select(0.0, 1.0, frame.moonDir.y > HORIZON_EPS);
   let moonE = frame.moonIrradiance.rgb * moonUp * sampleTransmittance(r, frame.moonDir.y);
 
-  let visibility = loadBilinear(sunShadowTex, uv);
+  let rt = sampleRT(px, uv, depth, world, n);
+  let visibility = rt.shadow;
   let keyIsMoon = frame.misc.w == 1u;
   let sunVis = select(visibility, 1.0, keyIsMoon);
   let moonVis = select(1.0, visibility, keyIsMoon);
@@ -105,8 +150,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   let zenithSky = sampleSkyView(vec3f(0.0, 1.0, 0.0));
   let ground = groundRadiance(sunE, moonE, zenithSky);
-  let gd = textureSampleLevel(giDiffuseTex, linearClamp, uv, 0.0);
-  let gs = textureSampleLevel(giSpecularTex, linearClamp, uv, 0.0);
+  let gd = rt.diffuse;
+  let gs = rt.specular;
   var ao = alb.a;
   var irradianceOverPi : vec3f;
   if (gd.a > 0.0) {
