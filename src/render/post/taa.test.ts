@@ -91,6 +91,13 @@ describe('taa pure maths', () => {
     expect(taauSrc).toContain('KERNEL_SUM : f32 = 3.14159265 / KERNEL_K');
     expect(expectedKernelSum()).toBeCloseTo(Math.PI / TAA_TUNING.kernelK, 12);
   });
+
+  it('drops NaN from every input tap, the reprojected history and the TAA-off resample (a NaN in history would never leave)', () => {
+    expect(taauSrc).toContain('dropNan(textureLoad(inputTex, t, 0).rgb)');
+    expect(taauSrc).toContain('dropNan(historyCatmullRom(prevUv, oSize) * taa.histScale)');
+    expect(taauSrc).toContain('dropNan(textureSampleLevel(inputTex, linSamp');
+    expect(taauSrc).toContain('0x7fffffffu');
+  });
 });
 
 /** CPU mirror of the shader's 3x3 gather along one axis / two axes (weights only depend on the sample-to-pixel distance). */

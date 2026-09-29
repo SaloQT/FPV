@@ -8,6 +8,8 @@ import { buildObstacle } from './obstacleMeshes';
 import { roundedRect } from './outlines';
 
 export const PAD_SIZE = 1.2;
+/** How far the pad's flat top stands above the highest terrain sample under its footprint. */
+export const PAD_THICKNESS = 0.024;
 const PAD_CORNER = 0.07;
 
 export interface TrackMesh {
@@ -31,7 +33,7 @@ function buildPad(b: MeshBuilder, track: TrackData, sampler: TerrainSampler): vo
   }
   b.kind = KIND.PAD;
   b.push(affineMul(affineTranslate(px, 0, pz), affineRotY(yaw)));
-  plate(b, roundedRect(0, 0, h, h, PAD_CORNER), [], lo - 0.03, hi + 0.024, { wallKind: KIND.PAD_EDGE });
+  plate(b, roundedRect(0, 0, h, h, PAD_CORNER), [], lo - 0.03, hi + PAD_THICKNESS, { wallKind: KIND.PAD_EDGE });
   b.pop();
 }
 

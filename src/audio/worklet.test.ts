@@ -176,6 +176,9 @@ describe('noise layers', () => {
       hh.set1('rough', rnd() * 0.05);
       hh.set1('spread', rnd());
     });
-    for (const x of [left, right]) for (let i = 0; i < x.length; i++) expect(Math.abs(x[i])).toBeLessThan(6);
+    // One expect on the peak: an expect per sample (500k of them) is what made this test slow.
+    let peak = 0;
+    for (const x of [left, right]) for (let i = 0; i < x.length; i++) peak = Math.max(peak, Math.abs(x[i]));
+    expect(peak).toBeLessThan(6);
   });
 });

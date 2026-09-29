@@ -15,6 +15,7 @@ const MIN_BLUR_PX : f32 = ${MIN_BLUR_PX};
 const DEPTH_SOFT_REL : f32 = ${DEPTH_SOFT_REL};
 const DEPTH_SOFT_MIN : f32 = ${DEPTH_SOFT_MIN};
 const SKY_Z : f32 = 1e6;
+const HDR_MAX : f32 = 65000.0;
 
 @group(1) @binding(0) var hdrTex : texture_2d<f32>;
 @group(1) @binding(1) var motionTex : texture_2d<f32>;
@@ -84,6 +85,11 @@ fn neighbor_max(@builtin(global_invocation_id) gid : vec3u) {
   tileNeighbor[gid.y * tiles.x + gid.x] = best;
 }
 
+// One bad texel (NaN, or Inf times a zero weight) must not poison the weighted sum; NaN is tested on the bits since min/max/clamp with a NaN are implementation-defined.
+fn safeHdr(v : vec3f) -> vec3f {
+  return clamp(select(v, vec3f(0.0), (bitcast<vec3u>(v) & vec3u(0x7fffffffu)) > vec3u(0x7f800000u)), vec3f(0.0), vec3f(HDR_MAX));
+}
+
 fn cone(dist : f32, len : f32) -> f32 { return saturate(1.0 - dist / max(len, 1e-3)); }
 fn cylinder(dist : f32, len : f32) -> f32 { return select(0.0, 1.0 - smoothstep(0.95 * len, 1.05 * len, dist), len > 1e-3); }
 
@@ -102,7 +108,7 @@ fn blur(@builtin(global_invocation_id) gid : vec3u) {
   let hi = vec2i(dims) - vec2i(1);
   // The pixel's own streak covers ~lenC pixels, so it is worth N/lenC gather samples (at most N).
   let wC = f32(SAMPLES) / max(lenC, 1.0);
-  var sum = center.rgb * wC;
+  var sum = safeHdr(center.rgb) * wC;
   var wsum = wC;
   for (var i = 0; i < SAMPLES; i++) {
     let t = (f32(i) + jitter) / f32(SAMPLES) - 0.5;
@@ -116,7 +122,7 @@ fn blur(@builtin(global_invocation_id) gid : vec3u) {
     let fore = saturate(1.0 + (zC - zY) / soft);
     let back = saturate(1.0 + (zY - zC) / soft);
     let a = fore * cone(dist, lenY) + back * cone(dist, lenC) + 2.0 * cylinder(dist, lenY) * cylinder(dist, lenC);
-    sum += textureLoad(hdrTex, qu, 0).rgb * a;
+    sum += safeHdr(textureLoad(hdrTex, qu, 0).rgb) * a;
     wsum += a;
   }
   textureStore(outTex, gid.xy, vec4f(sum / wsum, center.a));

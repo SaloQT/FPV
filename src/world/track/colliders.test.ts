@@ -114,6 +114,8 @@ describe('gate openings stay clear', () => {
 
 describe('centreline versus colliders', () => {
   it('the path never enters any collider box (checked every 5 cm)', () => {
+    // One expect at the end: an expect per sample made this test slow under load.
+    const hits: string[] = [];
     for (const track of tracks) {
       const boxes = trackColliders(track, sampler);
       const reach = boxes.map((b) => Math.hypot(b.half[0], b.half[1], b.half[2]) + 0.1);
@@ -130,10 +132,11 @@ describe('centreline versus colliders', () => {
         if (near.length === 0) continue;
         for (let s = 0; s <= 20; s++) {
           const p: Vec3 = [a[0] + ((b[0] - a[0]) * s) / 20, a[1] + ((b[1] - a[1]) * s) / 20, a[2] + ((b[2] - a[2]) * s) / 20];
-          for (const k of near) expect(inside(boxes[k], p), `${track.style} seed ${track.seed} sample ${i} box ${k}`).toBe(false);
+          for (const k of near) if (inside(boxes[k], p)) hits.push(`${track.style} seed ${track.seed} sample ${i} box ${k}`);
         }
       }
     }
+    expect(hits).toEqual([]);
   });
 
   it('the path keeps a body-width margin from every box (0.15 m) apart from the gate it flies through', () => {

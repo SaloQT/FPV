@@ -35,6 +35,12 @@ struct TaaParams {
 @group(1) @binding(6) var depthTex : texture_depth_2d;
 @group(2) @binding(0) var inputTex : texture_2d<f32>;
 
+// NaN -> 0, tested on the bits (compilers may assume no NaN, and min/max/clamp with a NaN operand are implementation-defined). A NaN that
+// reached the history would stay there for good and spread through the Catmull-Rom taps.
+fn dropNan(v : vec3f) -> vec3f {
+  return select(v, vec3f(0.0), (bitcast<vec3u>(v) & vec3u(0x7fffffffu)) > vec3u(0x7f800000u));
+}
+
 fn toYCoCg(c : vec3f) -> vec3f {
   return vec3f(0.25 * c.x + 0.5 * c.y + 0.25 * c.z, 0.5 * c.x - 0.5 * c.z, -0.25 * c.x + 0.5 * c.y - 0.25 * c.z);
 }
@@ -119,7 +125,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     for (var i = -1; i <= 1; i++) {
       let p = base + vec2i(i, j);
       let t = clamp(p, vec2i(0), rMax);
-      let s = clamp(textureLoad(inputTex, t, 0).rgb, vec3f(0.0), vec3f(HDR_MAX));
+      let s = clamp(dropNan(textureLoad(inputTex, t, 0).rgb), vec3f(0.0), vec3f(HDR_MAX));
       let d = (vec2f(p) + 0.5 - jit - c) / rk;
       let w = exp(-KERNEL_K * dot(d, d));
       let kw = 1.0 / (1.0 + luminance(s));
@@ -151,7 +157,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let prevUv = uv + mv;
     valid = valid && all(prevUv >= vec2f(0.0)) && all(prevUv <= vec2f(1.0));
     if (valid) {
-      let hist = clamp(historyCatmullRom(prevUv, oSize) * taa.histScale, vec3f(0.0), vec3f(HDR_MAX));
+      let hist = clamp(dropNan(historyCatmullRom(prevUv, oSize) * taa.histScale), vec3f(0.0), vec3f(HDR_MAX));
       let mean = m1 / 9.0;
       let sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3f(0.0)));
       let lo = max(bMin, mean - VARIANCE_GAMMA * sigma);
@@ -188,6 +194,6 @@ fn upsample(@builtin(global_invocation_id) gid : vec3u) {
   let rSize = vec2f(textureDimensions(inputTex));
   let uv = (vec2f(gid.xy) + 0.5) / vec2f(outSize);
   let jit = vec2f(frame.jitter.x, -frame.jitter.y) * 0.5 * rSize;
-  let s = clamp(textureSampleLevel(inputTex, linSamp, (uv * rSize + jit) / rSize, 0.0).rgb, vec3f(0.0), vec3f(HDR_MAX));
+  let s = clamp(dropNan(textureSampleLevel(inputTex, linSamp, (uv * rSize + jit) / rSize, 0.0).rgb), vec3f(0.0), vec3f(HDR_MAX));
   textureStore(outResolved, gid.xy, vec4f(s, 1.0));
 }

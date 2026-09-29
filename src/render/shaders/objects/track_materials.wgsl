@@ -179,9 +179,11 @@ fn shadeTrack(m : MatIn) -> Surf {
     }
     case ${K_LEAVES}u: {
       let n = fbm3(m.world * 5.0);
-      o.albedo = mix(vec3f(0.04, 0.14, 0.035), vec3f(0.09, 0.22, 0.05), m.a2) * (0.6 + 0.8 * n);
+      // Conifer foliage reflects a few percent of the light: the vegetation spruce tones (0.035, 0.085, 0.05) are the reference,
+      // so these stand-in trees sit in the forest instead of glowing pastel green beside it.
+      o.albedo = mix(vec3f(0.022, 0.05, 0.022), vec3f(0.038, 0.075, 0.03), m.a2) * (0.6 + 0.8 * n);
       o.roughness = 0.8;
-      o.translucency = 0.55;
+      o.translucency = 0.3;
       o.material = MAT_FOLIAGE;
     }
     case ${K_PAD}u: { o = padSurf(m, o); }

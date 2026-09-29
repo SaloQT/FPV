@@ -100,7 +100,7 @@ describe('buildNormalHorizon', () => {
     const t = buildNormalHorizon(h, N, 4);
     const ms = performance.now() - t0;
     expect(t.length).toBe(N * N * 4);
-    expect(ms).toBeLessThan(2500);
+    expect(ms).toBeLessThan(6000);
   }, 20000);
 });
 

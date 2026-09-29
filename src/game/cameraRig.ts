@@ -32,6 +32,8 @@ const TELEPORT_M = 15;
 const MAX_STEP_S = 0.1;
 const MIN_FOV_DEG = 20;
 const MAX_FOV_DEG = 160;
+/** Vertical field of view cap of the chase and free cameras (the FPV camera keeps the pilot's setting). */
+export const THIRD_PERSON_FOV_MAX_DEG = 70;
 const ORBIT_RAD_PER_PX = 0.005;
 const ORBIT_ZOOM_PER_PX = 0.0015;
 const VIB_REF_OMEGA = 3000;
@@ -113,7 +115,9 @@ export class CameraRig {
     else if (this.mode === 'chase') this.updateChase(step, quad);
     else this.updateFree(quad, modeChanged);
     const cam = this.camera;
-    cam.fovY = Math.min(Math.max(settings.fov, MIN_FOV_DEG), MAX_FOV_DEG) * DEG;
+    // The wide FPV lens makes a 25 cm quad a speck at chase distance and stretches the ground; the third-person cameras stay near a normal lens.
+    const fovDeg = Math.min(Math.max(settings.fov, MIN_FOV_DEG), MAX_FOV_DEG);
+    cam.fovY = (this.mode === 'fpv' ? fovDeg : Math.min(fovDeg, THIRD_PERSON_FOV_MAX_DEG)) * DEG;
     if (aspect > 0) cam.aspect = aspect;
     this.snapNext = false;
     return cam;

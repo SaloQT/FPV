@@ -89,4 +89,10 @@ describe('motion blur shader source', () => {
     expect(code).not.toContain('${');
     expect(Array.from(code.matchAll(/@compute[^\n]*\n\s*fn\s+(\w+)/g), (m) => m[1])).toEqual(['tile_max', 'neighbor_max', 'blur']);
   });
+
+  it('sanitises every HDR tap of the weighted sum (NaN, or Inf times a zero weight, would poison the streak)', () => {
+    const code = resolveShader('post/motionblur.wgsl', motionBlurDefines());
+    expect(code).toContain('safeHdr(center.rgb)');
+    expect(code).toContain('safeHdr(textureLoad(hdrTex, qu, 0).rgb)');
+  });
 });
