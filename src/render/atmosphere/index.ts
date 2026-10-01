@@ -15,6 +15,13 @@ import { AtmosUniforms } from './uniforms';
 
 export type { AtmosphereSettings } from './settings';
 
+const running = new WeakMap<GPUDevice, AtmosphereModule>();
+
+/** The atmosphere module running on `device` (null if none): lets passes that shade the ground read its cloud shadow map without a module-list contract. */
+export function atmosphereOf(device: GPUDevice): AtmosphereModule | null {
+  return running.get(device) ?? null;
+}
+
 /** Where the cloud shadow map sits in the world: texel (i, j) of N covers x = centerX + ((i + 0.5) / N - 0.5) * extentM, z likewise. */
 export interface CloudShadowMapping {
   centerX: number;
@@ -59,6 +66,7 @@ class Atmosphere implements AtmosphereModule {
   private readonly camera: Vec3 = [0, 0, 0];
   private readonly shadow: CloudShadowMapping = { centerX: 0, centerZ: 0, extentM: CLOUD_SHADOW_EXTENT_M };
   private moonActive = false;
+  private device: GPUDevice | null = null;
 
   constructor(options: Partial<AtmosphereSettings>) {
     this.settings = sanitizeAtmosphereSettings(options, DEFAULT_ATMOSPHERE_SETTINGS);
@@ -74,6 +82,8 @@ class Atmosphere implements AtmosphereModule {
     const catalog = await this.loadCatalog();
     this.sky.setMilkyWay(bakeMilkyWay(catalog));
     this.sky.setStars(catalog ? packStars(catalog) : null);
+    this.device = rc.device;
+    running.set(rc.device, this);
   }
 
   setSettings(s: Partial<AtmosphereSettings>): void {
@@ -124,6 +134,7 @@ class Atmosphere implements AtmosphereModule {
   }
 
   destroy(): void {
+    if (this.device && running.get(this.device) === this) running.delete(this.device);
     this.sky.destroy();
     this.clouds.destroy();
     this.noise.destroy();

@@ -1,10 +1,11 @@
 import type { FrameInfo, GBuffer, RenderContext, RenderModule, SceneData } from '../contracts';
 import type { TerrainSampler } from '../../contracts';
+import { atmosphereOf } from '../atmosphere';
 import { buildGroups, type RtGroups } from './groups';
 import { createLayouts, type RtLayouts } from './layouts';
 import { RtParamBlock, RT_PARAM_BYTES, type RtParamInput } from './params';
 import { ATROUS_ITERATIONS, createPipelines, createTestPipeline, type RtPipelines, type Signal } from './pipelines';
-import { ProbeGrid } from './probes';
+import { PROBE_RAY_BUDGET, ProbeGrid } from './probes';
 import { runSelfTest, type RtSelfTest } from './selfTest';
 import { SceneBuffers } from './sceneBuffers';
 import { RtTextures } from './textures';
@@ -21,6 +22,8 @@ export interface RtOptions {
   rayRange: number;
   /** Fraction of the old probe value kept by an update (0.9 .. 0.95). */
   probeHysteresis: number;
+  /** Probe rays traced per frame at most; a bigger grid refreshes a rotating 1/K of its probes each frame (see probeStride). */
+  probeRayBudget: number;
 }
 
 export interface RtStats {
@@ -81,6 +84,9 @@ class RtModule implements RTModule {
   private paramBuffer!: GPUBuffer;
   private prevPre!: GPUBuffer;
   private probeSampler!: GPUSampler;
+  private clearSky!: GPUTexture;
+  private cloudTexture: GPUTexture | null = null;
+  private cloudView: GPUTextureView | null = null;
   private tex: RtTextures | null = null;
   private groups: RtGroups | null = null;
   private groupsGeneration = -1;
@@ -88,12 +94,12 @@ class RtModule implements RTModule {
   private terrain: TerrainSampler | null = null;
   private testPipeline: GPUComputePipeline | null = null;
   private readonly block = new RtParamBlock();
-  private readonly options: RtOptions = { softness: 1, rayRange: 300, probeHysteresis: 0.92 };
+  private readonly options: RtOptions = { softness: 1, rayRange: 300, probeHysteresis: 0.92, probeRayBudget: PROBE_RAY_BUDGET };
   private readonly params: RtParamInput = {
     rtWidth: 0, rtHeight: 0, fullWidth: 0, fullHeight: 0, divisor: 1, maxSteps: 0, giRays: 0, spec: false, terrain: false,
     staticRoot: 0, dynamicRoot: 0, visitCap: 0, frameIndex: 0, debugView: 0, seed: 0,
     probeStride: 1, probePhase: 0, probeLo: [0, 0, 0], probeRays: 0, probePrevLo: [0, 0, 0], probeAllFresh: true, probeDim: [1, 1, 1],
-    softness: 1, probeSpacing: 1, probeHysteresis: 0.92, rayRange: 300,
+    softness: 1, probeSpacing: 1, probeHysteresis: 0.92, rayRange: 300, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1,
   };
   private parity = 0;
   private lastFrame: number | null = null;
@@ -109,10 +115,12 @@ class RtModule implements RTModule {
     const d = rc.device;
     this.layouts = createLayouts(d);
     [this.pipes, this.buffers] = await Promise.all([createPipelines(rc, this.layouts), new SceneBuffers(d)]);
-    this.probes = new ProbeGrid(d, rc.quality.probes);
+    this.probes = new ProbeGrid(d, rc.quality.probes, this.options.probeRayBudget);
     this.paramBuffer = d.createBuffer({ label: 'rt params', size: RT_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.prevPre = d.createBuffer({ label: 'rt prev pre-exposure', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.probeSampler = d.createSampler({ label: 'rt probe', magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
+    this.clearSky = d.createTexture({ label: 'rt no cloud shadow', format: 'rgba16float', size: [1, 1], usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    d.queue.writeTexture({ texture: this.clearSky }, new Uint16Array([0x3c00, 0x3c00, 0x3c00, 0x3c00]), { bytesPerRow: 8 }, [1, 1]);
     this.allocate(rc);
   }
 
@@ -167,13 +175,19 @@ class RtModule implements RTModule {
   private prepare(rc: RenderContext): RtGroups {
     if (!this.tex || this.bound !== rc.gbuf) this.allocate(rc);
     const tex = this.tex!;
-    if (!this.probes.matches(rc.quality.probes)) {
+    if (!this.probes.matches(rc.quality.probes, this.options.probeRayBudget)) {
       this.probes.destroy();
-      this.probes = new ProbeGrid(rc.device, rc.quality.probes);
+      this.probes = new ProbeGrid(rc.device, rc.quality.probes, this.options.probeRayBudget);
       this.groups = null;
     }
     if (rc.quality.rtSpecular && !tex.spec) {
       tex.ensureSpec();
+      this.groups = null;
+    }
+    const cloud = atmosphereOf(rc.device)?.getCloudShadowTexture() ?? this.clearSky;
+    if (cloud !== this.cloudTexture) {
+      this.cloudTexture = cloud;
+      this.cloudView = cloud.createView();
       this.groups = null;
     }
     this.buffers.sync(rc.rt);
@@ -181,7 +195,7 @@ class RtModule implements RTModule {
     if (!this.groups) {
       this.groupsGeneration = this.buffers.generation;
       this.groups = buildGroups({
-        rc, layouts: this.layouts, tex, probes: this.probes, buffers: this.buffers, params: this.paramBuffer, prevPre: this.prevPre, probeSampler: this.probeSampler,
+        rc, layouts: this.layouts, tex, probes: this.probes, buffers: this.buffers, params: this.paramBuffer, prevPre: this.prevPre, probeSampler: this.probeSampler, cloud: this.cloudView!,
       });
     }
     return this.groups;
@@ -253,6 +267,8 @@ class RtModule implements RTModule {
     p.probeStride = pr.stride; p.probePhase = f.frameIndex % pr.stride; p.probeRays = pr.raysPerProbe; p.probeAllFresh = pr.allFresh;
     p.probeLo = pr.lo; p.probePrevLo = pr.prevLo; p.probeDim = pr.dim;
     p.softness = o.softness; p.probeSpacing = pr.spacing; p.probeHysteresis = o.probeHysteresis; p.rayRange = o.rayRange;
+    const cm = this.cloudTexture === this.clearSky ? null : atmosphereOf(rc.device)?.getCloudShadowMapping();
+    p.cloudCenterX = cm?.centerX ?? 0; p.cloudCenterZ = cm?.centerZ ?? 0; p.cloudExtentM = cm?.extentM ?? 1;
     this.block.write(p);
     rc.device.queue.writeBuffer(this.paramBuffer, 0, this.block.buffer);
   }
@@ -263,6 +279,7 @@ class RtModule implements RTModule {
     this.buffers?.destroy();
     this.paramBuffer?.destroy();
     this.prevPre?.destroy();
+    this.clearSky?.destroy();
     this.tex = null;
     this.groups = null;
   }

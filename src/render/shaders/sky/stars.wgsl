@@ -6,9 +6,12 @@
 // L = f E / Omega_pixel [lux / sr = nits], Omega_pixel = (2 / (proj[1][1] height))^2 cos^3(theta): the pixel's solid angle at the screen
 // centre, shrunk by the rectilinear projection at theta off the view axis (cos theta = clip.w of a unit direction). Colour is the B-V colour with
 // luminance 1 (starData.ts), times the LUT transmittance along the star's direction (extinction and reddening through the air mass),
-// times the sky's cloud transmittance, times frame.params.y (pre-exposure) once. f is the Gaussian PSF (sigma STAR_SIGMA px) integrated
+// times the sky's cloud transmittance, times frame.params.y (pre-exposure) once. f is the Gaussian PSF (sigma STAR_SIGMA_REF * psfScale px, see below) integrated
 // over the pixel box with erf, so the flux stays 1 whatever the sub-pixel position and TAA jitter. Stars of magnitude <= 2 also get a
 // wider halo and a four-point diffraction cross, both carrying part of the flux so the total is unchanged.
+// The PSF is an ANGLE, not a pixel count: its sigma is STAR_SIGMA_REF pixels at a REF_HEIGHT_PX-line image and scales with the real
+// render height (halo and spikes too), so a star keeps its angular size and peak radiance at any resolution or dynamic render scale; only
+// below the PSF_SCALE_MIN floor (an unresolved PSF would alias) does the pixel footprint stop shrinking.
 //
 // Instance data: (direction xyz, magnitude), (colour rgb, id). Stars: direction is J2000 equatorial and is rotated by frame.celestial;
 // planets (id >= 1000): the direction is already a world direction.
@@ -20,12 +23,13 @@
 @group(2) @binding(0) var<uniform> ap : AtmosParams;
 @group(2) @binding(4) var cloudTex : texture_2d<f32>;
 
-const STAR_SIGMA : f32 = 0.7;
+const STAR_SIGMA_REF : f32 = 0.6;
+const REF_HEIGHT_PX : f32 = 1080.0;
+const PSF_SCALE_MIN : f32 = 0.6;
 const HALO_FRACTION_MAX : f32 = 0.12;
 const SPIKE_FRACTION_MAX : f32 = 0.10;
 const SPIKE_SIGMA : f32 = 0.8;
 const CULL_EXPOSED : f32 = 1.0 / 1024.0;
-const CORE_PEAK : f32 = 0.27;
 const STAR_LUX_ZERO_MAG : f32 = 14.18;
 const MIN_COS_OFF_AXIS : f32 = 0.1;
 const PEAK_LIMIT : f32 = 30000.0;
@@ -35,6 +39,7 @@ struct VsOut {
   @location(0) local : vec2f,
   @location(1) @interpolate(flat) radiance : vec3f,
   @location(2) @interpolate(flat) shape : vec4f,
+  @location(3) @interpolate(flat) psf : vec2f,
 };
 
 fn erf1(x : f32) -> f32 {
@@ -74,6 +79,7 @@ fn vs(@builtin(vertex_index) vi : u32, @location(0) dirMag : vec4f, @location(1)
   o.local = vec2f(0.0);
   o.radiance = vec3f(0.0);
   o.shape = vec4f(0.0);
+  o.psf = vec2f(1.0);
 
   let planet = colorId.w >= 1000.0;
   let m = mat3x3f(frame.celestial[0].xyz, frame.celestial[1].xyz, frame.celestial[2].xyz);
@@ -86,9 +92,11 @@ fn vs(@builtin(vertex_index) vi : u32, @location(0) dirMag : vec4f, @location(1)
   let bright = saturate1((2.0 - mag) / 3.5);
   let haloFrac = HALO_FRACTION_MAX * bright;
   let spikeFrac = SPIKE_FRACTION_MAX * bright;
-  let haloSigma = 1.6 + 1.6 * bright;
-  let spikeLen = 6.0 + 14.0 * bright;
-  let extent = select(3.0, max(3.5 * spikeLen, 4.5 * haloSigma), bright > 0.0);
+  let psfScale = max(frame.screen.y / REF_HEIGHT_PX, PSF_SCALE_MIN);
+  let sigma = STAR_SIGMA_REF * psfScale;
+  let haloSigma = (1.6 + 1.6 * bright) * psfScale;
+  let spikeLen = (6.0 + 14.0 * bright) * psfScale;
+  let extent = select(max(2.5, 4.2 * sigma), max(3.5 * spikeLen, 4.5 * haloSigma), bright > 0.0);
 
   let clip = frame.viewProj * vec4f(dir, 0.0);
   if (clip.w <= 1e-6) { return o; }
@@ -105,7 +113,7 @@ fn vs(@builtin(vertex_index) vi : u32, @location(0) dirMag : vec4f, @location(1)
   let uv = clamp(vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2f(0.0), vec2f(1.0));
   let cloud = textureSampleLevel(cloudTex, linearClamp, uv, 0.0).a;
   var radiance = colorId.rgb * trans * twinkle(colorId.w, air, planet) * (lux * cloud * frame.params.y / pixelOmega);
-  let peak = max(radiance.r, max(radiance.g, radiance.b)) * CORE_PEAK;
+  let peak = max(radiance.r, max(radiance.g, radiance.b)) * sq(boxGauss(0.0, sigma));
   if (peak < CULL_EXPOSED) { return o; }
   // The additive blend must not push the half-float target to infinity, whatever the exposure and the off-axis gain.
   radiance *= min(1.0, PEAK_LIMIT / peak);
@@ -116,6 +124,7 @@ fn vs(@builtin(vertex_index) vi : u32, @location(0) dirMag : vec4f, @location(1)
   o.local = corner * extent;
   o.radiance = radiance;
   o.shape = vec4f(haloFrac, haloSigma, spikeFrac, spikeLen);
+  o.psf = vec2f(sigma, SPIKE_SIGMA * psfScale);
   return o;
 }
 
@@ -126,11 +135,11 @@ fn fs(in : VsOut) -> @location(0) vec4f {
   let haloSigma = in.shape.y;
   let spikeFrac = in.shape.z;
   let spikeLen = in.shape.w;
-  var f = boxGauss(d.x, STAR_SIGMA) * boxGauss(d.y, STAR_SIGMA) * (1.0 - haloFrac - spikeFrac);
+  var f = boxGauss(d.x, in.psf.x) * boxGauss(d.y, in.psf.x) * (1.0 - haloFrac - spikeFrac);
   if (haloFrac > 0.0) {
     f += haloFrac * exp(-dot(d, d) / (2.0 * haloSigma * haloSigma)) / (TAU * haloSigma * haloSigma);
     let fall = vec2f(1.0 / sq(1.0 + abs(d.x) / spikeLen), 1.0 / sq(1.0 + abs(d.y) / spikeLen));
-    f += (spikeFrac / (4.0 * spikeLen)) * (boxGauss(d.y, SPIKE_SIGMA) * fall.x + boxGauss(d.x, SPIKE_SIGMA) * fall.y);
+    f += (spikeFrac / (4.0 * spikeLen)) * (boxGauss(d.y, in.psf.y) * fall.x + boxGauss(d.x, in.psf.y) * fall.y);
   }
   return vec4f(in.radiance * f, 0.0);
 }

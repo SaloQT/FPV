@@ -13,6 +13,7 @@ struct RtParams {
   probePrev : vec4i,  // xyz = same for the previous frame's window, w = 1 -> every probe is new
   probeDim : vec4u,   // xyz = probe grid dimensions
   f : vec4f,          // x = sun cone scale, y = probe spacing (m), z = probe hysteresis, w = GI/specular ray range (m)
+  cloud : vec4f,      // x,y = cloud shadow map centre (world xz), z = its side length (m)
 };
 
 @group(${GRP}) @binding(0) var<uniform> rp : RtParams;
@@ -33,5 +34,12 @@ fn pixelUv(src : vec2i) -> vec2f { return (vec2f(src) + 0.5) * frame.screen.zw; 
 // Aux textures store linear view depth in metres (0 = sky).
 fn linearDepth(reverseZ : f32) -> f32 { return select(0.0, frame.params.z / reverseZ, reverseZ > 0.0); }
 fn worldFromLinear(uv : vec2f, z : f32) -> vec3f { return worldFromDepth(uv, frame.params.z / z); }
+
+// fp16 storage guard (max 65504): clamps into the finite range and turns NaN into 0 (abs(NaN) <= x is false, so the select picks 0).
+const FP16_SAFE : f32 = 6.0e4;
+fn fp16Safe(v : vec4f) -> vec4f {
+  let c = clamp(v, vec4f(-FP16_SAFE), vec4f(FP16_SAFE));
+  return select(vec4f(0.0), c, abs(c) <= vec4f(FP16_SAFE));
+}
 
 fn keyDir() -> vec4f { return select(frame.sunDir, frame.moonDir, frame.misc.w == 1u); }

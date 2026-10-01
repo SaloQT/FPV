@@ -5,8 +5,14 @@ import { bvToLinearRGB, magToIlluminance, starDirectionEq } from '../../world/as
 export const STAR_FLOATS = 8;
 export const STAR_STRIDE_BYTES = STAR_FLOATS * 4;
 export const MAX_PLANETS = 8;
-/** Gaussian sigma of a star's point-spread function on the screen, in pixels. */
-export const STAR_PSF_SIGMA_PX = 0.7;
+/**
+ * The star point-spread function is an angle, not a pixel count: sigma is STAR_PSF_SIGMA_PX at a STAR_PSF_REF_HEIGHT_PX-line image and scales
+ * with the real render height, so a star keeps its angular size and peak radiance at any resolution or dynamic render scale. Below
+ * STAR_PSF_SCALE_MIN of the reference (an unresolved PSF would alias) the pixel footprint stops shrinking. Mirrors shaders/sky/stars.wgsl.
+ */
+export const STAR_PSF_SIGMA_PX = 0.6;
+export const STAR_PSF_REF_HEIGHT_PX = 1080;
+export const STAR_PSF_SCALE_MIN = 0.6;
 /** Faintest magnitude drawn on the low quality profile (the catalogue itself ends at magnitude 8). */
 export const LOW_QUALITY_STAR_LIMIT = 6.5;
 
@@ -87,6 +93,16 @@ export function erfApprox(x: number): number {
   const a = 0.147, x2 = x * x;
   const t = (x2 * (4 / Math.PI + a * x2)) / (1 + a * x2);
   return Math.sign(x) * Math.sqrt(1 - Math.exp(-t));
+}
+
+/** Factor (>= STAR_PSF_SCALE_MIN) that turns the reference PSF sizes of a star into pixels for an image `heightPx` lines tall. */
+export function starPsfScale(heightPx: number): number {
+  return Math.max(heightPx / STAR_PSF_REF_HEIGHT_PX, STAR_PSF_SCALE_MIN);
+}
+
+/** Sigma of the star PSF in pixels of an image `heightPx` lines tall. */
+export function starPsfSigmaPx(heightPx: number): number {
+  return STAR_PSF_SIGMA_PX * starPsfScale(heightPx);
 }
 
 /**

@@ -2,6 +2,8 @@
 // Roughness arguments are PERCEPTUAL (the G-buffer value); alpha = roughness^2 is derived inside.
 
 const MIN_DIRECT_ROUGHNESS : f32 = 0.06;
+// Leaves transmit about 0.8 of what they reflect (same figure as LEAF_TRANSMISSION in rt/rt_scene.wgsl).
+const LEAF_TRANSMITTANCE : f32 = 0.8;
 
 fn dGGX(nh : f32, alpha : f32) -> f32 {
   let a2 = alpha * alpha;
@@ -44,7 +46,7 @@ fn directLight(l : vec3f, n : vec3f, v : vec3f, diffuseColor : vec3f, f0 : vec3f
   let ndl = dot(n, l);
   let wrap = 0.5 * translucency;
   let diffuseNl = saturate1((ndl + wrap) / (1.0 + wrap));
-  let back = translucency * saturate1(-ndl) * (0.25 + 0.75 * pow(saturate1(dot(-l, v)), 4.0)) * 0.5;
+  let back = translucency * saturate1(-ndl) * (0.25 + 0.75 * pow(saturate1(dot(-l, v)), 4.0)) * LEAF_TRANSMITTANCE;
   var lo = diffuseColor * (diffuseNl + back) * INV_PI;
   if (ndl > 0.0) {
     let nv = max(dot(n, v), 1e-3);

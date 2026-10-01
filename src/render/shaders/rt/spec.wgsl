@@ -21,20 +21,18 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let d = reflect(-v, h);
     let conf = 1.0 - smoothstep(0.4, SPEC_ROUGH_MAX, pix.rough);
     if (dot(d, pix.n) > 0.02) {
-      let pre = frame.params.y;
       let e = envAt(pix.pos.y);
       let origin = pix.pos + pix.n * (0.04 + 0.004 * pix.z);
       let steps = rp.cfg.y;
       let hit = traceScene(origin, d, rp.f.w, steps);
       var radiance : vec3f;
       if (hit.kind == KIND_MISS) {
-        radiance = envRadiance(d, e) * pre;
+        radiance = skyRadiance(d, e);
       } else {
-        let p = origin + d * hit.t;
-        radiance = shadeSurface(surfaceAt(hit, p, d), p, hit.t, hit.kind, e, steps);
+        radiance = hitRadiance(hit, origin, d, e, steps);
       }
       res = vec4f(radiance * conf, conf);
     }
   }
-  textureStore(out0, px, res);
+  textureStore(out0, px, fp16Safe(res));
 }

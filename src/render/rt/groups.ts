@@ -27,6 +27,8 @@ export interface GroupSources {
   params: GPUBuffer;
   prevPre: GPUBuffer;
   probeSampler: GPUSampler;
+  /** Top-down cloud shadow map (r = sun, g = moon transmittance). */
+  cloud: GPUTextureView;
 }
 
 const buf = (binding: number, buffer: GPUBuffer): GPUBindGroupEntry => ({ binding, resource: { buffer } });
@@ -56,7 +58,7 @@ export function buildGroups(s: GroupSources): RtGroups {
         buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
         view(3, read.r.view), view(4, read.g.view), view(5, read.b.view),
         view(6, write.r.view), view(7, write.g.view), view(8, write.b.view),
-        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler },
+        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud),
       ],
     });
   });
@@ -75,7 +77,7 @@ export function buildGroups(s: GroupSources): RtGroups {
           buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
           view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
           view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view),
-          view(8, tex.raw0.view), view(9, out1), { binding: 10, resource: s.probeSampler },
+          view(8, tex.raw0.view), view(9, out1), { binding: 10, resource: s.probeSampler }, view(11, s.cloud),
         ],
       });
     });

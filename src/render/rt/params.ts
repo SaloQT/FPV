@@ -1,5 +1,5 @@
-/** CPU packing of the `RtParams` uniform (shaders/rt/rt_common.wgsl, 8 x vec4 = 128 bytes). Keep the two in sync. */
-export const RT_PARAM_BYTES = 128;
+/** CPU packing of the `RtParams` uniform (shaders/rt/rt_common.wgsl, 9 x vec4 = 144 bytes). Keep the two in sync. */
+export const RT_PARAM_BYTES = 144;
 export const FLAG_SPEC = 1;
 export const FLAG_TERRAIN = 2;
 
@@ -30,6 +30,10 @@ export interface RtParamInput {
   probeSpacing: number;
   probeHysteresis: number;
   rayRange: number;
+  /** Cloud shadow map placement (see atmosphere getCloudShadowMapping). */
+  cloudCenterX: number;
+  cloudCenterZ: number;
+  cloudExtentM: number;
 }
 
 export class RtParamBlock {
@@ -48,5 +52,6 @@ export class RtParamBlock {
     i[20] = p.probePrevLo[0]; i[21] = p.probePrevLo[1]; i[22] = p.probePrevLo[2]; i[23] = p.probeAllFresh ? 1 : 0;
     u[24] = p.probeDim[0]; u[25] = p.probeDim[1]; u[26] = p.probeDim[2]; u[27] = 0;
     f[28] = p.softness; f[29] = p.probeSpacing; f[30] = p.probeHysteresis; f[31] = p.rayRange;
+    f[32] = p.cloudCenterX; f[33] = p.cloudCenterZ; f[34] = p.cloudExtentM; f[35] = 0;
   }
 }

@@ -1,6 +1,7 @@
 // Auto-exposure metering on the resolved (pre-exposed) image.
 //  hist   : 64-bin log2-luminance histogram, weighted towards the centre and the ground, linear split between neighbouring bins.
-//  reduce : soft-clipped trimmed mean and bright-decile EV -> scene-referred target exposure -> smoothed persistent state -> `ratioOut`.
+//  reduce : soft-clipped trimmed mean (dark shade tail cut) and bright-eighth EV -> scene-referred target exposure with highlight priority
+//           -> smoothed persistent state -> `ratioOut`.
 // State is the TOTAL exposure in EV (pre-exposure * ratio), so CPU pre-exposure changes never look like a scene change.
 const BINS : u32 = 64u;
 const EV_MIN : f32 = ${EV_MIN};
@@ -24,6 +25,9 @@ const PROTECT_MAX_EV : f32 = ${PROTECT_MAX_EV};
 const STRIDE : u32 = ${STRIDE}u;
 const WEIGHT_SCALE : f32 = ${WEIGHT_SCALE};
 const TRIM_LOW : f32 = ${TRIM_LOW};
+const TRIM_LOW_NIGHT : f32 = ${TRIM_LOW_NIGHT};
+const TRIM_BLEND_LO_EV : f32 = ${TRIM_BLEND_LO_EV};
+const TRIM_BLEND_HI_EV : f32 = ${TRIM_BLEND_HI_EV};
 const TRIM_HIGH : f32 = ${TRIM_HIGH};
 const TAU_BRIGHTEN : f32 = ${TAU_BRIGHTEN};
 const TAU_DARKEN : f32 = ${TAU_DARKEN};
@@ -83,12 +87,15 @@ fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_in
 
 fn binCenterEv(i : u32) -> f32 { return EV_MIN + (f32(i) + 0.5) / f32(BINS) * (EV_MAX - EV_MIN); }
 
-// Bin-centre EV above which the brightest CLIP_FRAC of the weight lies.
+// EV above which the brightest CLIP_FRAC of the weight lies, interpolated inside its bin (mirrors topQuantileEv in post/exposure.ts).
 fn topQuantileEv(total : f32) -> f32 {
+  let want = CLIP_FRAC * total;
+  let width = (EV_MAX - EV_MIN) / f32(BINS);
   var cum = 0.0;
   for (var k = BINS - 1u; k > 0u; k--) {
-    cum += wgBins[k];
-    if (cum >= CLIP_FRAC * total) { return binCenterEv(k); }
+    let h = wgBins[k];
+    if (cum + h >= want) { return binCenterEv(k) + (0.5 - (want - cum) / max(h, 1.0)) * width; }
+    cum += h;
   }
   return binCenterEv(0u);
 }
@@ -98,7 +105,8 @@ fn nightWeight(preEv : f32) -> f32 {
   return 1.0 - smoothstep(NIGHT_BLEND_LO_EV, NIGHT_BLEND_HI_EV, EXPECTED_MEAN_EV - preEv);
 }
 
-// The key falls with the scene luminance, the bright decile may not sit far over the key (not in the dark), the sensor gain is limited both ways.
+// The key falls with the scene luminance, the brightest CLIP_FRAC (sunlit ground, sky) may not sit more than CLIP_EV over the key (not in the dark),
+// the sensor gain is limited both ways.
 // In the dark the estimate replaces the metered mean, but a frame metered more than NIGHT_MARGIN_EV brighter than it (artificial light) still lowers the gain.
 fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
   let night = nightWeight(preEv);
@@ -110,6 +118,30 @@ fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
   let floodlit = night * max(meanEv - EXPECTED_MEAN_EV - NIGHT_MARGIN_EV, 0.0);
   let gain = max(clamp(preEv + protectedShift - DAY_TOTAL_EV, MIN_GAIN_EV, MAX_GAIN_EV) - floodlit, MIN_GAIN_EV);
   return preEv + clamp(DAY_TOTAL_EV + gain - preEv, -MAX_RATIO_EV, MAX_RATIO_EV);
+}
+
+// Mean of the soft-clipped bin-centre EVs with the darkest trimLow and the brightest TRIM_HIGH of the weight cut.
+fn trimmedMeanEv(trimLow : f32, total : f32) -> f32 {
+  let lo = trimLow * total;
+  let hi = (1.0 - TRIM_HIGH) * total;
+  var cum = 0.0;
+  var sum = 0.0;
+  var kept = 0.0;
+  for (var k = 0u; k < BINS; k++) {
+    let h = wgBins[k];
+    let w = max(min(cum + h, hi) - max(cum, lo), 0.0);
+    sum += w * softClipEv(binCenterEv(k));
+    kept += w;
+    cum += h;
+  }
+  return sum / max(kept, 1e-6);
+}
+
+// The mean the exposure law works on: the night mean fading into the shade-trimmed one with the CPU grey-card luminance (shadeTrimWeight in exposure.ts).
+fn meteredMeanEv(total : f32, preEv : f32) -> f32 {
+  let night = trimmedMeanEv(TRIM_LOW_NIGHT, total);
+  let w = smoothstep(TRIM_BLEND_LO_EV, TRIM_BLEND_HI_EV, EXPECTED_MEAN_EV - preEv);
+  return select(night + w * (trimmedMeanEv(TRIM_LOW, total) - night), night, w <= 0.0);
 }
 
 @compute @workgroup_size(64)
@@ -124,19 +156,7 @@ fn reduce(@builtin(local_invocation_index) i : u32) {
   var meanEv = ratioOut[2];
   if (adapt[1] < 0.5) { total_ev = preEv; }
   if (total > 1.0) {
-    let lo = TRIM_LOW * total;
-    let hi = (1.0 - TRIM_HIGH) * total;
-    var cum = 0.0;
-    var sum = 0.0;
-    var kept = 0.0;
-    for (var k = 0u; k < BINS; k++) {
-      let h = wgBins[k];
-      let w = max(min(cum + h, hi) - max(cum, lo), 0.0);
-      sum += w * softClipEv(binCenterEv(k));
-      kept += w;
-      cum += h;
-    }
-    meanEv = sum / max(kept, 1e-6);
+    meanEv = meteredMeanEv(total, preEv);
     let want = targetTotalEv(meanEv, topQuantileEv(total), preEv);
     if (adapt[1] < 0.5 || params.reset != 0u) {
       total_ev = want;

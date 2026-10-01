@@ -26,13 +26,14 @@ export function createLayouts(device: GPUDevice): RtLayouts {
   const layout = (label: string, entries: GPUBindGroupLayoutEntry[]) => device.createBindGroupLayout({ label: `rt ${label}`, entries });
   const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => tex2d(from + i));
   const probeSampler: GPUBindGroupLayoutEntry = { binding: 10, visibility: C, sampler: { type: 'filtering' } };
+  const cloudShadow: GPUBindGroupLayoutEntry = { binding: 11, visibility: C, texture: { sampleType: 'float' } };
 
   return {
     trace: layout('trace', [
-      uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, 'rgba16float'), store2d(9, 'rgba16float'), probeSampler,
+      uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, 'rgba16float'), store2d(9, 'rgba16float'), probeSampler, cloudShadow,
     ]),
     probe: layout('probe', [
-      uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), store3d(6), store3d(7), store3d(8), storageRo(9), probeSampler,
+      uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), store3d(6), store3d(7), store3d(8), storageRo(9), probeSampler, cloudShadow,
     ]),
     test: layout('test', [uniform(0), storageRo(1), storageRo(2), storageRo(3), storageRw(4)]),
     aux: layout('aux', [

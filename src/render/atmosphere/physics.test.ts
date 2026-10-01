@@ -110,8 +110,8 @@ describe('optical depth and transmittance', () => {
       const ozone = OZONE_ABSORPTION[c] * OZONE_HALF_WIDTH_KM;
       expect(t[c]).toBeCloseTo(rayleigh + mie + ozone, 4);
     }
-    expect(t[0]).toBeCloseTo(0.1962, 3);
-    expect(t[1]).toBeCloseTo(0.2767, 3);
+    expect(t[0]).toBeCloseTo(0.2029, 3);
+    expect(t[1]).toBeCloseTo(0.2740, 3);
     expect(t[2]).toBeCloseTo(0.4061, 3);
   });
 
@@ -119,7 +119,7 @@ describe('optical depth and transmittance', () => {
     const t = transmittanceToTop(PLANET_RADIUS_KM, 1, 2048);
     expect(t[0]).toBeGreaterThan(t[1]);
     expect(t[1]).toBeGreaterThan(t[2]);
-    expect(t[0]).toBeCloseTo(Math.exp(-0.1962), 3);
+    expect(t[0]).toBeCloseTo(Math.exp(-0.2029), 3);
     expect(t[2]).toBeGreaterThan(0.6);
   });
 
@@ -178,6 +178,16 @@ describe('aerosol', () => {
     expect(miePhase(-1)).toBeGreaterThan(miePhase(0));
     expect(miePhase(1)).toBeGreaterThan(miePhase(0) * 60);
     expect(miePhase(0)).toBeGreaterThan(0.015);
+  });
+
+  it('has a narrow glare peak: most of the peak is gone by 6 degrees and 20 degrees is down by more than 15x', () => {
+    const at = (deg: number): number => miePhase(Math.cos((deg * Math.PI) / 180));
+    expect(at(0)).toBeGreaterThan(5);
+    expect(at(0.8) / at(0)).toBeGreaterThan(0.9);
+    expect(at(5.6) / at(0)).toBeLessThan(0.35);
+    expect(at(20) / at(0)).toBeLessThan(1 / 15);
+    expect(at(90)).toBeGreaterThan(0.02);
+    expect(at(90)).toBeLessThan(0.06);
   });
 });
 

@@ -12,7 +12,7 @@ const nums = (src: string, re: RegExp): number[] => (src.match(re)?.[1] ?? '').s
 // The mirrors below read the shader's own constants, so a retuned WGSL constant cannot silently diverge from the tested formula.
 const GRADE = nums(tonemapSrc, /const GRADE : Grade = Grade\(([^)]*)\)/);
 const SENSOR = nums(sensorSrc, /const SENSOR : SensorModel = SensorModel\(([^)]*)\)/);
-const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END] = GRADE;
+const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE] = GRADE;
 
 type V3 = [number, number, number];
 const luma = (c: V3): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
@@ -24,6 +24,17 @@ const filmicLuma = (x: number): number => {
   return (Math.sign(x) * a * (2.51 * a + 0.03)) / (a * (2.43 * a + 0.59) + 0.14);
 };
 
+function compressGamut(o: V3, y: number): V3 {
+  const room = Math.max(GAMUT_CEIL + (1 - GAMUT_CEIL) * y ** 4 - y, 1e-4);
+  const c = Math.max(...o) - y;
+  const knee = GAMUT_KNEE * room;
+  if (c <= knee) return o;
+  const over = c - knee;
+  const span = room - knee;
+  const k = (knee + (span * over) / (over + span)) / c;
+  return o.map((x) => y + (x - y) * k) as V3;
+}
+
 function tonemap(scene: V3, saturation = SATURATION): V3 {
   const l = luma(scene);
   const y = Math.min(filmicLuma(l), 1);
@@ -31,9 +42,7 @@ function tonemap(scene: V3, saturation = SATURATION): V3 {
   const w = smooth(DESAT_START, DESAT_END, l);
   let o = scene.map((x) => (1 - w) * x * k + w * y) as V3;
   o = o.map((x) => y + (x - y) * saturation) as V3;
-  const m = Math.max(...o);
-  if (m > 1) o = o.map((x) => y + (x - y) * ((1 - y) / (m - y))) as V3;
-  return o.map((x) => clamp(x, 0, 1)) as V3;
+  return compressGamut(o, y).map((x) => clamp(x, 0, 1)) as V3;
 }
 
 const encode = (x: number): number => { const c = clamp(x, 0, 1); return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; };
@@ -216,6 +225,35 @@ describe('tonemap', () => {
         expect(x).toBeLessThanOrEqual(1);
       }
     }
+  });
+
+  it('keeps a saturated blue sky off the white plateau: its brightest channel stays under the ceiling and still rises with the light', () => {
+    const sky: V3 = [0.25, 0.45, 1];
+    let prev = 0;
+    for (const s of [0.05, 0.1, 0.2, 0.4, 0.8, 1.2]) {
+      const o = tonemap(sky.map((x) => x * s) as V3);
+      const code = Math.round(255 * encode(o[2]));
+      expect(code).toBeLessThanOrEqual(248);
+      expect(code).toBeGreaterThan(prev);
+      prev = code;
+    }
+    const a = tonemap(sky.map((x) => x * 0.8) as V3)[2];
+    const b = tonemap(sky.map((x) => x * 1.2) as V3)[2];
+    expect(Math.round(255 * encode(b)) - Math.round(255 * encode(a))).toBeGreaterThanOrEqual(2);
+  });
+
+  it('leaves in-gamut mid-tones untouched and compresses with a continuous slope at the knee', () => {
+    const y = 0.4;
+    const room = GAMUT_CEIL + (1 - GAMUT_CEIL) * y ** 4 - y;
+    const knee = GAMUT_KNEE * room;
+    expect(compressGamut([y + knee * 0.99, y, y - knee * 0.4], y)[0]).toBeCloseTo(y + knee * 0.99, 12);
+    const out = (c: number): number => compressGamut([y + c, y, y], y)[0] - y;
+    const h = 1e-4;
+    const left = (out(knee) - out(knee - h)) / h;
+    const right = (out(knee + h) - out(knee)) / h;
+    expect(right).toBeCloseTo(left, 2);
+    expect(out(100)).toBeLessThan(room);
+    expect(out(100)).toBeGreaterThan(0.97 * room);
   });
 
   it('keeps the chromaticity of a colour whatever its brightness: no hue skew towards cyan or yellow', () => {

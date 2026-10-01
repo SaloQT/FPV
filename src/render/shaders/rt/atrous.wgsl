@@ -64,7 +64,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let z = textureLoad(auxDepth, px, 0).x;
   let centre = textureLoad(srcTex, px, 0);
   if (z <= 0.0) {
-    textureStore(dstTex, px, dstValue(centre, px));
+    textureStore(dstTex, px, fp16Safe(dstValue(centre, px)));
     return;
   }
   let an = textureLoad(auxNormal, px, 0);
@@ -106,5 +106,5 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       wSum += w;
     }
   }
-  textureStore(dstTex, px, dstValue(select(centre, sum / wSum, wSum > 1e-6), px));
+  textureStore(dstTex, px, fp16Safe(dstValue(select(centre, sum / wSum, wSum > 1e-6), px)));
 }

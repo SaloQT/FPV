@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import frameSrc from './shaders/common/frame.wgsl?raw';
 import type { AstroState, CameraState } from '../contracts';
-import { FRAME_OFFSETS, FRAME_UNIFORM_BYTES, FrameUniforms, frameSeed, halton, jitterNdc, type FrameUniformInput } from './frameUniforms';
+import { FRAME_OFFSETS, FRAME_UNIFORM_BYTES, FrameUniforms, MOON_TINT, frameSeed, halton, jitterNdc, type FrameUniformInput } from './frameUniforms';
 import { moonIlluminanceLux } from './exposure';
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -125,8 +125,11 @@ describe('FrameUniforms', () => {
     expect(f[O.moonDir + 3]).toBeCloseTo(0.0045, 6);
     expect(f[O.sunIrradiance]).toBeCloseTo(1.27e5, -1);
     expect(f[O.sunIrradiance + 3]).toBe(1);
-    expect(f[O.moonIrradiance]).toBeCloseTo(moonIlluminanceLux(0), 5);
-    expect(f[O.moonIrradiance + 1] / f[O.moonIrradiance]).toBeCloseTo(0.95, 5);
+    const m = [f[O.moonIrradiance], f[O.moonIrradiance + 1], f[O.moonIrradiance + 2]];
+    expect(0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]).toBeCloseTo(moonIlluminanceLux(0), 4);
+    expect(m[2]).toBeGreaterThan(m[1]);
+    expect(m[1]).toBeGreaterThan(m[0]);
+    expect(m[2] / m[0]).toBeCloseTo(MOON_TINT[2] / MOON_TINT[0], 5);
     expect(f[O.terrainOrigin + 2]).toBe(2048);
     expect(f[O.terrain]).toBe(256);
     expect(u[O.misc]).toBe(5); expect(u[O.misc + 1]).toBe(7); expect(u[O.misc + 2]).toBe(frameSeed(5)); expect(u[O.misc + 3]).toBe(0);

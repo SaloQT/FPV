@@ -1,8 +1,13 @@
 import type { QualityProfile } from '../contracts';
 
 /** Rays the probe update may trace per frame before the rotating subset shrinks (probes are refreshed every K-th frame). */
-const PROBE_RAY_BUDGET = 150_000;
-const MAX_STRIDE = 16;
+export const PROBE_RAY_BUDGET = 150_000;
+export const PROBE_MAX_STRIDE = 16;
+
+/** Refresh stride K for a grid of `total` probes with `raysPerProbe` rays each: the smallest K that keeps the per-frame rays within `budget`. */
+export function probeStride(total: number, raysPerProbe: number, budget = PROBE_RAY_BUDGET, maxStride = PROBE_MAX_STRIDE): number {
+  return Math.min(maxStride, Math.max(1, Math.ceil((total * raysPerProbe) / Math.max(budget, 1))));
+}
 
 export interface ProbeImg { texture: GPUTexture; view: GPUTextureView }
 /** SH-L1 radiance of one colour channel each: texel = (c0, c1, c2, c3) of the four coefficients. */
@@ -28,12 +33,12 @@ export class ProbeGrid {
   private valid = false;
   private readonly textures: GPUTexture[] = [];
 
-  constructor(device: GPUDevice, q: QualityProfile['probes']) {
+  constructor(device: GPUDevice, q: QualityProfile['probes'], readonly rayBudget = PROBE_RAY_BUDGET) {
     this.dim = [q.dim[0], q.dim[1], q.dim[2]];
     this.spacing = q.spacing;
     this.raysPerProbe = q.raysPerProbe;
     this.total = q.dim[0] * q.dim[1] * q.dim[2];
-    this.stride = Math.min(MAX_STRIDE, Math.max(1, Math.ceil((this.total * q.raysPerProbe) / PROBE_RAY_BUDGET)));
+    this.stride = probeStride(this.total, q.raysPerProbe, rayBudget);
     const set = (i: number): ProbeSet => ({ r: this.make(device, `rt probe R ${i}`), g: this.make(device, `rt probe G ${i}`), b: this.make(device, `rt probe B ${i}`) });
     this.sets = [set(0), set(1)];
   }
@@ -48,8 +53,8 @@ export class ProbeGrid {
     return { texture, view: texture.createView({ dimension: '3d' }) };
   }
 
-  matches(q: QualityProfile['probes']): boolean {
-    return q.dim[0] === this.dim[0] && q.dim[1] === this.dim[1] && q.dim[2] === this.dim[2] && q.spacing === this.spacing && q.raysPerProbe === this.raysPerProbe;
+  matches(q: QualityProfile['probes'], rayBudget = PROBE_RAY_BUDGET): boolean {
+    return rayBudget === this.rayBudget && q.dim[0] === this.dim[0] && q.dim[1] === this.dim[1] && q.dim[2] === this.dim[2] && q.spacing === this.spacing && q.raysPerProbe === this.raysPerProbe;
   }
 
   get bytes(): number { return this.total * 8 * 6; }

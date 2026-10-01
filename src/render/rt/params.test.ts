@@ -5,13 +5,13 @@ const base: RtParamInput = {
   rtWidth: 480, rtHeight: 270, fullWidth: 960, fullHeight: 540, divisor: 2, maxSteps: 96, giRays: 2, spec: true, terrain: true,
   staticRoot: 128, dynamicRoot: 0, visitCap: 256, frameIndex: 7, debugView: 3, seed: 0xdeadbeef, probeStride: 8, probePhase: 5,
   probeLo: [-3, 2, -4], probeRays: 64, probePrevLo: [-2, 2, -4], probeAllFresh: false, probeDim: [32, 16, 32],
-  softness: 1.5, probeSpacing: 5, probeHysteresis: 0.92, rayRange: 1200,
+  softness: 1.5, probeSpacing: 5, probeHysteresis: 0.92, rayRange: 1200, cloudCenterX: -62.5, cloudCenterZ: 125, cloudExtentM: 8000,
 };
 
 describe('RtParamBlock', () => {
-  it('is 8 vec4s', () => {
-    expect(RT_PARAM_BYTES).toBe(128);
-    expect(new RtParamBlock().buffer.byteLength).toBe(128);
+  it('is 9 vec4s', () => {
+    expect(RT_PARAM_BYTES).toBe(144);
+    expect(new RtParamBlock().buffer.byteLength).toBe(144);
   });
 
   it('packs each field at the offset the shader struct expects', () => {
@@ -25,6 +25,7 @@ describe('RtParamBlock', () => {
     expect(Array.from(b.i32.slice(20, 24))).toEqual([-2, 2, -4, 0]);
     expect(Array.from(b.u32.slice(24, 28))).toEqual([32, 16, 32, 0]);
     expect(Array.from(b.f32.slice(28, 32))).toEqual([1.5, 5, Math.fround(0.92), 1200]);
+    expect(Array.from(b.f32.slice(32, 36))).toEqual([-62.5, 125, 8000, 0]);
   });
 
   it('clears the flags and flags all probes fresh on request', () => {

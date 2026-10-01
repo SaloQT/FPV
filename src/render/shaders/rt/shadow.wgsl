@@ -21,7 +21,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let phi = TAU * u.y;
     let tanA = tan(min(key.w, 0.2)) * rp.f.x;
     let dir = normalize(key.xyz + tanA * (r * cos(phi) * basis[0] + r * sin(phi) * basis[1]));
-    vis = select(1.0, 0.0, occluded(o, dir, SHADOW_RANGE, rp.cfg.y));
+    vis = keyVisibility(o, dir, SHADOW_RANGE, rp.cfg.y) * cloudTransmittance(pix.pos);
   }
   textureStore(out0, px, vec4f(vis, 0.0, 0.0, 0.0));
 }

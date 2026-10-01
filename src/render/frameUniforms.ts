@@ -23,6 +23,14 @@ const MOON_HORIZON_ELEVATION = -0.0145;
 const KEY_HYSTERESIS = 1.25;
 export const JITTER_SEQUENCE_LENGTH = 16;
 
+const MOON_TINT_RAW = [0.86, 1.0, 1.16] as const;
+const MOON_TINT_LUMA = 0.2126 * MOON_TINT_RAW[0] + 0.7152 * MOON_TINT_RAW[1] + 0.0722 * MOON_TINT_RAW[2];
+/**
+ * Colour of moonlight at the top of the atmosphere, scaled to luminance 1 so the photometric lux stay exact: reflected sunlight (~4100 K at the
+ * lunar surface) that dark-adapted vision reads as bluish-white, so the lit terrain should look cool rather than warm.
+ */
+export const MOON_TINT: readonly [number, number, number] = [MOON_TINT_RAW[0] / MOON_TINT_LUMA, MOON_TINT_RAW[1] / MOON_TINT_LUMA, MOON_TINT_RAW[2] / MOON_TINT_LUMA];
+
 export function halton(index: number, base: number): number {
   let f = 1, r = 0;
   while (index > 0) { f /= base; r += f * (index % base); index = Math.floor(index / base); }
@@ -147,7 +155,7 @@ export class FrameUniforms {
     const moonUp = astro.moonElevation > MOON_HORIZON_ELEVATION;
     f[O.sunIrradiance] = SUN_TOA_LUX; f[O.sunIrradiance + 1] = SUN_TOA_LUX; f[O.sunIrradiance + 2] = SUN_TOA_LUX; f[O.sunIrradiance + 3] = sunUp ? 1 : 0;
     const moonLux = moonIlluminanceLux(astro.moonPhaseAngle);
-    f[O.moonIrradiance] = moonLux; f[O.moonIrradiance + 1] = moonLux * 0.95; f[O.moonIrradiance + 2] = moonLux * 0.85;
+    f[O.moonIrradiance] = moonLux * MOON_TINT[0]; f[O.moonIrradiance + 1] = moonLux * MOON_TINT[1]; f[O.moonIrradiance + 2] = moonLux * MOON_TINT[2];
     f[O.moonIrradiance + 3] = astro.moonIlluminatedFraction;
     const sunH = sunUp ? SUN_TOA_LUX * Math.max(sd[1], 0) : 0;
     const moonH = moonUp ? moonLux * Math.max(md[1], 0) : 0;

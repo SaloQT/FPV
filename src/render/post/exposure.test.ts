@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
 import {
   DAY_TOTAL_EV, EXPECTED_MEAN_EV, EXPOSURE_TUNING as T, accumulate, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines,
-  exposureOutput, keyEvFor, luminanceOf, nightWeight, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
+  exposureOutput, keyEvFor, luminanceOf, meteredMeanEv, nightWeight, shadeTrimWeight, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
 } from './exposure';
 
 const KEY_EV = Math.log2(T.key);
@@ -61,7 +61,8 @@ describe('metering weights', () => {
     expect(centerWeight(0.5, 0.5)).toBeCloseTo(1, 10);
     expect(centerWeight(0, 1)).toBeCloseTo(radial * (1 + T.vertBias), 10);
     expect(centerWeight(1, 0)).toBeCloseTo(radial * (1 - T.vertBias), 10);
-    expect(centerWeight(0.5, 0.9)).toBeGreaterThan(2 * centerWeight(0.5, 0.1));
+    expect(centerWeight(0.5, 0.9)).toBeGreaterThan(1.5 * centerWeight(0.5, 0.1));
+    expect(centerWeight(0.5, 0.1)).toBeGreaterThan(0.5);
   });
 
   it('accumulates the full integer weight of a sample across the two bins', () => {
@@ -87,11 +88,19 @@ describe('trimmedMeanEv', () => {
     expect(trimmedMeanEv(h)).toBeCloseTo(binCenterEv(25), 9);
   });
 
-  it('averages a symmetric spread around its centre', () => {
+  it('averages the kept range only: the dark tail and the hot tail are cut by their trim shares', () => {
     const h = new Float64Array(T.bins);
+    h[10] = 1000 * T.trimLow;
     h[20] = 500;
-    h[30] = 500;
-    expect(trimmedMeanEv(h)).toBeCloseTo((binCenterEv(20) + binCenterEv(30)) / 2, 9);
+    h[30] = 1000 * (1 - T.trimLow - T.trimHigh) - 500;
+    h[50] = 1000 * T.trimHigh;
+    expect(trimmedMeanEv(h)).toBeCloseTo((binCenterEv(20) * 500 + binCenterEv(30) * (1000 * (1 - T.trimLow - T.trimHigh) - 500)) / (1000 * (1 - T.trimLow - T.trimHigh)), 9);
+  });
+
+  it('does not let a dark shade tail pull the metered value down: shade fraction up to trimLow is free', () => {
+    const lit = histogramOf([{ l: 0.15, count: 1000 }]);
+    const shaded = histogramOf([{ l: 0.15, count: 1000 * (1 - T.trimLow) }, { l: 0.01, count: 1000 * T.trimLow }]);
+    expect(Math.abs((trimmedMeanEv(shaded) as number) - (trimmedMeanEv(lit) as number))).toBeLessThan(binWidthEv / 2);
   });
 
   it('ignores the trimmed tails, so a small hot spot does not move the metered value', () => {
@@ -104,8 +113,37 @@ describe('trimmedMeanEv', () => {
   it('bounds the pull of a large bright sky through the soft clip', () => {
     const ground = histogramOf([{ l: 0.22, count: 700 }, { l: 1e5, count: 300 }]);
     const shift = (trimmedMeanEv(ground) as number) - KEY_EV;
-    expect(shift).toBeLessThan(0.3 * (T.knee + T.kneeWidth) + binWidthEv);
+    const skyShare = (0.3 - T.trimHigh) / (1 - T.trimLow - T.trimHigh);
+    expect(shift).toBeLessThan(skyShare * (T.knee + T.kneeWidth) + binWidthEv);
     expect(shift).toBeGreaterThan(0);
+  });
+});
+
+describe('shade trim by light level', () => {
+  const preEvFor = (nits: number): number => EXPECTED_MEAN_EV - Math.log2(nits);
+
+  it('is off in the dark, on from civil twilight, and smooth in between', () => {
+    expect(shadeTrimWeight(preEvFor(T.trimBlendLoNits / 2))).toBe(0);
+    expect(shadeTrimWeight(preEvFor(T.trimBlendHiNits * 2))).toBe(1);
+    expect(shadeTrimWeight(preEvFor(5000))).toBe(1);
+    let prev = 0;
+    for (let nits = T.trimBlendLoNits; nits <= T.trimBlendHiNits; nits *= 1.1) {
+      const w = shadeTrimWeight(preEvFor(nits));
+      expect(w).toBeGreaterThanOrEqual(prev);
+      expect(w - prev).toBeLessThan(0.15);
+      prev = w;
+    }
+  });
+
+  it('uses the night mean in the dark and the shade-trimmed mean by day, with the day mean the higher one for a shady frame', () => {
+    const h = histogramOf([{ l: 0.01, count: 400 }, { l: 0.15, count: 600 }]);
+    const nightPre = 1e3;
+    const night = trimmedMeanEv(h, T.trimLowNight) as number;
+    const day = trimmedMeanEv(h) as number;
+    expect(day).toBeGreaterThan(night + 0.5);
+    expect(meteredMeanEv(h, nightPre)).toBeCloseTo(night, 9);
+    expect(meteredMeanEv(h, DAY_PRE)).toBeCloseTo(day, 9);
+    expect(meteredMeanEv(new Float64Array(T.bins), DAY_PRE)).toBeNull();
   });
 });
 
@@ -263,10 +301,25 @@ describe('topQuantileEv', () => {
     expect(Math.abs((topQuantileEv(h) as number) - 1)).toBeLessThan(binWidthEv / 2);
   });
 
+  it('moves continuously with the share of bright pixels instead of hopping a bin at a time', () => {
+    const want = Math.ceil(T.clipFrac * 1000);
+    let prev = topQuantileEv(histogramOf([{ l: 0.22, count: 1000 - 2 * want }, { l: 2, count: 2 * want }])) as number;
+    let biggest = 0;
+    for (let bright = 2 * want - 1; bright >= want; bright -= 11) {
+      const q = topQuantileEv(histogramOf([{ l: 0.22, count: 1000 - bright }, { l: 2, count: bright }])) as number;
+      biggest = Math.max(biggest, Math.abs(q - prev));
+      expect(q).toBeLessThanOrEqual(prev + 1e-9);
+      prev = q;
+    }
+    expect(biggest).toBeLessThan(binWidthEv / 2);
+  });
+
   it('ignores a hot spot smaller than the fraction', () => {
     const h = histogramOf([{ l: 0.22, count: 970 }, { l: 6e4, count: 30 }]);
     expect(Math.abs((topQuantileEv(h) as number) - KEY_EV)).toBeLessThan(binWidthEv);
-    expect(topQuantileEv(h, 0.01)).toBeCloseTo(binCenterEv(T.bins - 1), 9);
+    const top = topQuantileEv(h, 0.01) as number;
+    expect(top).toBeGreaterThan(binCenterEv(T.bins - 1) - binWidthEv / 2);
+    expect(top).toBeLessThan(binCenterEv(T.bins - 1) + binWidthEv / 2);
   });
 });
 
@@ -369,5 +422,64 @@ describe('night exposure mirror in sky/night_light.wgsl', () => {
       return 2 ** Math.min(keyEv - lumEv, c('EXPOSURE_MAX_TOTAL_EV'));
     };
     for (let pre = 1e-5; pre <= 1e3; pre *= 1.7) expect(Math.log2(mirror(pre))).toBeCloseTo(targetTotalEv(EXPECTED_MEAN_EV, pre), 2);
+  });
+});
+
+describe('daylight scenes (pre-exposed luminance, grey card = 0.25, grass of albedo 0.09 = 0.125)', () => {
+  const W = 96, H = 54;
+  type Pixel = (u: number, v: number, r: number) => number;
+  const scene = (pixel: Pixel, pre: number, scale = 1): { ratioEv: number; at: (lum: number) => number } => {
+    const h = new Float64Array(T.bins);
+    let seed = 99;
+    const rnd = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) accumulate(h, pixel((i + 0.5) / W, (j + 0.5) / H, rnd()) * scale, (i + 0.5) / W, (j + 0.5) / H);
+    const total = targetTotalEv(meteredMeanEv(h, pre) as number, pre, topQuantileEv(h) as number);
+    const ratioEv = total - Math.log2(pre);
+    return { ratioEv, at: (lum) => lum * scale * 2 ** ratioEv };
+  };
+  // Scene-linear value of the displayed key colours: 0.2 is display code ~110, 0.36 code ~150, 0.02 code ~25.
+  const sunnyForest: Pixel = (u, v, r) => (v < 0.35 ? 0.1 + 0.12 * v / 0.35 : r < 0.45 ? 0.025 : r < 0.7 ? 0.1 : 0.125);
+  const denseForest: Pixel = (u, v, r) => (v < 0.12 ? 0.15 : r < 0.6 ? 0.025 : 0.1);
+  const meadow: Pixel = (u, v, r) => (v < 0.5 ? 0.1 + 0.12 * v / 0.5 : r < 0.2 ? 0.045 : 0.125);
+
+  it('keeps sunlit grass at a mid display level in a forest or meadow frame instead of washing it out (it used to land near code 200)', () => {
+    for (const p of [sunnyForest, meadow]) {
+      const s = scene(p, DAY_PRE);
+      expect(s.at(0.125)).toBeGreaterThan(0.18);
+      expect(s.at(0.125)).toBeLessThan(0.38);
+    }
+  });
+
+  it('opens the camera for a forest that is 60% shade, but not so far that the sunlit grass passes display code ~175', () => {
+    const s = scene(denseForest, DAY_PRE);
+    expect(s.ratioEv).toBeGreaterThan(scene(sunnyForest, DAY_PRE).ratioEv);
+    expect(s.at(0.1)).toBeLessThan(0.5);
+  });
+
+  it('keeps the shade readable: a forest shade pixel ends above scene-linear 0.02 (code ~25)', () => {
+    expect(scene(sunnyForest, DAY_PRE).at(0.025)).toBeGreaterThan(0.02);
+    expect(scene(denseForest, DAY_PRE).at(0.025)).toBeGreaterThan(0.02);
+  });
+
+  it('still brightens an overcast frame (all light 2.5 EV down) until the grass is back at a mid level', () => {
+    for (const p of [sunnyForest, meadow]) {
+      const s = scene(p, DAY_PRE, 2 ** -2.5);
+      expect(s.ratioEv).toBeGreaterThan(1.5);
+      expect(s.at(0.125)).toBeGreaterThan(0.18);
+      expect(s.at(0.125)).toBeLessThan(0.38);
+    }
+  });
+
+  it('puts the sky of a clear day between the grass level and the highlight ceiling: it never lands above scene-linear 0.9', () => {
+    const s = scene(meadow, DAY_PRE);
+    expect(s.at(0.22)).toBeLessThan(0.9);
+    expect(s.at(0.22)).toBeGreaterThan(s.at(0.125));
+  });
+
+  it('lowers the exposure for a very bright sky near a low sun instead of clipping it', () => {
+    const sunset: Pixel = (u, v, r) => (v < 0.45 ? 0.7 + 3 * Math.max(0, 1 - Math.abs(u - 0.5) * 3) * r : 0.125 * (r < 0.3 ? 0.4 : 1));
+    const s = scene(sunset, DAY_PRE);
+    expect(s.ratioEv).toBeLessThan(-0.3);
+    expect(s.at(0.7)).toBeLessThan(0.6);
   });
 });

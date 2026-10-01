@@ -32,14 +32,14 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) lid 
   let doTrace = fresh || (id % max(rp.dbg.z, 1u)) == rp.dbg.w;
   let pp = prevPre[0];
   let ratio = select(1.0, frame.params.y / pp, pp > 0.0);
-  let oldR = textureLoad(probeR, cell, 0);
-  let oldG = textureLoad(probeG, cell, 0);
-  let oldB = textureLoad(probeB, cell, 0);
+  let oldR = fp16Safe(textureLoad(probeR, cell, 0));
+  let oldG = fp16Safe(textureLoad(probeG, cell, 0));
+  let oldB = fp16Safe(textureLoad(probeB, cell, 0));
   if (!doTrace) {
     if (lid == 0u) {
-      textureStore(newR, cell, oldR * ratio);
-      textureStore(newG, cell, oldG * ratio);
-      textureStore(newB, cell, oldB * ratio);
+      textureStore(newR, cell, fp16Safe(oldR * ratio));
+      textureStore(newG, cell, fp16Safe(oldG * ratio));
+      textureStore(newB, cell, fp16Safe(oldB * ratio));
     }
     return;
   }
@@ -48,7 +48,6 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) lid 
   var p = vec3f(lattice) * rp.f.y;
   p.y = max(p.y, select(0.0, terrainHeightAt(p.xz), hasTerrain()) + PROBE_LIFT);
   let e = envAt(p.y);
-  let pre = frame.params.y;
   let steps = rp.cfg.y;
   let total = u32(rp.probeLo.w);
   let h = pcg3(vec3u(bitcast<u32>(lattice.x), bitcast<u32>(lattice.y), bitcast<u32>(lattice.z) ^ (rp.dbg.y * 2654435761u)));
@@ -69,11 +68,11 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) lid 
     let hit = traceScene(p, d, rp.f.w, steps);
     var radiance : vec3f;
     if (hit.kind == KIND_MISS) {
-      radiance = envRadiance(d, e) * pre;
+      radiance = skyRadiance(d, e);
     } else {
-      let q = p + d * hit.t;
-      radiance = shadeSurface(surfaceAt(hit, q, d), q, hit.t, hit.kind, e, steps);
+      radiance = hitRadiance(hit, p, d, e, steps);
     }
+    radiance = min(radiance, vec3f(MAX_PROBE_RADIANCE));
     let y = vec4f(SH_Y0, SH_Y1 * d.y, SH_Y1 * d.z, SH_Y1 * d.x);
     cr += y * radiance.r;
     cg += y * radiance.g;
@@ -94,8 +93,8 @@ fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) lid 
   if (lid == 0u) {
     let norm = 4.0 * PI / f32(total);
     let blend = select(1.0 - rp.f.z, 1.0, fresh);
-    textureStore(newR, cell, mix(oldR * ratio, shR[0] * norm, blend));
-    textureStore(newG, cell, mix(oldG * ratio, shG[0] * norm, blend));
-    textureStore(newB, cell, mix(oldB * ratio, shB[0] * norm, blend));
+    textureStore(newR, cell, fp16Safe(mix(oldR * ratio, shR[0] * norm, blend)));
+    textureStore(newG, cell, fp16Safe(mix(oldG * ratio, shG[0] * norm, blend)));
+    textureStore(newB, cell, fp16Safe(mix(oldB * ratio, shB[0] * norm, blend)));
   }
 }

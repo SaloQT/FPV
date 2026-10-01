@@ -18,10 +18,26 @@ export const RAYLEIGH_SCALE_HEIGHT_KM = 8;
 export const MIE_EXTINCTION = 0.1;
 export const MIE_SCATTER = 0.092;
 export const MIE_SCALE_HEIGHT_KM = 1.4;
-export const MIE_G = 0.76;
+/**
+ * Aerosol phase function: a narrow diffraction peak (the glare around the sun and moon), a broad forward lobe, a nearly isotropic side lobe
+ * and a weak back lobe. A single g = 0.76 lobe is flat out to 16 degrees and spreads a haze over the whole sun side of the sky; real
+ * aerosols peak within a few degrees (p(0) ~ 6, p(5 deg) ~ 2, p(20 deg) ~ 0.3 per sr) and keep ~0.03 per sr at 90 degrees.
+ */
+export const MIE_G = 0.6;
+export const MIE_NARROW_G = 0.93;
+export const MIE_NARROW_WEIGHT = 0.22;
+export const MIE_SIDE_G = 0.3;
+export const MIE_SIDE_WEIGHT = 0.22;
 export const MIE_BACK_G = -0.3;
-export const MIE_BACK_WEIGHT = 0.2;
-export const OZONE_ABSORPTION: Vec3 = [0.65e-3, 1.881e-3, 0.085e-3];
+export const MIE_BACK_WEIGHT = 0.16;
+/**
+ * Ozone (Chappuis band, peak 603 nm) per km at the layer's centre. Point samples at 680 / 550 / 440 nm (0.65, 1.88, 0.085) put the sRGB red
+ * primary far out on the band's red tail, where ozone barely absorbs; the primary actually integrates 580-700 nm, around the peak, so its
+ * band-averaged absorption is ~2.2e-3 and green's ~1.5e-3. With the point samples a twilight sky came out magenta-lilac everywhere (green
+ * absorbed, red not; measured twilight zenith skies have R/Y ~ 0.6, G/Y ~ 1.0). These values move a good part of the way: R and G come out
+ * level at the twilight zenith (blue-violet, not pink) and the sun-side horizon keeps its peach to pink band.
+ */
+export const OZONE_ABSORPTION: Vec3 = [1.1e-3, 1.7e-3, 0.09e-3];
 export const OZONE_CENTER_KM = 25;
 export const OZONE_HALF_WIDTH_KM = 15;
 export const GROUND_ALBEDO = 0.3;
@@ -104,9 +120,11 @@ export function cornetteShanksPhase(cosTheta: number, g: number): number {
   return ((3 / (8 * Math.PI)) * ((1 - g2) * (1 + cosTheta * cosTheta))) / ((2 + g2) * Math.pow(1 + g2 - 2 * g * cosTheta, 1.5));
 }
 
-/** Aerosol phase (per sr): the forward aureole lobe plus the weak back lobe that keeps side and back scattering (haze) realistic. */
+/** Aerosol phase (per sr), the four-lobe mixture described at MIE_G; integrates to 1. */
 export function miePhase(cosTheta: number): number {
-  return (1 - MIE_BACK_WEIGHT) * cornetteShanksPhase(cosTheta, MIE_G) + MIE_BACK_WEIGHT * hgPhase(cosTheta, MIE_BACK_G);
+  const broad = 1 - MIE_NARROW_WEIGHT - MIE_SIDE_WEIGHT - MIE_BACK_WEIGHT;
+  return broad * cornetteShanksPhase(cosTheta, MIE_G) + MIE_NARROW_WEIGHT * hgPhase(cosTheta, MIE_NARROW_G)
+    + MIE_SIDE_WEIGHT * hgPhase(cosTheta, MIE_SIDE_G) + MIE_BACK_WEIGHT * hgPhase(cosTheta, MIE_BACK_G);
 }
 
 /** Henyey-Greenstein phase (per sr). */

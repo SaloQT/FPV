@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Vec3 } from '../../contracts';
 import {
   AIRGLOW_HEIGHT_KM, AIRGLOW_SLANT_TINT_NITS, AIRGLOW_ZENITH_NITS, GEGENSCHEIN_S10, GROUND_ALBEDO, MIE_BACK_G, MIE_BACK_WEIGHT, MIE_EXTINCTION,
-  MIE_G, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, NITS_PER_S10, STARLIGHT_SKY_NITS, ZODIACAL_COLOR, ZODIACAL_FAR_S10, ZODIACAL_NEAR_S10,
+  OZONE_ABSORPTION, MIE_G, MIE_NARROW_G, MIE_NARROW_WEIGHT, MIE_SIDE_G, MIE_SIDE_WEIGHT, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, NITS_PER_S10, STARLIGHT_SKY_NITS, ZODIACAL_COLOR, ZODIACAL_FAR_S10, ZODIACAL_NEAR_S10,
   ZODIACAL_POLE_S10, nightSkyNits, vanRhijn, zodiacalNits, zodiacalS10,
 } from './physics';
 
@@ -121,8 +121,13 @@ describe('shader mirrors', () => {
     expect(w.get('MIE_EXTINCTION')).toEqual([MIE_EXTINCTION]);
     expect(w.get('MIE_H')).toEqual([MIE_SCALE_HEIGHT_KM]);
     expect(w.get('MIE_G')).toEqual([MIE_G]);
+    expect(w.get('MIE_NARROW_G')).toEqual([MIE_NARROW_G]);
+    expect(w.get('MIE_NARROW_WEIGHT')).toEqual([MIE_NARROW_WEIGHT]);
+    expect(w.get('MIE_SIDE_G')).toEqual([MIE_SIDE_G]);
+    expect(w.get('MIE_SIDE_WEIGHT')).toEqual([MIE_SIDE_WEIGHT]);
     expect(w.get('MIE_BACK_G')).toEqual([MIE_BACK_G]);
     expect(w.get('MIE_BACK_WEIGHT')).toEqual([MIE_BACK_WEIGHT]);
+    expect(w.get('OZONE_ABSORB')).toEqual([...OZONE_ABSORPTION]);
     expect(w.get('GROUND_ALBEDO')).toEqual([GROUND_ALBEDO]);
   });
 });

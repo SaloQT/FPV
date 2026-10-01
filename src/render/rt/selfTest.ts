@@ -94,7 +94,7 @@ export async function runSelfTest(
     rtWidth: total, rtHeight: 1, fullWidth: total, fullHeight: 1, divisor: 1, maxSteps: steps, giRays: 0, spec: false, terrain: true,
     staticRoot: buffers.staticRoot, dynamicRoot: buffers.dynamicRoot, visitCap: BVH_VISIT_CAP, frameIndex: 0, debugView: 0, seed: 0,
     probeStride: 1, probePhase: 0, probeLo: [0, 0, 0], probeRays: 0, probePrevLo: [0, 0, 0], probeAllFresh: true, probeDim: [1, 1, 1],
-    softness: 1, probeSpacing: 1, probeHysteresis: 0, rayRange: 1,
+    softness: 1, probeSpacing: 1, probeHysteresis: 0, rayRange: 1, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1,
   });
   const paramBuf = d.createBuffer({ label: 'rt test params', size: RT_PARAM_BYTES, usage: U.UNIFORM | U.COPY_DST });
   const rayBuf = d.createBuffer({ label: 'rt test rays', size: rays.byteLength, usage: U.STORAGE | U.COPY_DST });

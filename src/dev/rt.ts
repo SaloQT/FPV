@@ -11,11 +11,12 @@
  *   ?quality=low|medium|high|ultra (default high)   ?tex=1 checker on the ground   ?osd=0
  *   ?mover=orbit|jump&speed=m/s&jump=frame   a dynamic sphere that circles the scene / hops once (dynamic BVH + motion vectors)
  *   ?pan=deg/frame   yaw the camera each frame   ?cx=&cy=&cz=&tx=&ty=&tz=&fov=   camera overrides   ?atmo=real  the real atmosphere module
+ *   ?canopy=1        three invisible leaf-crown proxies (sphere + trunk) to inspect the soft canopy shadows on the ground
  *   ?flat=x0,y0,x1,y1   screen-fraction rectangle used by noise() instead of the scene's own flat region
  *   ?test=1          runs the GPU-vs-CPU self test (heightfield DDA vs sampler.raycast, BVH vs brute force) into window.__fpv.rtTest
  * window.__fpv carries { ready, stats, errors, rtStats(), rtTest, probe(), signals(), noise(), series(), line(), project(), frameDiff(), info }.
  */
-import { DEFAULT_SETTINGS, type CameraState, type Quat, type Settings, type Vec3 } from '../contracts';
+import { DEFAULT_SETTINGS, type CameraState, type Quat, type Settings, type TerrainSampler, type Vec3 } from '../contracts';
 import type { RenderModule, SceneData } from '../render/contracts';
 import { createPostProcessor } from '../render/post';
 import { Renderer, type FrameInput } from '../render/renderer';
@@ -65,6 +66,7 @@ function readParams() {
     camTarget: vec('tx', 'ty', 'tz'),
     fov: opt('fov'),
     flat,
+    canopy: q.get('canopy') === '1',
   };
 }
 
@@ -100,9 +102,29 @@ function sunDirection(elevationDeg: number, azimuthDeg: number): Vec3 {
   return [Math.cos(e) * Math.sin(a), Math.sin(e), -Math.cos(e) * Math.cos(a)];
 }
 
-async function buildModules(realSky: boolean, scene: RenderModule, rt: RenderModule): Promise<RenderModule[]> {
+const FOLIAGE = { albedo: [0.045, 0.09, 0.025] as Vec3, roughness: 1, metalness: 0 };
+const CROWNS: readonly [number, number, number][] = [[2, -8, 4.5], [-6, -2, 3.5], [8, 2, 4]];
+
+/** Registers leaf-crown proxies like the vegetation module does (trunk capsule + volume-equivalent sphere); nothing is drawn, only their shadows show. */
+function createCanopyModule(sampler: TerrainSampler): RenderModule {
+  return {
+    name: 'rt-dev-canopy',
+    init() {},
+    setScene(rc) {
+      rc.rt.setStatic('rt-dev-canopy', CROWNS.flatMap(([x, z, r]) => {
+        const y = sampler.heightAt(x, z);
+        return [
+          { type: 'capsule' as const, a: [x, y, z] as Vec3, b: [x, y + 1.5 * r, z] as Vec3, radius: 0.25, material: FOLIAGE },
+          { type: 'sphere' as const, center: [x, y + 2.2 * r, z] as Vec3, radius: r, material: FOLIAGE },
+        ];
+      }));
+    },
+  };
+}
+
+async function buildModules(realSky: boolean, scene: RenderModule, rt: RenderModule, extra: RenderModule[]): Promise<RenderModule[]> {
   const sky = realSky ? (await import('../render/atmosphere')).createAtmosphereModule() : createDevAtmosphere();
-  return [sky, scene, rt];
+  return [sky, scene, ...extra, rt];
 }
 
 export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement): Promise<void> {
@@ -112,7 +134,7 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
   const settings: Settings = { ...DEFAULT_SETTINGS, quality: params.quality, dynamicResolution: false, observer: { latitudeDeg: 46, longitudeDeg: 8, altitudeM: 300 } };
   const rt = createRTModule();
   const sceneModule = createDevSceneModule(dev, { mode: params.mover, speed: params.speed, jumpFrame: params.jump }, params.checker);
-  const renderer = await Renderer.create(canvas, settings, await buildModules(params.realSky, sceneModule, rt), createPostProcessor());
+  const renderer = await Renderer.create(canvas, settings, await buildModules(params.realSky, sceneModule, rt, params.canopy ? [createCanopyModule(dev.sampler)] : []), createPostProcessor());
   const scene: SceneData = { terrain: dev.terrain, sampler: dev.sampler, track: null };
   renderer.setScene(scene);
   rt.setDebugView(params.dbg);

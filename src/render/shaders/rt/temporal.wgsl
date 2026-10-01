@@ -21,6 +21,8 @@ const MAX_LEN : f32 = 64.0;
 const MIN_WEIGHT : f32 = 0.05;
 const MIN_INCIDENCE : f32 = 0.01;
 const SLOPE_SLACK_PX : f32 = 0.35;
+// Luminance is capped before it enters the moments: m2 = l^2 is stored in fp16, which overflows from l = 255 (an Inf there becomes NaN in the a-trous weights).
+const LUMA_CAP : f32 = 100.0;
 
 // Depth (m) that the surface plane through posW with normal n gains per full-resolution pixel step in x and y. The history texel sampled a
 // different pixel of its block (and TAA jitter moved the grid), and at grazing angles one pixel is metres of depth: the depth test must
@@ -46,7 +48,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (any(gid.xy >= rp.dims.xy)) { return; }
   let px = vec2i(gid.xy);
   let dims = rtSize();
-  let raw = textureLoad(rawTex, px, 0);
+  let raw = fp16Safe(textureLoad(rawTex, px, 0));
   let z = textureLoad(auxDepth, px, 0).x;
   if (z <= 0.0) {
     textureStore(histCur, px, raw);
@@ -61,8 +63,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let q = clamp(px + vec2i(i, j), vec2i(0), dims - vec2i(1));
-      let s = textureLoad(rawTex, q, 0);
-      let l = signalLuma(s);
+      let s = fp16Safe(textureLoad(rawTex, q, 0));
+      let l = min(signalLuma(s), LUMA_CAP);
       mean += l;
       sq += l * l;
       if ((i != 0 || j != 0) && s.a > 0.0) {
@@ -113,12 +115,16 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let pn = octDecode(textureLoad(prevNormal, q, 0).xy);
     let bil = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
     let w = bil * saturate1((dot(n, pn) - 0.7) / 0.25);
-    hist += textureLoad(histPrev, q, 0) * w;
-    mom += textureLoad(momPrev, q, 0) * w;
+    let hq = textureLoad(histPrev, q, 0);
+    let mq = textureLoad(momPrev, q, 0);
+    // A non-finite history texel (NaN * 0 is still NaN) must never be blended in, or it spreads through every reprojection.
+    if (!(all(abs(hq) <= vec4f(FP16_SAFE)) && all(abs(mq) <= vec4f(FP16_SAFE)))) { continue; }
+    hist += hq * w;
+    mom += mq * w;
     wSum += w;
   }
 
-  let l = signalLuma(cur);
+  let l = min(signalLuma(cur), LUMA_CAP);
   var res = cur;
   var len = 1.0;
   var m1 = l;
@@ -130,7 +136,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let pp = prevPre[0];
     let ratio = select(1.0, frame.params.y / pp, pp > 0.0);
     hist = vec4f(hist.rgb * ratio, hist.a);
-    mom = vec4f(mom.x * ratio, mom.y * ratio * ratio, mom.z, mom.w);
+    mom = vec4f(min(mom.x * ratio, LUMA_CAP), min(mom.y * ratio * ratio, LUMA_CAP * LUMA_CAP), mom.z, min(mom.w, LUMA_CAP * LUMA_CAP));
 #else
     let sigma = max(sqrt(spatialVar), 0.05);
     let clamped = clamp(hist.x, mean - 2.0 * sigma, mean + 2.0 * sigma);
@@ -152,6 +158,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
   let temporalVar = max(m2 - m1 * m1, 0.0);
   let variance = mix(spatialVar, temporalVar, saturate1(len / 4.0));
-  textureStore(histCur, px, res);
-  textureStore(momCur, px, vec4f(m1, m2, len, variance));
+  textureStore(histCur, px, fp16Safe(res));
+  textureStore(momCur, px, fp16Safe(vec4f(m1, m2, len, min(variance, LUMA_CAP * LUMA_CAP))));
 }

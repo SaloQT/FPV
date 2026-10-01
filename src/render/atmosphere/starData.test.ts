@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { StarCatalog } from '../../contracts';
 import { magToIlluminance, parseStarCatalog } from '../../world/astro/stars';
 import {
-  LOW_QUALITY_STAR_LIMIT, MAX_PLANETS, STAR_FLOATS, STAR_PSF_SIGMA_PX, STAR_STRIDE_BYTES, airMass, erfApprox, packPlanets, packStars,
-  pixelAngle, pixelFluxFraction, starCountBrighterThan, starMagnitudeLimit, starPixelRadiance, unitLuminanceColor,
+  LOW_QUALITY_STAR_LIMIT, MAX_PLANETS, STAR_FLOATS, STAR_PSF_REF_HEIGHT_PX, STAR_PSF_SCALE_MIN, STAR_PSF_SIGMA_PX, STAR_STRIDE_BYTES, airMass, erfApprox, packPlanets, packStars,
+  pixelAngle, pixelFluxFraction, starCountBrighterThan, starMagnitudeLimit, starPixelRadiance, starPsfScale, starPsfSigmaPx, unitLuminanceColor,
 } from './starData';
 
 /** The repo has no @types/node, so node:fs comes through the process global like in world/astro/stars.test.ts. */
@@ -144,11 +144,44 @@ describe('star point-spread function', () => {
   it('peaks at the star, is symmetric and falls off', () => {
     const centre = pixelFluxFraction(0, 0);
     expect(centre).toBeCloseTo(erfApprox(0.5 / (STAR_PSF_SIGMA_PX * Math.SQRT2)) ** 2, 12);
-    expect(centre).toBeCloseTo(0.2756, 3);
+    expect(centre).toBeCloseTo(0.3545, 3);
     expect(pixelFluxFraction(1, 0)).toBeLessThan(centre);
     expect(pixelFluxFraction(2, 0)).toBeLessThan(pixelFluxFraction(1, 0));
     expect(pixelFluxFraction(0.6, -0.3)).toBeCloseTo(pixelFluxFraction(-0.6, 0.3), 12);
     expect(pixelFluxFraction(0, 0, 2 * STAR_PSF_SIGMA_PX)).toBeLessThan(centre);
+  });
+
+  it('keeps a star the same size and brightness in the sky whatever the render height: the peak pixel radiance stays within 2.2x from 540 to 4320 lines and within 35% above 1080', () => {
+    const peak = (heightPx: number): number => {
+      const px = pixelAngle(1 / Math.tan((100 * Math.PI) / 360), heightPx);
+      return starPixelRadiance(3, pixelFluxFraction(0, 0, starPsfSigmaPx(heightPx)), px);
+    };
+    const ref = peak(STAR_PSF_REF_HEIGHT_PX);
+    for (const h of [540, 720]) expect(peak(h) / ref).toBeGreaterThan(0.45);
+    for (const h of [1440, 2160, 4320]) {
+      expect(peak(h) / ref).toBeGreaterThan(0.95);
+      expect(peak(h) / ref).toBeLessThan(1.35);
+    }
+    const fixedSigma = (h: number): number => starPixelRadiance(3, pixelFluxFraction(0, 0, 0.7), pixelAngle(1 / Math.tan((100 * Math.PI) / 360), h));
+    expect(fixedSigma(540) / fixedSigma(1080)).toBeLessThan(0.3);
+  });
+
+  it('scales the PSF with the render height, but not below the aliasing floor', () => {
+    expect(starPsfScale(1080)).toBe(1);
+    expect(starPsfScale(2160)).toBe(2);
+    expect(starPsfScale(540)).toBe(STAR_PSF_SCALE_MIN);
+    expect(starPsfScale(100)).toBe(STAR_PSF_SCALE_MIN);
+    expect(starPsfSigmaPx(1080)).toBe(STAR_PSF_SIGMA_PX);
+    expect(starPsfSigmaPx(1440)).toBeCloseTo((STAR_PSF_SIGMA_PX * 4) / 3, 12);
+  });
+
+  it('keeps the shader constants in step with this module', () => {
+    const src = nodeFs.readFileSync(new URL('../shaders/sky/stars.wgsl', import.meta.url));
+    const text = new TextDecoder().decode(src);
+    const c = (name: string): number => Number(text.match(new RegExp(`const ${name}\\s*:\\s*f32\\s*=\\s*([^;]+);`))?.[1]);
+    expect(c('STAR_SIGMA_REF')).toBe(STAR_PSF_SIGMA_PX);
+    expect(c('REF_HEIGHT_PX')).toBe(STAR_PSF_REF_HEIGHT_PX);
+    expect(c('PSF_SCALE_MIN')).toBe(STAR_PSF_SCALE_MIN);
   });
 
   it('turns magnitudes into pixel radiance: 5 magnitudes are a factor 100, and it is linear in brightness and flux', () => {

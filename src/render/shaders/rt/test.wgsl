@@ -16,7 +16,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     results[i] = vec4f(traceTerrain(a.xyz, b.xyz, a.w, rp.cfg.y), -1.0, 0.0, 0.0);
     return;
   }
-  let h = traceBvh(a.xyz, b.xyz, a.w, rp.scene.z, false);
+  let h = traceBvh(a.xyz, b.xyz, a.w, rp.scene.z);
   let hit = h.prim != NO_NODE;
   results[i] = vec4f(select(-1.0, h.t, hit), select(-1.0, f32(h.prim), hit), 0.0, 0.0);
 }

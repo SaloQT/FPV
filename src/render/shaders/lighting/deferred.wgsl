@@ -1,7 +1,7 @@
 // Deferred lighting compute pass: G-buffer + RT results -> pre-exposed HDR radiance. Writes EVERY pixel of `hdr` (sky pixels get 0,
 // or the skyView LUT colour when FALLBACK_SKY is defined because no module draws the sky). Physical units in, pre-exposed out.
 #include "common/world_bindings.wgsl"
-#include "common/atmosphere_sample.wgsl"
+#include "lighting/sky_safe.wgsl"
 #include "common/pbr.wgsl"
 #include "rt/rt_map.wgsl"
 
@@ -28,8 +28,12 @@ const RT_DEPTH_SIGMA : f32 = 0.02;
 const RT_NORMAL_POWER : f32 = 8.0;
 const RT_MIN_WEIGHT : f32 = 1e-4;
 
+// A non-finite texel (NaN * weight 0 is still NaN, so one would poison its whole bilinear footprint) reads as "no data", never as a black block.
+fn finite4(v : vec4f) -> vec4f { return select(vec4f(0.0), v, abs(v) <= vec4f(MAX_HDR)); }
+
 fn rtLoad(q : vec2i) -> RtSample {
-  return RtSample(textureLoad(sunShadowTex, q, 0).x, textureLoad(giDiffuseTex, q, 0), textureLoad(giSpecularTex, q, 0));
+  let shadow = textureLoad(sunShadowTex, q, 0).x;
+  return RtSample(select(1.0, shadow, shadow >= 0.0 && shadow <= 1.0), finite4(textureLoad(giDiffuseTex, q, 0)), finite4(textureLoad(giSpecularTex, q, 0)));
 }
 
 // Specular is accumulated premultiplied by its confidence so an unconfident (zero) neighbour does not darken a confident one.
@@ -85,7 +89,7 @@ fn groundRadiance(sunE : vec3f, moonE : vec3f, zenithSky : vec3f) -> vec3f {
 
 // Sky radiance above the horizon, blending into the estimated ground below it.
 fn envRadiance(dir : vec3f, ground : vec3f) -> vec3f {
-  return mix(sampleSkyView(dir), ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));
+  return mix(skyNits(dir), ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));
 }
 
 // Cosine-weighted mean of the environment around n == Lambert irradiance / pi (used when no GI is available).
@@ -111,7 +115,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let depth = textureLoad(gDepth, px, 0);
   if (depth <= 0.0) {
 #ifdef FALLBACK_SKY
-    textureStore(hdrOut, px, vec4f(min(sampleSkyView(viewRayDir(uv)) * pre, vec3f(MAX_HDR)), 1.0));
+    textureStore(hdrOut, px, vec4f(min(finiteNits(sampleSkyView(viewRayDir(uv))) * pre, vec3f(MAX_HDR)), 1.0));
 #else
     textureStore(hdrOut, px, vec4f(0.0, 0.0, 0.0, 1.0));
 #endif
@@ -148,7 +152,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let direct = directLight(frame.sunDir.xyz, n, v, diffuseColor, f0, rough, msc.g, sunE * sunVis, frame.sunDir.w)
              + directLight(frame.moonDir.xyz, n, v, diffuseColor, f0, rough, msc.g, moonE * moonVis, frame.moonDir.w);
 
-  let zenithSky = sampleSkyView(vec3f(0.0, 1.0, 0.0));
+  let zenithSky = skyNits(vec3f(0.0, 1.0, 0.0));
   let ground = groundRadiance(sunE, moonE, zenithSky);
   let gd = rt.diffuse;
   let gs = rt.specular;

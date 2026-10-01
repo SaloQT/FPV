@@ -10,10 +10,14 @@ const RAYLEIGH_H : f32 = 8.0;
 const MIE_SCATTER : f32 = 0.092;
 const MIE_EXTINCTION : f32 = 0.1;
 const MIE_H : f32 = 1.4;
-const MIE_G : f32 = 0.76;
+const MIE_G : f32 = 0.6;
+const MIE_NARROW_G : f32 = 0.93;
+const MIE_NARROW_WEIGHT : f32 = 0.22;
+const MIE_SIDE_G : f32 = 0.3;
+const MIE_SIDE_WEIGHT : f32 = 0.22;
 const MIE_BACK_G : f32 = -0.3;
-const MIE_BACK_WEIGHT : f32 = 0.2;
-const OZONE_ABSORB : vec3f = vec3f(0.65e-3, 1.881e-3, 0.085e-3);
+const MIE_BACK_WEIGHT : f32 = 0.16;
+const OZONE_ABSORB : vec3f = vec3f(1.1e-3, 1.7e-3, 0.09e-3);
 const OZONE_CENTER : f32 = 25.0;
 const OZONE_HALF : f32 = 15.0;
 const GROUND_ALBEDO : f32 = 0.3;
@@ -48,9 +52,11 @@ fn hgPhase(c : f32, g : f32) -> f32 {
   return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
 }
 
-// Forward aureole lobe plus a weak back lobe; mirrors miePhase() in physics.ts.
+// Narrow glare peak, broad forward lobe, side lobe and weak back lobe; mirrors miePhase() in physics.ts.
 fn miePhase(c : f32) -> f32 {
-  return (1.0 - MIE_BACK_WEIGHT) * cornetteShanksPhase(c, MIE_G) + MIE_BACK_WEIGHT * hgPhase(c, MIE_BACK_G);
+  let broad = 1.0 - MIE_NARROW_WEIGHT - MIE_SIDE_WEIGHT - MIE_BACK_WEIGHT;
+  return broad * cornetteShanksPhase(c, MIE_G) + MIE_NARROW_WEIGHT * hgPhase(c, MIE_NARROW_G)
+    + MIE_SIDE_WEIGHT * hgPhase(c, MIE_SIDE_G) + MIE_BACK_WEIGHT * hgPhase(c, MIE_BACK_G);
 }
 
 // Near and far distances of the ray o + t d against a sphere of radius R centred at the origin; x > y means no hit.

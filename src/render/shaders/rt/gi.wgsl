@@ -15,13 +15,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     textureStore(out1, px, vec4f(0.0));
     return;
   }
-  let pre = frame.params.y;
   let e = envAt(pix.pos.y);
   let probeE = probeIrradiance(pix.pos + pix.n * 0.3, pix.n, e);
-  textureStore(out1, px, vec4f(probeE, 1.0));
+  textureStore(out1, px, fp16Safe(vec4f(probeE, 1.0)));
   let rays = rp.cfg.z;
   if (rays == 0u || rp.dbg.x == 5u) {
-    textureStore(out0, px, vec4f(probeE, 1.0));
+    textureStore(out0, px, fp16Safe(vec4f(probeE, 1.0)));
     return;
   }
   let basis = basisFromNormal(pix.n);
@@ -33,14 +32,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let d = basis * cosineHemisphere(noise2(px, 1u + r));
     let h = traceScene(origin, d, rp.f.w, steps);
     if (h.kind == KIND_MISS) {
-      sum += envRadiance(d, e) * pre;
+      sum += skyRadiance(d, e);
       vis += 1.0;
     } else {
-      let p = origin + d * h.t;
-      sum += shadeSurface(surfaceAt(h, p, d), p, h.t, h.kind, e, steps);
+      sum += hitRadiance(h, origin, d, e, steps);
       vis += saturate1(h.t / CONTACT_RANGE);
     }
   }
   let inv = 1.0 / f32(rays);
-  textureStore(out0, px, vec4f(sum * inv, vis * inv));
+  textureStore(out0, px, fp16Safe(vec4f(sum * inv, vis * inv)));
 }
