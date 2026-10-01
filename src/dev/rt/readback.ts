@@ -166,3 +166,30 @@ export async function frameDiff(renderer: Renderer, step: () => void): Promise<F
   const sorted = diffs.slice().sort();
   return { meanAbs: sum / diffs.length, p99: sorted[Math.floor(sorted.length * 0.99)], max, changedFraction: changed / diffs.length };
 }
+
+export interface NonFiniteScan { count: number; nan: number; posInf: number; negInf: number; bbox: Rect | null; sample: { x: number; y: number; rgba: number[] }[] }
+
+/** Where a plane holds NaN / Inf (any channel): counts by kind, the pixel bounding box and a few sample texels. */
+export function scanNonFinite(p: Plane): NonFiniteScan {
+  const out: NonFiniteScan = { count: 0, nan: 0, posInf: 0, negInf: 0, bbox: null, sample: [] };
+  for (let y = 0; y < p.height; y++) {
+    for (let x = 0; x < p.width; x++) {
+      let bad = false;
+      for (let c = 0; c < p.channels; c++) {
+        const v = p.data[(y * p.width + x) * p.channels + c];
+        if (Number.isNaN(v)) { out.nan++; bad = true; } else if (v === Infinity) { out.posInf++; bad = true; } else if (v === -Infinity) { out.negInf++; bad = true; }
+      }
+      if (!bad) continue;
+      out.count++;
+      const b = out.bbox ?? [x, y, x, y];
+      out.bbox = [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)];
+      if (out.sample.length < 6 && out.count % 97 === 1) out.sample.push({ x, y, rgba: Array.from(p.data.subarray((y * p.width + x) * p.channels, (y * p.width + x + 1) * p.channels)) });
+    }
+  }
+  return out;
+}
+
+/** NaN / Inf census of the lit HDR image (which sky and lighting passes wrote it). */
+export async function hdrNonFinite(renderer: Renderer): Promise<NonFiniteScan> {
+  return scanNonFinite(await readPlane(renderer.device, renderer['rc'].gbuf.hdr));
+}

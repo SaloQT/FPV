@@ -24,7 +24,7 @@ import { createRTModule, RT_DEBUG_VIEWS } from '../render/rt';
 import { isTimeOfDay, makeAstro } from './render/astro';
 import { createDevAtmosphere } from './render/atmosphere';
 import { drawOsd, probeImage } from './render/osd';
-import { frameDiff, lineOf, noiseStat, seriesAt, signalReport } from './rt/readback';
+import { frameDiff, hdrNonFinite, lineOf, noiseStat, seriesAt, signalReport } from './rt/readback';
 import { createDevSceneModule, type MoverMode } from './rt/sceneModule';
 import { SCENE_NAMES, buildScene, type SceneName } from './rt/scenes';
 
@@ -185,6 +185,7 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
       rtTest,
       probe: () => probeImage(renderer),
       signals: () => signalReport(renderer),
+      hdrNonFinite: () => hdrNonFinite(renderer),
       noise: (signal: 'giDiffuse' | 'sunShadow' | 'giSpecular' = 'giDiffuse', frames = 16) => noiseStat(renderer, step, signal, frames, params.flat ?? dev.flatRegion),
       series: (signal: 'giDiffuse' | 'sunShadow', frames: number, at: [number, number]) => seriesAt(renderer, step, signal, frames, at),
       line: (signal: 'giDiffuse' | 'sunShadow' | 'giSpecular', from: [number, number], to: [number, number], count = 32) => lineOf(renderer, signal, from, to, count),
