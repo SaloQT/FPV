@@ -128,10 +128,11 @@ fn fs(in : VsOut) -> FsOut {
   let n = normalize(ts.normal + dn - MICRO_SLOPE * vec3f(mr.y, 0.0, mr.z));
   let microAo = 1.0 - 0.3 * smoothstep(0.0, 0.7, -mr.x);
 
-  var wet = smoothstep(0.35, 0.9, maps.w);
+  // Damp ground darkens and gains some gloss, but only the waterline is a film of water: a valley floor must not read as wet asphalt.
+  var wet = 0.6 * smoothstep(0.35, 0.9, maps.w);
   if (tp.waterLevel > -1.0e8) { wet = max(wet, 1.0 - smoothstep(0.0, 1.2, w.y - tp.waterLevel)); }
   let turfShare = (lw.lo.x + lw.lo.y) / max(total, 1e-4);
-  // A wet sward is not a glossy film; blades shed water, so only bare soil, gravel and loam take the full wet response.
+  // A wet sward is not a glossy film; blades shed water, so only bare soil, gravel and loam take the damp response in full.
   wet *= (1.0 - lw.hi.z / max(total, 1e-4)) * (1.0 - 0.8 * turfShare);
   // Ground under a canopy sees less sky: the same darkening the blade roots get, so turf and ground share one AO response.
   cavity *= 1.0 - 0.3 * turfShare;
@@ -147,7 +148,8 @@ fn fs(in : VsOut) -> FsOut {
     rough = 1.0;
     emissive = 0.6;
   }
-  out.albedo = vec4f(clamp(albedo, vec3f(0.0), vec3f(1.0)), saturate1(ts.ao * cavity * microAo));
+  // The detail cavity darkens only the ambient term, and its mean over the texture is well below 1: keep it a partial effect so shade is not black.
+  out.albedo = vec4f(clamp(albedo, vec3f(0.0), vec3f(1.0)), saturate1(ts.ao * mix(1.0, cavity * microAo, 0.6)));
   out.normal = vec4f(octEncode(n), saturate1(rough), 0.0);
   out.misc = vec4f(layerMaterial(bestLayer) / 255.0, 0.0, wet, emissive);
   out.motion = motionVector(w);

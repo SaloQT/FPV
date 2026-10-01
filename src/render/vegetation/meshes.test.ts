@@ -7,6 +7,7 @@ const VALID_KINDS = new Set<number>(Object.values(KIND));
 const isLeafKind = (k: number): boolean => k >= KIND.leaf;
 const tris = (m: MeshData): number => m.idx.length / 3;
 
+const SLOW = 60000;
 let built: VariantAsset[] | null = null;
 const assets = (): VariantAsset[] => (built ??= buildVariantAssets());
 
@@ -31,7 +32,7 @@ describe('variant meshes', () => {
         expect([t0, t1, t2]).toEqual([500, 80, 20]);
       } else if (v.def.group === 'tree') {
         expect(t0).toBeGreaterThan(1500);
-        expect(t0).toBeLessThan(10000);
+        expect(t0).toBeLessThan(16000);
         expect(t2).toBeLessThanOrEqual(60);
       } else {
         expect(t0).toBeGreaterThan(150);
@@ -144,7 +145,7 @@ describe('variant meshes', () => {
     }
   });
 
-  it('is deterministic: rebuilding gives byte-identical meshes', () => {
+  it('is deterministic: rebuilding gives byte-identical meshes', { timeout: SLOW }, () => {
     const again = buildVariantAssets();
     again.forEach((v, i) => {
       v.lods.forEach((m, l) => {

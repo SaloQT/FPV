@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderQuality } from '../../contracts';
 import { qualityProfile } from '../contracts';
-import { BLADE_BYTES, CHUNK_SLOTS, MAX_GRASS_BYTES, PATCH_SIZE, TREE_TIER, VEG_PARAM_BYTES, annulusSlots, createParamViews, grassBudget, packVegParams, type VegParamInput } from './params';
+import { BLADE_BYTES, CHUNK_SLOTS, MAX_GRASS_BYTES, PATCH_SIZE, TREE_TIER, VEG_PARAM_BYTES, annulusSlots, createParamViews, grassBudget, nearDensity, packVegParams, type VegParamInput } from './params';
 import { TIER_LIMITS } from './placement';
 
 const TIERS: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
@@ -19,6 +19,23 @@ describe('annulusSlots', () => {
 
   it('fades to nothing at the far distance', () => {
     expect(annulusSlots(99, 100, 100, 5, 100)).toBeLessThan(annulusSlots(60, 61, 100, 5, 100) * 0.2);
+  });
+});
+
+describe('nearDensity', () => {
+  it('puts every tier at meadow-like blade counts and keeps the tiers ordered', () => {
+    const d = TIERS.map((t) => nearDensity(qualityProfile(t).grassBladesPerM2));
+    expect(d[0]).toBeGreaterThanOrEqual(300);
+    for (let i = 1; i < d.length; i++) expect(d[i]).toBeGreaterThan(d[i - 1]);
+    expect(d[3]).toBeLessThanOrEqual(4000);
+  });
+
+  it('never scales a tier by less than 3x or more than 6x', () => {
+    for (const x of [1, 60, 400, 900, 5000]) {
+      const k = nearDensity(x) / x;
+      expect(k).toBeGreaterThanOrEqual(3 - 1e-9);
+      expect(k).toBeLessThanOrEqual(6 + 1e-9);
+    }
   });
 });
 
@@ -45,7 +62,7 @@ describe('grassBudget', () => {
       const q = qualityProfile(TIERS[i]);
       expect(b.patchSize).toBe(PATCH_SIZE);
       expect(b.cellsPerSide * b.patchSize).toBeGreaterThanOrEqual(2 * q.grassDistance + 2 * b.patchSize);
-      expect(b.slotsPerPatch).toBe(q.grassBladesPerM2 * PATCH_SIZE * PATCH_SIZE);
+      expect(b.slotsPerPatch).toBe(nearDensity(q.grassBladesPerM2) * PATCH_SIZE * PATCH_SIZE);
       expect(b.lodDistance[0]).toBeLessThan(b.lodDistance[1]);
       expect(b.lodDistance[1]).toBeLessThan(b.distance);
     }
@@ -60,6 +77,10 @@ describe('grassBudget', () => {
     }
     expect(grassBudget(q, 1 << 30).bladeBytes).toBeLessThanOrEqual(MAX_GRASS_BYTES);
     expect(grassBudget(q, 4 << 20).bladeBytes).toBeLessThan(grassBudget(q).bladeBytes);
+  });
+
+  it('caps the full-density radius so a long view distance does not multiply the near-field cost', () => {
+    for (const b of budgets) expect(b.fullRadius).toBeLessThanOrEqual(7);
   });
 
   it('gives the near LOD the densest packing: capacity per metre of radius falls with distance', () => {
@@ -78,13 +99,13 @@ describe('TREE_TIER', () => {
     }
   });
 
-  it('keeps the placement limits monotonic and inside the brief\'s 12k-25k tree range', () => {
+  it('keeps the placement limits monotonic and inside the 16k-40k plant range', () => {
     for (let i = 1; i < TIERS.length; i++) {
       expect(TIER_LIMITS[TIERS[i]].plants).toBeGreaterThan(TIER_LIMITS[TIERS[i - 1]].plants);
       expect(TIER_LIMITS[TIERS[i]].rocks).toBeGreaterThan(TIER_LIMITS[TIERS[i - 1]].rocks);
     }
-    expect(TIER_LIMITS.low.plants).toBe(12000);
-    expect(TIER_LIMITS.ultra.plants).toBe(25000);
+    expect(TIER_LIMITS.low.plants).toBe(16000);
+    expect(TIER_LIMITS.ultra.plants).toBe(40000);
     expect(TIER_LIMITS.low.rocks).toBeGreaterThanOrEqual(2000);
     expect(TIER_LIMITS.ultra.rocks).toBeLessThanOrEqual(4000);
   });
@@ -130,7 +151,7 @@ describe('packVegParams', () => {
     expect(v.f32[12]).toBe(budget.patchSize);
     expect(v.f32[13]).toBe(budget.distance);
     expect(v.f32[14]).toBeCloseTo(budget.fullRadius, 6);
-    expect(v.f32[15]).toBeCloseTo(qualityProfile('high').grassBladesPerM2, 4);
+    expect(v.f32[15]).toBeCloseTo(nearDensity(qualityProfile('high').grassBladesPerM2), 4);
     expect(v.f32[16]).toBeCloseTo(budget.lodDistance[0], 5);
     expect(v.f32[17]).toBeCloseTo(budget.lodDistance[1], 5);
     expect(v.f32[19]).toBe(budget.slotsPerPatch);

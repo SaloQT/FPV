@@ -15,9 +15,11 @@ struct LayerWeights {
   hi : vec4f,  // rock, sand, snow, loam
 };
 
+// Straw-coloured stretches a few tens of metres across whose edges are mottled at 5 m scale, so they never end on a clean contour.
 fn glDryness(xz : vec2f, wet : f32) -> f32 {
   let n = tnFbm(xz * 0.012 + vec2f(3.1, 7.7), 3);
-  return saturate1(smoothstep(0.48, 0.68, n) - 0.6 * smoothstep(0.35, 0.8, wet));
+  let m = tnFbm(xz * 0.17 + vec2f(61.0, 13.0), 3);
+  return saturate1(0.85 * smoothstep(0.58, 0.82, n + 0.2 * (m - 0.5)) - 0.6 * smoothstep(0.35, 0.8, wet));
 }
 
 // Living turf: lush green with yellow-green and clover patches at 10 m and 1-2 m scale, bleached toward straw where it is dry.
@@ -63,7 +65,7 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   let dry = glDryness(xz, wet);
   let patchN = tnFbm(q * 0.55 + vec2f(23.0, 51.0), 3);
   let thinSoil = 1.0 - smoothstep(0.30, 0.70, soilJ);
-  let sparse = smoothstep(0.52, 0.80, patchN + 0.30 * smoothstep(0.03, 0.15, slope) + 0.18 * dry + 0.25 * thinSoil);
+  let sparse = smoothstep(0.60, 0.86, patchN + 0.30 * smoothstep(0.03, 0.15, slope) + 0.18 * dry + 0.25 * thinSoil);
   let cover = smoothstep(0.22, 0.65, soilJ) * gentle * (1.0 - 0.85 * gully) * (1.0 - 0.8 * rill);
   let sward = cover * (1.0 - 0.9 * sparse);
   let grass = sward * (1.0 - dry);
@@ -79,8 +81,8 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   let sand = max(shore, 0.3 * smoothstep(0.5, 0.85, dep) * gentle);
 
   let pat = smoothstep(0.42, 0.70, tnFbm(q * 0.08 + vec2f(31.0, 17.0), 2));
-  let bank = smoothstep(0.5, 0.85, wet) * (1.0 - smoothstep(0.05, 0.14, slope));
-  let loam = (0.6 * wet * smoothstep(0.35, 0.8, soilJ) * pat + 0.8 * bank * (0.4 + 0.6 * pat)) * (1.0 - smoothstep(0.06, 0.16, slope));
+  let bank = smoothstep(0.7, 0.95, wet) * (1.0 - smoothstep(0.05, 0.14, slope));
+  let loam = (0.3 * wet * smoothstep(0.35, 0.8, soilJ) * pat + 0.8 * bank * (0.3 + 0.7 * pat)) * (1.0 - smoothstep(0.06, 0.16, slope));
 
   let snow = smoothstep(0.78, 0.86, hRel + 0.05 * jitter) * gentle;
   let keep = 1.0 - snow;
@@ -96,10 +98,15 @@ fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
     case 1: { return glBaseColor(GL_HAY) * (0.8 + 0.4 * tnFbm(xz * 0.07 + vec2f(2.0, 8.0), 2)); }
     case 2: {
       let t = tnFbm(xz * 0.05 + vec2f(13.0, 1.0), 3);
-      let tone = mix(vec3f(1.15, 0.95, 0.75), vec3f(0.85, 0.9, 1.0), t);
-      return glBaseColor(GL_DIRT) * tone * (1.0 - 0.3 * smoothstep(0.5, 0.9, maps.y));
+      let tone = mix(vec3f(1.10, 0.97, 0.82), vec3f(0.90, 0.94, 1.0), t);
+      return glBaseColor(GL_DIRT) * tone * (1.0 - 0.3 * smoothstep(0.5, 0.9, maps.y)) * mix(1.0, 0.78, smoothstep(0.25, 0.7, maps.x));
     }
-    case 3: { return glBaseColor(GL_GRAVEL) * (0.85 + 0.3 * tnFbm(xz * 0.11 + vec2f(5.0, 27.0), 2)); }
+    case 3: {
+      // Dry channel gravel is a patchwork of warm and cool stones and darker damp patches, never one flat grey.
+      let t = tnFbm(xz * 0.11 + vec2f(5.0, 27.0), 3);
+      let u = tnFbm(xz * 0.6 + vec2f(15.0, 2.0), 2);
+      return glBaseColor(GL_GRAVEL) * mix(vec3f(1.12, 1.0, 0.86), vec3f(0.92, 0.96, 1.02), u) * (0.7 + 0.6 * t);
+    }
     case 4: {
       let warp = 2.2 * tnFbm(xz * 0.03 + vec2f(3.0, 44.0), 2);
       let band = 0.5 + 0.5 * sin(y * 0.85 + warp * 6.0);

@@ -30,7 +30,7 @@ function shading(plan: TreePlan): Shading {
         const g = norm([(p[0] - cx) / (rx * rx), (p[1] - cy) / (ry * ry), (p[2] - cz) / (rz * rz)]);
         return norm([g[0], g[1] + 0.25, g[2]]);
       },
-    aoAt: (p) => 0.3 + 0.7 * smoothstep(0.2, 1, Math.hypot((p[0] - cx) / rx, (p[1] - cy) / ry, (p[2] - cz) / rz)),
+    aoAt: (p) => (0.3 + 0.7 * smoothstep(0.2, 1, Math.hypot((p[0] - cx) / rx, (p[1] - cy) / ry, (p[2] - cz) / rz))) * (0.62 + 0.38 * smoothstep(-0.9, 0.6, (p[1] - cy) / ry)),
     swayAt: (y) => Math.min(Math.pow(Math.max(y, 0) / H, 1.6), 1),
   };
 }
@@ -47,19 +47,23 @@ function decimate(l: Limb, stride: number): Limb {
   return { pts, radii, order: l.order };
 }
 
+/** Bark ring count of a branch by its base radius (m) at LOD0: limbs get round cross-sections, thin twigs triangles. */
+const sidesFor = (radius: number): number => (radius > 0.06 ? 6 : radius > 0.035 ? 5 : radius > 0.018 ? 4 : 3);
+
 /** Bark tubes: full detail at LOD0; at LOD1 only the trunk and (for small plans) the primary limbs, with few sides. */
 function emitLimbs(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading, lod: 0 | 1): void {
-  const many = plan.limbs.length > 100;
+  const many = plan.limbs.length > 100 && plan.species !== 'oak' && plan.species !== 'birch';
   for (const limb of plan.limbs) {
     let sides = plan.trunkSides[lod], stride = 1;
     if (limb.order > 0) {
       if (lod === 1 && (limb.order > 1 || many)) continue;
-      sides = lod === 0 && !many ? Math.max(4, 7 - limb.order) : 3;
-      stride = lod === 1 || many ? 2 : 1;
+      sides = lod === 0 ? Math.min(sidesFor(limb.radii[0]), many && limb.order > 1 ? 4 : 6) : 3;
+      stride = lod === 1 || limb.order >= 3 || (many && limb.order === 1) ? 2 : 1;
     }
     const d = decimate(limb, stride);
     tube(b, d.pts, d.radii, {
       sides, kind: plan.bark, sway: (y) => sh.swayAt(y), ao: sh.aoAt, phase: limb.order === 0 ? 0 : rng.next(), v0: rng.range(0, 20), tip: limb.order > 0,
+      buttress: limb.order === 0 ? { count: 5 + Math.floor(rng.next() * 3), amp: 0.22, height: 0.7, phase: rng.range(0, TAU) } : undefined,
     });
   }
 }
@@ -92,7 +96,7 @@ function sprig(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading, cl: Cluste
   const right0 = norm(cross(d, Math.abs(d[1]) < 0.9 ? UP : [1, 0, 0])), up0 = cross(d, right0);
   const roll = rng.range(0, TAU), cs = Math.cos(roll), sn = Math.sin(roll), h = plan.cardSize * rng.range(0.8, 1.25);
   const right = mul(add(mul(right0, cs), mul(up0, sn)), h), up = mul(add(mul(up0, cs), mul(right0, -sn)), h);
-  card(b, c, right, up, cardOptions(sh, TILE.sprig, plan.foliage, rng.next()));
+  card(b, c, right, up, cardOptions(sh, plan.species === 'birch' ? TILE.birch : plan.species === 'bush' ? TILE.shrub : TILE.sprig, plan.foliage, rng.next()));
 }
 
 function emitClusters(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading, lod: 0 | 1): void {

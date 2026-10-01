@@ -13,9 +13,9 @@ const HAS_TIP : bool = ${HAS_TIP};
 const MIN_HALF_PX : f32 = 0.35;
 const MAX_TILT : f32 = 1.45;
 const GRASS_ID : f32 = 2.0;
-const TRANSLUCENCY : f32 = 0.6;
+const TRANSLUCENCY : f32 = 0.5;
 
-const STRAW : vec3f = vec3f(0.30, 0.235, 0.085);
+const STRAW : vec3f = vec3f(0.285, 0.235, 0.115);
 const SEED_HEAD : vec3f = vec3f(0.24, 0.17, 0.065);
 
 struct VsOut {
@@ -30,10 +30,10 @@ struct VsOut {
 
 fn flowerColor(code : u32) -> vec3f {
   switch (code) {
-    case 1u: { return vec3f(0.62, 0.60, 0.52); }
-    case 2u: { return vec3f(0.60, 0.42, 0.025); }
-    case 3u: { return vec3f(0.20, 0.055, 0.32); }
-    default: { return vec3f(0.50, 0.03, 0.03); }
+    case 1u: { return vec3f(0.50, 0.48, 0.42); }
+    case 2u: { return vec3f(0.55, 0.38, 0.02); }
+    case 3u: { return vec3f(0.13, 0.05, 0.24); }
+    default: { return vec3f(0.34, 0.09, 0.12); }
   }
 }
 
@@ -53,13 +53,40 @@ fn bladeTilt(root : vec3f, h : f32, time : f32, rnd : f32, stiff : f32) -> vec3f
   return vec3f(tilt, wash.z);
 }
 
+struct Arc {
+  centre : vec3f,
+  dir : vec2f,   // bend direction (x, z)
+  A : f32,       // sin of the tip tilt
+  height : f32,  // blade length after the wash squash
+};
+
+// Centre line of the blade at parameter t for the wind state of `time`; the previous-frame call only needs `centre`.
+fn bladeArc(b : Blade, t : f32, dirY : vec2f, curl : f32, time : f32, rnd : f32, stiff : f32) -> Arc {
+  let bt = bladeTilt(b.pos, b.height, time, rnd, stiff);
+  let H = b.height * (1.0 - 0.35 * bt.z);
+  let tilt = dirY * curl + bt.xy;
+  let tiltLen = max(length(tilt), 1.0e-4);
+  let ang = min(tiltLen, MAX_TILT);
+  let dirB = tilt / tiltLen;
+  let A = sin(ang);
+  let hh = H * t;
+  let off = H * A * t * t;
+  let y = sqrt(max(hh * hh - off * off, 0.02 * hh * hh));
+  var r : Arc;
+  r.centre = b.pos + vec3f(dirB.x * off, y, dirB.y * off);
+  r.dir = dirB;
+  r.A = A;
+  r.height = H;
+  return r;
+}
+
 @vertex
 fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> VsOut {
   let b = blades[iid];
   let row = vid >> 1u;
   let isTip = HAS_TIP && row == NSEG;
   let sv = select(select(-1.0, 1.0, (vid & 1u) == 1u), 0.0, isTip);
-  let t = f32(row) / f32(NSEG);
+  var t = f32(row) / f32(NSEG);
 
   let yaw = f32(b.info & 4095u) * (TAU / 4095.0);
   let species = (b.info >> 12u) & 7u;
@@ -78,23 +105,19 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
     case 1u: { curl = 0.25 + 0.4 * rnd; }
     case 2u: { curl = 0.5 + 0.55 * rnd; }
     case 3u: { curl = 0.05 + 0.2 * rnd; stiff = 0.7; }
+    case 4u: { curl = 0.7 + 0.5 * rnd; stiff = 0.5; }
     default: {}
   }
   if (isFlower) { curl *= 0.4; }
+  // The head is a short cap on the stem, not the whole top segment.
+  if (isFlower && HAS_TIP && row + 1u >= NSEG) { t = select(1.0 - min(0.014 / b.height, 1.0 / f32(NSEG)), 1.0, isTip); }
 
-  let bt = bladeTilt(b.pos, b.height, time, rnd, stiff);
-  let H = b.height * (1.0 - 0.35 * bt.z);
   let dirY = vec2f(cos(yaw), sin(yaw));
-  let tilt = dirY * curl + bt.xy;
-  let tiltLen = max(length(tilt), 1.0e-4);
-  let ang = min(tiltLen, MAX_TILT);
-  let dirB = tilt / tiltLen;
-  let A = sin(ang);
-
-  let hh = H * t;
-  let off = H * A * t * t;
-  let y = sqrt(max(hh * hh - off * off, 0.02 * hh * hh));
-  let centre = b.pos + vec3f(dirB.x * off, y, dirB.y * off);
+  let arc = bladeArc(b, t, dirY, curl, time, rnd, stiff);
+  let A = arc.A;
+  let dirB = arc.dir;
+  let centre = arc.centre;
+  let prevCentre = bladeArc(b, t, dirY, curl, time - frame.params.x, rnd, stiff).centre;
 
   let slope = (1.0 - 2.0 * A * A * t * t) / sqrt(max(1.0 - A * A * t * t, 0.01));
   let tang = normalize(vec3f(dirB.x * 2.0 * A * t, slope, dirB.y * 2.0 * A * t));
@@ -105,6 +128,7 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   let nb = normalize(cross(side, tang));
 
   var wf = 1.0 - 0.85 * t * t;
+  if (species == 4u) { wf = max(0.12, 6.75 * t * (1.0 - t) * (1.0 - t)); }
   let headRow = select(NSEG, NSEG - 1u, HAS_TIP);
   if (isFlower) { wf = select(0.25, 3.6, row == headRow); }
   if (isSeed && t > 0.66) { wf = 1.9; }
@@ -121,12 +145,19 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   let hw = max(b.halfWidth * wf, select(MIN_HALF_PX / pxPerM, 0.0, isTip));
   let world = centre + sideEff * (sv * hw);
 
-  let gt = pow(t, 0.75);
-  var base = turf * (0.78 + 0.44 * rnd);
-  if (species == 3u) { base *= vec3f(0.8, 1.0, 0.92); }
-  var col = base * mix(0.32, 1.55, gt) * mix(vec3f(1.0), vec3f(1.12, 1.04, 0.62), 0.6 * gt);
-  col = mix(col, STRAW * mix(0.45, 1.0, gt), 0.5 * dry);
-  if (isSeed && t > 0.66) { col = SEED_HEAD; }
+  // Patch colour (turf, already bleached where the ground is dry) times per-blade variation: luminance, a blue-green to yellow-green
+  // hue pick and dead straw blades or dead tips. Dark root to lighter, slightly yellower tip; roots also stand in for sward self-shadow.
+  let r2 = hash11(b.info * 747796405u + b.tint);
+  let gt = pow(t, 0.8);
+  var base = turf * (0.72 + 0.56 * rnd);
+  base *= mix(vec3f(0.88, 1.04, 1.05), vec3f(1.22, 1.08, 0.62), smoothstep(0.5, 1.0, r2));
+  if (species == 3u) { base *= vec3f(0.9, 1.0, 0.9); }
+  if (species == 4u) { base *= vec3f(0.82, 1.0, 0.78); }
+  var col = base * mix(0.35, 1.4, gt) * mix(vec3f(1.0), vec3f(1.06, 1.02, 0.8), gt);
+  var strawMix = 0.45 * smoothstep(0.6, 1.0, t) * smoothstep(0.3, 0.9, fract(r2 * 9.7));
+  if (r2 < 0.06 + 0.35 * dry) { strawMix = 0.85; }
+  col = mix(col, STRAW * (0.55 + 0.6 * rnd) * mix(0.5, 1.0, gt), strawMix);
+  if (isSeed && t > 0.66) { col = mix(vec3f(0.12, 0.13, 0.05), SEED_HEAD, 0.4 + 0.6 * dry); }
   if (isFlower && row >= headRow) { col = flowerColor(code); }
 
   let tn2 = unpack2x16snorm(b.nrm);
@@ -138,8 +169,8 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   o.nrm = normalize(nb + side * (0.5 * sv));
   o.terrainNrm = tn;
   o.albedo = col;
-  o.shade = vec2f(mix(0.3, 1.0, saturate1(t * 1.6)), mix(0.72, 0.6, gt));
-  o.motion = motionVector(world);
+  o.shade = vec2f(mix(0.42, 1.0, saturate1(t * 1.8)), mix(0.64, 0.5, gt));
+  o.motion = motionVectorPrev(world, world + (prevCentre - centre));
   return o;
 }
 

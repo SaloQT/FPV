@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerrainData } from '../../contracts';
-import { MAX_SLOPE_DEG, MIN_SOIL, PlacementRules, type Pick } from './placementRules';
+import { MAX_SLOPE_DEG, MAX_TREE_SCALE, MIN_SOIL, MIN_TREE_SCALE, PlacementRules, type Pick } from './placementRules';
 import { TerrainFields } from './terrainFields';
 import { VARIANT_DEFS, VARIANTS_OF } from './variants';
 
@@ -147,8 +147,8 @@ describe('PlacementRules.plant', () => {
         checked++;
         const def = VARIANT_DEFS[pick.variant];
         expect(def.group).toBe(kind === 1 ? 'tree' : 'bush');
-        expect(pick.scale).toBeGreaterThan(kind === 1 ? 0.45 : 0.55);
-        expect(pick.scale).toBeLessThan(kind === 1 ? 1.35 : 1.65);
+        expect(pick.scale).toBeGreaterThanOrEqual(kind === 1 ? MIN_TREE_SCALE : 0.55);
+        expect(pick.scale).toBeLessThanOrEqual(kind === 1 ? MAX_TREE_SCALE : 1.65);
         expect(pick.yaw).toBeGreaterThanOrEqual(0);
         expect(pick.yaw).toBeLessThan(2 * Math.PI + 1e-9);
         expect(pick.tint >>> 24).toBe(128);

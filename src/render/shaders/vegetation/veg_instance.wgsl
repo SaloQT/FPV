@@ -25,3 +25,12 @@ fn yawRotate(p : vec3f, yaw : f32) -> vec3f {
   let s = sin(yaw);
   return vec3f(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
 }
+
+// Instances inside this relative band around a LOD hand-over distance are drawn at both LODs and dithered against each other.
+const LOD_FADE_BAND : f32 = 0.12;
+
+// Distances (m) at which an instance hands over from LOD0 to LOD1 and from LOD1 to LOD2 (the cull and the draw shaders must agree).
+fn lodEdges(v : Variant, inst : Instance) -> vec2f {
+  let reach = v.bound.y * inst.scale * vp.tree.x;
+  return vec2f(v.bound.z, v.bound.w) * reach;
+}

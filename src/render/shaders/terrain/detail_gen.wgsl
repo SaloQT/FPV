@@ -157,11 +157,11 @@ fn bladeTone(id : f32, t : f32) -> vec3f {
 
 fn strawTone(id : f32, t : f32) -> vec3f {
   var c = vec3f(1.0);
-  if (id < 0.2) { c = vec3f(0.70, 0.66, 0.60); }
+  if (id < 0.2) { c = vec3f(0.78, 0.74, 0.68); }
   else if (id < 0.55) { c = vec3f(1.0); }
-  else if (id < 0.8) { c = vec3f(1.20, 1.12, 1.00); }
-  else { c = vec3f(1.45, 1.40, 1.30); }
-  return c * mix(0.7, 1.3, t);
+  else if (id < 0.8) { c = vec3f(1.12, 1.07, 1.0); }
+  else { c = vec3f(1.28, 1.24, 1.15); }
+  return c * mix(0.78, 1.22, t);
 }
 
 // Two passes of blades over a dark thatch. z (a height for the blend with the other layers) rises with each pass and toward the tips.
@@ -193,13 +193,13 @@ fn surfHay(uv : vec2f) -> Surf {
   s.h = 0.10;
   s.tone = vec3f(0.48, 0.44, 0.40);
   s.ao = 0.32;
-  let a = strokeAt(uv, 14, 9, 51u, vec2f(0.7, 0.98), vec2f(0.022, 0.04), 0.6, 1.1);
+  let a = strokeAt(uv, 14, 9, 51u, vec2f(0.7, 0.98), vec2f(0.022, 0.04), 0.6, 1.8);
   if (a.z >= 0.0) {
     s.h = 0.28 + 0.2 * a.z + 0.1 * a.t;
     s.tone = strawTone(a.id, a.t) * 0.9;
     s.ao = mix(0.35, 0.85, a.t);
   }
-  let b = strokeAt(uv, 24, 9, 67u, vec2f(0.65, 0.95), vec2f(0.028, 0.048), 0.7, 1.3);
+  let b = strokeAt(uv, 24, 9, 67u, vec2f(0.65, 0.95), vec2f(0.028, 0.048), 0.7, 2.0);
   if (b.z >= 0.0) {
     s.h = 0.5 + 0.22 * b.z + 0.14 * b.t;
     s.tone = strawTone(b.id, b.t) * (1.0 - 0.2 * b.across * b.across);

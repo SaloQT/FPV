@@ -95,6 +95,8 @@ export interface TubeOptions {
   v0?: number;
   /** Close the last ring to a point (tapering twigs). */
   tip?: boolean;
+  /** Root buttresses: `count` lobes of relative amplitude `amp` that fade out over `height` metres above the ground. */
+  buttress?: { count: number; amp: number; height: number; phase: number };
 }
 
 const VSCALE = 1 / 32;
@@ -125,7 +127,8 @@ export function tube(b: MeshBuilder, pts: readonly Vec3[], radii: readonly numbe
       const ang = (j / sides) * Math.PI * 2;
       const cs = Math.cos(ang), sn = Math.sin(ang);
       const radial: Vec3 = [nx[0] * cs + bx[0] * sn, nx[1] * cs + bx[1] * sn, nx[2] * cs + bx[2] * sn];
-      const p: Vec3 = [pts[i][0] + radial[0] * r, pts[i][1] + radial[1] * r, pts[i][2] + radial[2] * r];
+      const lobe = o.buttress ? 1 + o.buttress.amp * Math.exp(-Math.max(pts[i][1], 0) / o.buttress.height) * Math.cos(o.buttress.count * ang + o.buttress.phase) : 1;
+      const p: Vec3 = [pts[i][0] + radial[0] * r * lobe, pts[i][1] + radial[1] * r * lobe, pts[i][2] + radial[2] * r * lobe];
       b.vertex({
         p, n: [radial[0] - t[0] * dr, radial[1] - t[1] * dr, radial[2] - t[2] * dr], u: j / sides, v: Math.min(along * VSCALE, 1),
         ao: o.ao(p, f), sway: o.sway(p[1], f), kind: o.kind, phase: o.phase,

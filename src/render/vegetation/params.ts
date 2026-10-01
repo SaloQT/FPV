@@ -13,6 +13,12 @@ export const MAX_GRASS_BYTES = 192 * 1024 * 1024;
 /** Share of the full-circle instance count each LOD region can hold; a 120 degree camera sees at most about half the circle. */
 const CAP_FRACTION = 0.55;
 const NO_QUAD = -1e9;
+/** The tier tables count blades loosely; a meadow has thousands per m2 and a near blade is a handful of pixels wide, so the near field is scaled up. */
+export function nearDensity(tierBladesPerM2: number): number {
+  return tierBladesPerM2 * Math.min(6, Math.max(3, 7 - tierBladesPerM2 / 250));
+}
+/** Blades beyond a few metres are sub-pixel anyway, so full density stops here whatever the tier's view distance. */
+const FULL_RADIUS_MAX = 7;
 
 export interface GrassBudget {
   patchSize: number;
@@ -59,9 +65,9 @@ const roundUp = (v: number, m: number): number => Math.ceil(v / m) * m;
  */
 export function grassBudget(q: Pick<QualityProfile, 'grassBladesPerM2' | 'grassDistance'>, maxBytes: number = MAX_GRASS_BYTES): GrassBudget {
   const far = q.grassDistance;
-  const fullRadius = 0.125 * far;
+  const fullRadius = Math.min(0.125 * far, FULL_RADIUS_MAX);
   const lod0 = Math.max(4, 0.09 * far), lod1 = Math.max(12, 0.28 * far);
-  const density = q.grassBladesPerM2;
+  const density = nearDensity(q.grassBladesPerM2);
   const edges = [0, lod0, lod1, far];
   let caps = [0, 1, 2].map((i) => roundUp(CAP_FRACTION * annulusSlots(edges[i], edges[i + 1], density, fullRadius, far) + 4096, CHUNK_SLOTS));
   const total = caps[0] + caps[1] + caps[2];

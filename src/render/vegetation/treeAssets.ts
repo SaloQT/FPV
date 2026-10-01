@@ -1,6 +1,6 @@
 import type { RenderContext } from '../contracts';
 import { DEPTH_STATE, GBUFFER_TARGETS } from '../contracts';
-import { ATLAS_MIPS, ATLAS_SIZE, buildLeafAtlas } from './leafAtlas';
+import { ATLAS_H, ATLAS_MIPS, ATLAS_W, buildLeafAtlas } from './leafAtlas';
 import { VERTEX_STRIDE, packMeshes } from './meshBuilder';
 import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, buildVariantAssets, type VariantAsset } from './variants';
 
@@ -31,11 +31,14 @@ export class TreeAssets {
   readonly cullLayout: GPUBindGroupLayout;
   readonly finalizeLayout: GPUBindGroupLayout;
   readonly atlasView: GPUTextureView;
+  readonly atlasDataView: GPUTextureView;
   readonly cullPipe: GPUComputePipeline;
   readonly finalizePipe: GPUComputePipeline;
-  readonly treePipe: GPURenderPipeline;
+  /** One tree pipeline per LOD (the shader dithers a LOD in and out of its hand-over bands). */
+  readonly treePipes: GPURenderPipeline[];
   readonly rockPipe: GPURenderPipeline;
   private readonly atlas: GPUTexture;
+  private readonly atlasData: GPUTexture;
 
   constructor(rc: RenderContext) {
     const dev = rc.device;
@@ -53,12 +56,19 @@ export class TreeAssets {
     this.indexBuffer = dev.createBuffer({ label: 'tree-indices', size: this.indexBytes, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
     dev.queue.writeBuffer(this.indexBuffer, 0, packed.indices);
 
-    this.atlas = dev.createTexture({ label: 'leaf-atlas', size: [ATLAS_SIZE, ATLAS_SIZE], mipLevelCount: ATLAS_MIPS, format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    buildLeafAtlas().forEach((data, level) => {
-      const size = ATLAS_SIZE >> level;
-      dev.queue.writeTexture({ texture: this.atlas, mipLevel: level }, data, { bytesPerRow: size * 4 }, [size, size]);
-    });
+    const atlasTexture = (label: string, levels: Uint8Array[]): GPUTexture => {
+      const tex = dev.createTexture({ label, size: [ATLAS_W, ATLAS_H], mipLevelCount: ATLAS_MIPS, format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      levels.forEach((data, level) => {
+        const w = ATLAS_W >> level, h = ATLAS_H >> level;
+        dev.queue.writeTexture({ texture: tex, mipLevel: level }, data, { bytesPerRow: w * 4 }, [w, h]);
+      });
+      return tex;
+    };
+    const atlas = buildLeafAtlas();
+    this.atlas = atlasTexture('leaf-atlas-colour', atlas.colour);
+    this.atlasData = atlasTexture('leaf-atlas-data', atlas.data);
     this.atlasView = this.atlas.createView();
+    this.atlasDataView = this.atlasData.createView();
 
     const C = GPUShaderStage.COMPUTE, V = GPUShaderStage.VERTEX, F = GPUShaderStage.FRAGMENT;
     const buffer = (binding: number, visibility: number, type: GPUBufferBindingType): GPUBindGroupLayoutEntry => ({ binding, visibility, buffer: { type } });
@@ -67,6 +77,7 @@ export class TreeAssets {
       entries: [
         buffer(0, V | F, 'uniform'), buffer(1, V, 'read-only-storage'), buffer(2, V, 'read-only-storage'), buffer(3, V | F, 'read-only-storage'),
         { binding: 4, visibility: F, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: F, texture: { sampleType: 'float' } },
       ],
     });
     this.cullLayout = dev.createBindGroupLayout({
@@ -83,18 +94,18 @@ export class TreeAssets {
     const fin = rc.module('vegetation/tree_finalize.wgsl');
     this.cullPipe = dev.createComputePipeline({ label: 'tree-cull', layout: layout(this.cullLayout), compute: { module: cull, entryPoint: 'cull' } });
     this.finalizePipe = dev.createComputePipeline({ label: 'tree-finalize', layout: layout(this.finalizeLayout), compute: { module: fin, entryPoint: 'finalize' } });
-    const draw = (label: string, file: string): GPURenderPipeline => {
+    const draw = (label: string, file: string, constants?: Record<string, number>): GPURenderPipeline => {
       const module = rc.module(file);
       return dev.createRenderPipeline({
         label,
         layout: layout(this.drawLayout),
-        vertex: { module, entryPoint: 'vs', buffers: [VERTEX_LAYOUT] },
+        vertex: { module, entryPoint: 'vs', buffers: [VERTEX_LAYOUT], constants },
         fragment: { module, entryPoint: 'fs', targets: GBUFFER_TARGETS },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: DEPTH_STATE,
       });
     };
-    this.treePipe = draw('tree-draw', 'vegetation/tree.wgsl');
+    this.treePipes = [0, 1, 2].map((lod) => draw(`tree-draw-lod${lod}`, 'vegetation/tree.wgsl', { LOD: lod }));
     this.rockPipe = draw('rock-draw', 'vegetation/rock.wgsl');
   }
 
@@ -107,5 +118,6 @@ export class TreeAssets {
     this.vertexBuffer.destroy();
     this.indexBuffer.destroy();
     this.atlas.destroy();
+    this.atlasData.destroy();
   }
 }

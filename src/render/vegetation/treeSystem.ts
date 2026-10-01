@@ -65,25 +65,26 @@ export class TreeSystem {
       layout: assets.finalizeLayout,
       entries: [entry(0, params), entry(1, this.counters), entry(2, this.args)],
     });
-    for (let v = 0; v < VARIANT_COUNT; v++) {
-      if (packed.count[v] === 0) continue;
-      for (let lod = 0; lod < LOD_COUNT; lod++) {
-        const k = v * LOD_COUNT + lod;
-        this.draws.push({
-          k,
-          group: dev.createBindGroup({
-            label: `tree-draw-${k}`,
-            layout: assets.drawLayout,
-            entries: [
-              entry(0, params), entry(1, this.instances),
-              { binding: 2, resource: { buffer: this.visible, offset: 4 * (lod * packed.slots + packed.first[v]) } },
-              entry(3, this.variantTable),
-              { binding: 4, resource: assets.atlasView },
-            ],
-          }),
-        });
-      }
-    }
+    const addDraw = (v: number, lod: number): void => {
+      const k = v * LOD_COUNT + lod;
+      this.draws.push({
+        k,
+        group: dev.createBindGroup({
+          label: `tree-draw-${k}`,
+          layout: assets.drawLayout,
+          entries: [
+            entry(0, params), entry(1, this.instances),
+            { binding: 2, resource: { buffer: this.visible, offset: 4 * (lod * packed.slots + packed.first[v]) } },
+            entry(3, this.variantTable),
+            { binding: 4, resource: assets.atlasView },
+            { binding: 5, resource: assets.atlasDataView },
+          ],
+        }),
+      });
+    };
+    // Plants grouped by LOD so a pipeline is set once per LOD, rocks last.
+    for (let lod = 0; lod < LOD_COUNT; lod++) for (let v = 0; v < FIRST_ROCK; v++) if (packed.count[v] > 0) addDraw(v, lod);
+    for (let v = FIRST_ROCK; v < VARIANT_COUNT; v++) if (packed.count[v] > 0) for (let lod = 0; lod < LOD_COUNT; lod++) addDraw(v, lod);
   }
 
   /** Call from update(): finishes the counter readback started by an earlier frame's encodePre, once that frame was submitted. */
@@ -130,12 +131,12 @@ export class TreeSystem {
     if (this.slots === 0) return;
     pass.setVertexBuffer(0, this.assets.vertexBuffer);
     pass.setIndexBuffer(this.assets.indexBuffer, 'uint32');
-    let rock: boolean | null = null;
+    let current: GPURenderPipeline | null = null;
     for (const d of this.draws) {
-      const isRock = this.assets.isRockDraw(d.k);
-      if (isRock !== rock) {
-        pass.setPipeline(isRock ? this.assets.rockPipe : this.assets.treePipe);
-        rock = isRock;
+      const next = this.assets.isRockDraw(d.k) ? this.assets.rockPipe : this.assets.treePipes[d.k % LOD_COUNT];
+      if (next !== current) {
+        pass.setPipeline(next);
+        current = next;
       }
       pass.setBindGroup(2, d.group);
       pass.drawIndexedIndirect(this.args, d.k * ARGS_WORDS * 4);

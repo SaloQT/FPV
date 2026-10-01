@@ -57,10 +57,10 @@ export function leafShade(rng: Rng): number {
   return 0.62 + 0.38 * rng.next();
 }
 
-/** Mostly green, some yellow-green, a few dead yellow-brown leaves. */
+/** Mostly deep green, some sun-bleached yellow-green, a few dead yellow-brown leaves. */
 export function leafHue(rng: Rng): number {
   const r = rng.next();
-  return r < 0.06 ? 0.85 + 0.15 * rng.next() : r < 0.28 ? 0.3 + 0.3 * rng.next() : 0.08 * rng.next();
+  return r < 0.025 ? 0.85 + 0.15 * rng.next() : r < 0.17 ? 0.28 + 0.25 * rng.next() : 0.1 * rng.next();
 }
 
 export function makeLeaf(rng: Rng, bx: number, by: number, angle: number, len: number, w: number, lobes: number, lobeAmp: number, open = 1): Leaf {
@@ -141,28 +141,36 @@ function sprig(rng: Rng, s: SprigSpec): Painter {
 }
 
 /** Broadleaf twig with lobed, oak-like leaves about 0.14 m long on a 0.48 m card. */
-export const sprigPainter = (rng: Rng): Painter => sprig(rng, { count: 9, len: 0.3, w: 0.085, lobes: 3, lobeAmp: 0.16, angle: [0.65, 1.05], droop: 0 });
+export const sprigPainter = (rng: Rng): Painter => sprig(rng, { count: 7, len: 0.28, w: 0.078, lobes: 3, lobeAmp: 0.16, angle: [0.65, 1.05], droop: 0 });
 
 /** Small serrated ovate birch leaves on a drooping twig. */
-export const birchPainter = (rng: Rng): Painter => sprig(rng, { count: 11, len: 0.22, w: 0.078, lobes: 9, lobeAmp: 0.06, angle: [0.7, 1.15], droop: 0.35 });
+export const birchPainter = (rng: Rng): Painter => sprig(rng, { count: 9, len: 0.22, w: 0.07, lobes: 9, lobeAmp: 0.06, angle: [0.7, 1.15], droop: 0.35 });
 
-/** A canopy blob for the mid-distance LOD: hundreds of small leaves in a ragged ellipse, darker toward the interior, with sky gaps. */
+/** A canopy blob for the mid-distance LOD: hundreds of small leaves in a lobed, ragged outline, darker toward the interior, with sky gaps. */
 export function blobPainter(rng: Rng): Painter {
   const leaves: Leaf[] = [];
-  for (let i = 0; i < 520; i++) {
+  const p1 = rng.range(0, TAU), p2 = rng.range(0, TAU), p3 = rng.range(0, TAU);
+  for (let i = 0; i < 760; i++) {
     const a = rng.range(0, TAU), rad = Math.sqrt(rng.next());
+    const edge = 0.8 + 0.12 * Math.sin(3 * a + p1) + 0.08 * Math.sin(5 * a + p2) + 0.04 * Math.sin(9 * a + p3);
     if (rad > 0.72 && rng.next() < (rad - 0.72) * 2.4) continue;
-    const x = 0.5 + Math.cos(a) * rad * 0.4, y = 0.5 + Math.sin(a) * rad * 0.37;
+    const x = 0.5 + Math.cos(a) * rad * 0.42 * edge, y = 0.5 + Math.sin(a) * rad * 0.39 * edge;
     const len = rng.range(0.07, 0.11) * (1 - 0.25 * rad);
     const ang = rng.range(0, TAU), open = (0.3 + 0.7 * sat((rad - 0.1) / 0.9)) * (0.82 + 0.18 * sat(1 - y));
     const l = makeLeaf(rng, x - Math.sin(ang) * len * 0.5, y + Math.cos(ang) * len * 0.5, ang, len, len * rng.range(0.32, 0.42), 3, 0.1, open);
     l.petiole = 0;
     leaves.push(l);
   }
-  const holes = Array.from({ length: 12 }, () => [rng.range(0.3, 0.7), rng.range(0.32, 0.68), rng.range(0.018, 0.038)]);
+  const holes = Array.from({ length: 12 }, (_, k) => {
+    const a = rng.range(0, TAU), rr = k < 8 ? rng.range(0, 0.28) : rng.range(0.28, 0.4);
+    return [0.5 + Math.cos(a) * rr, 0.5 + Math.sin(a) * rr * 0.9, k < 8 ? rng.range(0.016, 0.034) : rng.range(0.03, 0.055)];
+  });
   const paint = leafPainter(leaves, new Grid<Leaf>(12), null);
   return (u, v, o) => {
     for (const h of holes) if (Math.hypot(u - h[0], v - h[1]) < h[2]) return false;
     return paint(u, v, o);
   };
 }
+
+/** Small rounded shrub leaves on a short twig. */
+export const shrubPainter = (rng: Rng): Painter => sprig(rng, { count: 12, len: 0.2, w: 0.1, lobes: 0, lobeAmp: 0, angle: [0.55, 1.05], droop: 0.1 });

@@ -10,6 +10,8 @@ export const MIN_SOIL = 0.3;
 const WET_BONUS = 1.45;
 /** Rivers are drawn where the flow map is above this; nothing grows in them. */
 const RIVER_FLOW = 0.85;
+export const MIN_TREE_SCALE = 0.32;
+export const MAX_TREE_SCALE = 1.5;
 
 export interface Pick {
   variant: number;
@@ -33,13 +35,15 @@ export class PlacementRules {
   private readonly sConifer: number;
   private readonly sClump: number;
   private readonly sDraw: number;
+  private readonly sAge: number;
+  private readonly sGlade: number;
   private readonly lo: number;
   private readonly range: number;
   private readonly water: number;
 
   constructor(private readonly f: TerrainFields, seed: number) {
     const s = (k: number): number => deriveSeed(seed, k) | 0;
-    this.sStand = s(1); this.sLine = s(2); this.sBush = s(3); this.sConifer = s(4); this.sClump = s(5); this.sDraw = s(6);
+    this.sStand = s(1); this.sLine = s(2); this.sBush = s(3); this.sConifer = s(4); this.sClump = s(5); this.sDraw = s(6); this.sAge = s(7); this.sGlade = s(8);
     this.lo = f.data.minHeight;
     this.range = Math.max(f.data.maxHeight - f.data.minHeight, 1);
     this.water = f.data.waterLevel;
@@ -49,13 +53,19 @@ export class PlacementRules {
     return hash2(cx, cz, this.sDraw + k * 7919);
   }
 
+  /** Share of conifers among the trees: rises with altitude (`hRel` in 0..1 of the height range) and falls on wet ground. */
+  conifer(x: number, z: number, hRel: number, wet: number): number {
+    return smoothstep(0, 0.4, hRel + 0.5 * (fbm2(x / 260, z / 260, this.sConifer, 2) - 0.5)) * (1 - 0.35 * wet);
+  }
+
   /** Tree or bush candidate of fine cell (cx, cz) at (x, z). Fills `out` and returns 1 for a tree, 2 for a bush, 0 for none. */
   plant(cx: number, cz: number, x: number, z: number, out: Pick): number {
     const f = this.f;
-    const stand = smoothstep(0.44, 0.6, fbm2(x / 380, z / 380, this.sStand, 3));
-    const treeMax = 0.03 + 0.97 * stand;
+    const stand = smoothstep(0.42, 0.57, fbm2(x / 380, z / 380, this.sStand, 3));
+    const glade = smoothstep(0.62, 0.76, fbm2(x / 85, z / 85, this.sGlade, 2));
+    const treeMax = (0.03 + 0.97 * stand) * (1 - 0.88 * glade);
     const bushNoise = smoothstep(0.35, 0.65, fbm2(x / 70, z / 70, this.sBush, 2));
-    const bushMax = 0.2 * (0.3 + 0.7 * bushNoise) * (0.4 + 0.6 * stand);
+    const bushMax = 0.3 * (0.3 + 0.7 * bushNoise) * (0.4 + 0.6 * stand) * (1 + 0.8 * glade);
     const u = this.draw(cx, cz, 0);
     if (u >= Math.min(0.85, treeMax * WET_BONUS) + bushMax) return 0;
 
@@ -77,7 +87,7 @@ export class PlacementRules {
     const dTree = Math.min(0.85, treeMax * wetF) * base;
     const dBush = bushMax * wetF * base;
     const r2 = this.draw(cx, cz, 1), r3 = this.draw(cx, cz, 2), r4 = this.draw(cx, cz, 3), r5 = this.draw(cx, cz, 4);
-    const conifer = smoothstep(0, 0.4, hRel + 0.5 * (fbm2(x / 260, z / 260, this.sConifer, 2) - 0.5)) * (1 - 0.35 * wet);
+    const conifer = this.conifer(x, z, hRel, wet);
     out.yaw = this.draw(cx, cz, 5) * Math.PI * 2;
     const b = 0.85 + 0.3 * r5, hue = (this.draw(cx, cz, 6) - 0.5) * 0.16;
     if (u < dTree) {
@@ -90,7 +100,10 @@ export class PlacementRules {
         out.variant = r3 < birch ? VARIANTS_OF.birch[0] : VARIANTS_OF.oak[(r3 - birch) / (1 - birch) < 0.5 ? 0 : 1];
         out.tint = pack(b * (1 + hue), b, b * (1 - hue), 1);
       }
-      out.scale = (0.72 + 0.58 * Math.pow(r4, 0.9)) * (1 - 0.3 * smoothstep(line - 0.25, line, hRel));
+      // Stands have an age: young ones are all saplings and poles, old ones mostly big trees; every stand mixes sizes and has the odd veteran.
+      const age = smoothstep(0.35, 0.65, fbm2(x / 170, z / 170, this.sAge, 2));
+      const veteran = this.draw(cx, cz, 7) < 0.03 ? 1.25 : 1;
+      out.scale = Math.min(Math.max((0.62 + 0.5 * age) * (0.6 + 0.8 * Math.pow(r4, 0.8)) * veteran * (1 - 0.3 * smoothstep(line - 0.25, line, hRel)), MIN_TREE_SCALE), MAX_TREE_SCALE);
       return 1;
     }
     if (u < dTree + dBush) {

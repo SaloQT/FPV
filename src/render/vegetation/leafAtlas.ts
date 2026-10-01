@@ -1,243 +1,165 @@
 import { Rng } from '../../world/track/rng';
-import { hash2, valueNoise2 } from './noise';
+import { birchPainter, blobPainter, newSample, sat, shrubPainter, sprigPainter, type Painter } from './treeLeafShapes';
+import { conifer, sprayPainter } from './treeNeedleShapes';
 
-export const ATLAS_SIZE = 256;
-export const TILE_SIZE = 128;
-/** Mips are kept down to 4x4 (2x2 per tile) so bilinear taps never reach a neighbouring tile's shape. */
+export const TILE_SIZE = 256;
+export const TILES_X = 3;
+export const TILES_Y = 2;
+export const ATLAS_W = TILE_SIZE * TILES_X;
+export const ATLAS_H = TILE_SIZE * TILES_Y;
+/** Mips are kept down to 4 x 4 texels per tile so bilinear taps never reach a neighbouring tile's shape. */
 export const ATLAS_MIPS = 7;
-/** Tile indices: 2 x 2 tiles, tile = column + 2 * row from the top-left. */
-export const TILE = { sprig: 0, needles: 1, blob: 2, conifer: 3 } as const;
+/** Tile indices: 3 x 2 tiles, tile = column + 3 * row from the top-left. */
+export const TILE = { sprig: 0, needles: 1, blob: 2, conifer: 3, birch: 4, shrub: 5 } as const;
+export const TILE_COUNT = 6;
+/** The colour texture stores the leaf colour multiplier divided by this; the tree shader multiplies it back. */
+export const COLOUR_RANGE = 3;
 
-const SS = 3;
+/** One painter sample per texel: the alpha cut of the bilinear-filtered mask already gives smooth leaf edges. */
+const SS = 1;
 const ALPHA_CUT = 128;
 
 /** Atlas rectangle of a tile: u0, v0 (top edge), u1, v1 (bottom edge). */
 export function tileRect(tile: number): [number, number, number, number] {
-  const u0 = (tile & 1) * 0.5, v0 = (tile >> 1) * 0.5;
-  return [u0, v0, u0 + 0.5, v0 + 0.5];
+  const col = tile % TILES_X, row = Math.floor(tile / TILES_X);
+  return [col / TILES_X, row / TILES_Y, (col + 1) / TILES_X, (row + 1) / TILES_Y];
 }
 
-/** Returns the greyscale shade at tile coordinates (u right, v down, both 0..1) or a negative number where the tile is empty. */
-type Shape = (u: number, v: number) => number;
+/**
+ * Colour multiplier relative to the species' green leaf tone for a painter hue (0 deep green, 0.35 yellow-green, 0.7 yellow-orange,
+ * 1 dead brown) and shade. Real leaf reflectance has red about half of green and blue under a third; the ramp keeps those ratios.
+ */
+const RAMP: readonly (readonly [number, number, number, number])[] = [
+  [0, 0.9, 0.9, 1], [0.35, 1.55, 1.1, 0.75], [0.7, 2.3, 1, 0.6], [1, 2.4, 0.78, 0.9],
+];
 
-interface Seg { ax: number; ay: number; bx: number; by: number; r: number; shade: number }
-
-function segDist(s: Seg, u: number, v: number): number {
-  const dx = s.bx - s.ax, dy = s.by - s.ay;
-  const t = Math.min(Math.max(((u - s.ax) * dx + (v - s.ay) * dy) / (dx * dx + dy * dy + 1e-12), 0), 1);
-  return Math.hypot(u - (s.ax + dx * t), v - (s.ay + dy * t));
+export function leafColour(hue: number, shade: number, out: [number, number, number]): void {
+  let i = 0;
+  while (i < RAMP.length - 2 && hue > RAMP[i + 1][0]) i++;
+  const a = RAMP[i], b = RAMP[i + 1], t = sat((hue - a[0]) / (b[0] - a[0]));
+  const dead = 1 - 0.3 * sat((hue - 0.8) / 0.2);
+  for (let k = 0; k < 3; k++) out[k] = (a[k + 1] + (b[k + 1] - a[k + 1]) * t) * shade * dead;
 }
 
-function segmentShape(segs: readonly Seg[]): Shape {
-  return (u, v) => {
-    for (let i = segs.length - 1; i >= 0; i--) {
-      const s = segs[i];
-      if (u < Math.min(s.ax, s.bx) - s.r || u > Math.max(s.ax, s.bx) + s.r || v < Math.min(s.ay, s.by) - s.r || v > Math.max(s.ay, s.by) + s.r) continue;
-      if (segDist(s, u, v) < s.r) return s.shade;
-    }
-    return -1;
-  };
+interface Level {
+  /** rgb = colour multiplier / COLOUR_RANGE, a = coverage mask. */
+  colour: Uint8Array;
+  /** r, g = surface tilt along the tile's u and v (0.5 flat), b = translucency (thin lamina 1, veins 0), a = cavity openness. */
+  data: Uint8Array;
 }
 
-/** A twig with alternating pointed leaves (veins, midrib, petioles) and a terminal leaf. */
-function sprigShape(rng: Rng): Shape {
-  interface Leaf { bx: number; by: number; dx: number; dy: number; len: number; w: number; shade: number }
-  const stemX = (y: number): number => 0.5 + 0.03 * Math.sin(((0.96 - y) / 0.6) * 3.1);
-  const leaves: Leaf[] = [];
-  const count = 7;
-  for (let i = 0; i < count; i++) {
-    const t = 0.1 + 0.75 * (i / (count - 1));
-    const y = 0.96 - 0.6 * t;
-    const ang = (i % 2 === 0 ? 1 : -1) * rng.range(0.7, 1.0);
-    leaves.push({ bx: stemX(y), by: y, dx: Math.sin(ang), dy: -Math.cos(ang), len: 0.4 * (1 - 0.25 * t) * rng.range(0.92, 1.08), w: 0.11 * rng.range(0.9, 1.1), shade: rng.range(0.72, 1) });
-  }
-  leaves.push({ bx: stemX(0.36), by: 0.36, dx: 0, dy: -1, len: 0.3, w: 0.1, shade: 0.95 });
-  return (u, v) => {
-    for (let i = leaves.length - 1; i >= 0; i--) {
-      const l = leaves[i];
-      const px = u - l.bx, py = v - l.by;
-      const s = (px * l.dx + py * l.dy) / l.len;
-      const lat = -px * l.dy + py * l.dx;
-      if (s > -0.08 && s <= 0) {
-        if (Math.abs(lat) < 0.007) return 0.45;
-        continue;
-      }
-      if (s <= 0 || s >= 1) continue;
-      const hw = l.w * Math.sin(Math.PI * Math.pow(s, 0.7));
-      const a = Math.abs(lat);
-      if (a >= hw) continue;
-      const f = s * 6 - (a / hw) * 1.2;
-      const vein = Math.min(Math.max((Math.abs(f - Math.floor(f) - 0.5) - 0.38) / 0.12, 0), 1);
-      const rib = a < 0.005 ? 1.14 : 1;
-      return Math.min(l.shade * (1 - 0.24 * vein) * (0.9 + 0.1 * (1 - a / hw)) * rib, 1);
-    }
-    if (v > 0.36 && v < 0.96 && Math.abs(u - stemX(v)) < 0.011) return 0.4;
-    return -1;
-  };
+/** The procedural leaf atlas: two RGBA8 pyramids of ATLAS_MIPS levels (level l is (ATLAS_W >> l) x (ATLAS_H >> l) texels). */
+export interface LeafAtlas {
+  colour: Uint8Array[];
+  data: Uint8Array[];
 }
 
-/** A conifer spray: a curved stem with paired needle rows that shorten toward the tip. */
-function needleShape(rng: Rng): Shape {
-  const segs: Seg[] = [];
-  const pairs = 30;
-  const stem = (t: number): [number, number] => [0.5 + 0.04 * Math.sin(t * 2.6), 0.96 - 0.9 * t];
-  for (let i = 0; i < 12; i++) {
-    const [ax, ay] = stem(i / 12), [bx, by] = stem((i + 1) / 12);
-    segs.push({ ax, ay, bx, by, r: 0.011, shade: 0.4 });
-  }
-  for (let i = 0; i < pairs; i++) {
-    const t = 0.04 + 0.94 * (i / (pairs - 1));
-    const [sx, sy] = stem(t);
-    const len = 0.31 * (1 - 0.6 * t) * rng.range(0.85, 1.1);
-    for (const side of [-1, 1]) {
-      const ang = side * (1.15 - 0.45 * t + rng.range(-0.1, 0.1));
-      const ex = sx + Math.sin(ang) * len, ey = sy - Math.cos(ang) * len * 0.75 + 0.02;
-      segs.push({ ax: sx, ay: sy, bx: ex, by: ey, r: 0.0125, shade: 0.55 + 0.45 * t * rng.range(0.7, 1) + 0.15 * rng.next() });
-    }
-  }
-  segs.push({ ax: stem(1)[0], ay: stem(1)[1], bx: stem(1)[0], by: 0.05, r: 0.012, shade: 0.95 });
-  return segmentShape(segs);
-}
+/** Painted channels per sample: colour rgb, tilt u and v, translucency, openness. */
+const CHANNELS = 7;
+const STRIDE = CHANNELS + 1;
+const byte = (x: number): number => Math.round(sat(x) * 255);
 
-/** A canopy blob: overlapping lit leaf discs filling an ellipse with a ragged rim and a few sky gaps. */
-function blobShape(rng: Rng, seed: number): Shape {
-  interface Disc { x: number; y: number; r: number; shade: number }
-  const discs: Disc[] = [];
-  for (let i = 0; i < 260; i++) {
-    const a = rng.range(0, Math.PI * 2), rad = Math.sqrt(rng.next());
-    const x = 0.5 + Math.cos(a) * rad * 0.4, y = 0.5 + Math.sin(a) * rad * 0.36;
-    const edge = rad;
-    if (edge > 0.7 && rng.next() < (edge - 0.7) * 2.2) continue;
-    const r = rng.range(0.035, 0.07) * (1 - 0.3 * edge);
-    discs.push({ x, y, r, shade: (0.5 + 0.5 * (1 - (y - 0.14) / 0.72)) * rng.range(0.78, 1) });
-  }
-  const holes: Disc[] = [];
-  for (let i = 0; i < 14; i++) holes.push({ x: rng.range(0.32, 0.68), y: rng.range(0.32, 0.68), r: rng.range(0.018, 0.035), shade: 0 });
-  const GRID = 8;
-  const cells: Disc[][] = Array.from({ length: GRID * GRID }, () => []);
-  const cellOf = (x: number): number => Math.min(Math.max(Math.floor(x * GRID), 0), GRID - 1);
-  for (const d of discs) {
-    for (let cy = cellOf(d.y - d.r * 1.4); cy <= cellOf(d.y + d.r * 1.4); cy++) for (let cx = cellOf(d.x - d.r * 1.4); cx <= cellOf(d.x + d.r * 1.4); cx++) cells[cy * GRID + cx].push(d);
-  }
-  return (u, v) => {
-    for (const h of holes) if (Math.hypot(u - h.x, v - h.y) < h.r) return -1;
-    const list = cells[cellOf(v) * GRID + cellOf(u)];
-    const warp = 1 + 0.35 * (valueNoise2(u * 40, v * 40, seed) - 0.5);
-    for (let i = list.length - 1; i >= 0; i--) {
-      const d = list[i];
-      const dx = u - d.x, dy = v - d.y;
-      if (Math.hypot(dx, dy) * warp < d.r) return Math.min(d.shade * (0.82 + 0.18 * (-dy / d.r)), 1);
-    }
-    return -1;
-  };
-}
-
-/** A conifer silhouette: tiered whorls widening downward with ragged drooping tips, and a trunk stub. */
-function coniferShape(seed: number): Shape {
-  const tiers = 9;
-  return (u, v) => {
-    if (v < 0.03) return -1;
-    const t = (v - 0.03) / 0.87;
-    if (t > 1) return v < 0.985 && Math.abs(u - 0.5) < 0.022 ? 0.25 : -1;
-    const tier = t * tiers;
-    const local = tier - Math.floor(tier);
-    const w = 0.4 * Math.pow(t, 0.85) * (0.55 + 0.45 * Math.pow(local, 0.7)) * (0.9 + 0.2 * valueNoise2(u * 14, v * 30, seed));
-    const dx = Math.abs(u - 0.5);
-    if (dx > w) return -1;
-    const rim = dx / Math.max(w, 1e-3);
-    if (rim > 0.55 && hash2(Math.floor(u * 46), Math.floor(v * 46), seed) < (rim - 0.55) * 1.5) return -1;
-    return Math.min((0.42 + 0.5 * Math.sqrt(rim)) * (0.7 + 0.3 * (1 - local)), 1);
-  };
-}
-
-function rasterise(shape: Shape, out: Uint8Array, tile: number): void {
-  const ox = (tile & 1) * TILE_SIZE, oy = (tile >> 1) * TILE_SIZE;
-  let meanSum = 0, meanCount = 0;
-  const shades = new Float32Array(TILE_SIZE * TILE_SIZE);
+function rasterise(paint: Painter, tile: number, out: Level): void {
+  const ox = (tile % TILES_X) * TILE_SIZE, oy = Math.floor(tile / TILES_X) * TILE_SIZE;
+  const s = newSample(), c: [number, number, number] = [0, 0, 0];
+  const sum = new Float64Array(CHANNELS), mean = new Float64Array(CHANNELS);
+  let covered = 0;
+  const texel = new Float32Array(TILE_SIZE * TILE_SIZE * STRIDE);
   for (let y = 0; y < TILE_SIZE; y++) {
     for (let x = 0; x < TILE_SIZE; x++) {
-      let cover = 0, shade = 0;
+      sum.fill(0);
+      let cover = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
-          const s = shape((x + (sx + 0.5) / SS) / TILE_SIZE, (y + (sy + 0.5) / SS) / TILE_SIZE);
-          if (s >= 0) { cover++; shade += s; }
+          if (!paint((x + (sx + 0.5) / SS) / TILE_SIZE, (y + (sy + 0.5) / SS) / TILE_SIZE, s)) continue;
+          leafColour(s.hue, s.shade, c);
+          cover++;
+          sum[0] += c[0]; sum[1] += c[1]; sum[2] += c[2]; sum[3] += s.tu; sum[4] += s.tv; sum[5] += s.thin; sum[6] += s.open;
         }
       }
-      const o = ((oy + y) * ATLAS_SIZE + ox + x) * 4;
-      const s = cover > 0 ? shade / cover : -1;
-      shades[y * TILE_SIZE + x] = s;
-      out[o + 3] = Math.round((cover / (SS * SS)) * 255);
-      if (s >= 0) { meanSum += s; meanCount++; }
+      const o = (y * TILE_SIZE + x) * STRIDE;
+      texel[o] = cover / (SS * SS);
+      if (cover === 0) continue;
+      covered++;
+      for (let k = 0; k < CHANNELS; k++) { texel[o + 1 + k] = sum[k] / cover; mean[k] += texel[o + 1 + k]; }
     }
   }
-  const fill = meanCount > 0 ? meanSum / meanCount : 0.7;
+  // Empty texels take the tile's mean so bilinear taps and mips at a leaf edge never blend toward black.
+  const fill = Array.from(mean, (m) => (covered > 0 ? m / covered : 0));
+  if (covered === 0) { fill[0] = fill[1] = fill[2] = 0.7; fill[5] = 1; fill[6] = 1; }
   for (let y = 0; y < TILE_SIZE; y++) {
     for (let x = 0; x < TILE_SIZE; x++) {
-      const s = shades[y * TILE_SIZE + x];
-      const g = Math.round(Math.min(Math.max(s >= 0 ? s : fill, 0), 1) * 255);
-      const o = ((oy + y) * ATLAS_SIZE + ox + x) * 4;
-      out[o] = g; out[o + 1] = g; out[o + 2] = g;
+      const t = (y * TILE_SIZE + x) * STRIDE, a = texel[t];
+      const v = (k: number): number => (a > 0 ? texel[t + 1 + k] : fill[k]);
+      const o = ((oy + y) * ATLAS_W + ox + x) * 4;
+      out.colour[o] = byte(v(0) / COLOUR_RANGE); out.colour[o + 1] = byte(v(1) / COLOUR_RANGE); out.colour[o + 2] = byte(v(2) / COLOUR_RANGE);
+      out.colour[o + 3] = Math.round(a * 255);
+      out.data[o] = byte(0.5 + 0.5 * v(3)); out.data[o + 1] = byte(0.5 + 0.5 * v(4)); out.data[o + 2] = byte(v(5)); out.data[o + 3] = byte(v(6));
     }
   }
 }
 
-/** Fraction of a tile's texels at or above the alpha cut. */
-function tileCoverage(data: Uint8Array, size: number, tile: number, scale: number): number {
-  const side = size / 2, ox = (tile & 1) * side, oy = (tile >> 1) * side;
+/** Fraction of a tile's texels at or above the alpha cut, after scaling alpha by `scale`. */
+export function tileCoverage(colour: Uint8Array, width: number, height: number, tile: number, scale = 1): number {
+  const tw = width / TILES_X, th = height / TILES_Y, ox = (tile % TILES_X) * tw, oy = Math.floor(tile / TILES_X) * th;
   let n = 0;
-  for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) if (data[((oy + y) * size + ox + x) * 4 + 3] * scale >= ALPHA_CUT) n++;
-  return n / (side * side);
+  for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) if (colour[((oy + y) * width + ox + x) * 4 + 3] * scale >= ALPHA_CUT) n++;
+  return n / (tw * th);
 }
 
-/** Box-filtered next mip: rgb weighted by alpha, then alpha rescaled per tile so the alpha-tested coverage matches level 0 (leaves keep their mass at distance). */
-function downsample(src: Uint8Array, size: number, target: readonly number[]): Uint8Array {
-  const half = size / 2;
-  const dst = new Uint8Array(half * half * 4);
-  for (let y = 0; y < half; y++) {
-    for (let x = 0; x < half; x++) {
-      let a = 0, c = 0, plain = 0;
+/** Box-filtered next mip: every channel weighted by alpha, then alpha rescaled per tile so alpha-tested coverage matches level 0 (leaves keep their mass at distance). */
+function downsample(src: Level, w: number, h: number, target: readonly number[]): Level {
+  const hw = w >> 1, hh = h >> 1;
+  const dst: Level = { colour: new Uint8Array(hw * hh * 4), data: new Uint8Array(hw * hh * 4) };
+  for (let y = 0; y < hh; y++) {
+    for (let x = 0; x < hw; x++) {
+      let a = 0, weight = 0;
+      const acc = [0, 0, 0, 0, 0, 0, 0];
       for (let k = 0; k < 4; k++) {
-        const o = ((2 * y + (k >> 1)) * size + 2 * x + (k & 1)) * 4;
-        a += src[o + 3];
-        c += src[o] * src[o + 3];
-        plain += src[o];
+        const o = ((2 * y + (k >> 1)) * w + 2 * x + (k & 1)) * 4;
+        const al = src.colour[o + 3] + 0.5;
+        a += src.colour[o + 3];
+        weight += al;
+        for (let c = 0; c < 3; c++) { acc[c] += src.colour[o + c] * al; acc[3 + c] += src.data[o + c] * al; }
+        acc[6] += src.data[o + 3] * al;
       }
-      const o = (y * half + x) * 4;
-      const g = a > 0 ? c / a : plain / 4;
-      dst[o] = dst[o + 1] = dst[o + 2] = Math.round(g);
-      dst[o + 3] = Math.round(a / 4);
+      const o = (y * hw + x) * 4;
+      for (let c = 0; c < 3; c++) { dst.colour[o + c] = Math.round(acc[c] / weight); dst.data[o + c] = Math.round(acc[3 + c] / weight); }
+      dst.data[o + 3] = Math.round(acc[6] / weight);
+      dst.colour[o + 3] = Math.round(a / 4);
     }
   }
-  for (let tile = 0; tile < 4; tile++) {
+  for (let tile = 0; tile < TILE_COUNT; tile++) {
     let lo = 1, hi = 8;
     for (let it = 0; it < 14; it++) {
       const mid = 0.5 * (lo + hi);
-      if (tileCoverage(dst, half, tile, mid) < target[tile]) lo = mid; else hi = mid;
+      if (tileCoverage(dst.colour, hw, hh, tile, mid) < target[tile]) lo = mid; else hi = mid;
     }
-    const scale = hi;
-    const side = half / 2, ox = (tile & 1) * side, oy = (tile >> 1) * side;
-    for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
-      const o = ((oy + y) * half + ox + x) * 4 + 3;
-      dst[o] = Math.min(255, Math.round(dst[o] * scale));
+    const tw = hw / TILES_X, th = hh / TILES_Y, ox = (tile % TILES_X) * tw, oy = Math.floor(tile / TILES_X) * th;
+    for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+      const o = ((oy + y) * hw + ox + x) * 4 + 3;
+      dst.colour[o] = Math.min(255, Math.round(dst.colour[o] * hi));
     }
   }
   return dst;
 }
 
-/** The procedural 256 x 256 leaf atlas, deterministic, as ATLAS_MIPS RGBA8 mip levels (rgb = shade, a = mask). */
-export function buildLeafAtlas(): Uint8Array[] {
-  const rng = new Rng(0x1eaf);
-  const base = new Uint8Array(ATLAS_SIZE * ATLAS_SIZE * 4);
-  rasterise(sprigShape(rng), base, TILE.sprig);
-  rasterise(needleShape(rng), base, TILE.needles);
-  rasterise(blobShape(rng, 11), base, TILE.blob);
-  rasterise(coniferShape(23), base, TILE.conifer);
-  const target = [0, 1, 2, 3].map((t) => tileCoverage(base, ATLAS_SIZE, t, 1));
-  const levels: Uint8Array[] = [base];
-  let size = ATLAS_SIZE;
+/** The painters in tile order; each tile gets its own sub-stream so changing one leaf shape leaves the others untouched. */
+function painters(): Painter[] {
+  const rng = (k: number): Rng => new Rng(0x1eaf + k * 7919);
+  return [sprigPainter(rng(0)), sprayPainter(rng(1)), blobPainter(rng(2)), conifer(23), birchPainter(rng(4)), shrubPainter(rng(5))];
+}
+
+/** The deterministic leaf atlas; level 0 is ATLAS_W x ATLAS_H. */
+export function buildLeafAtlas(): LeafAtlas {
+  const base: Level = { colour: new Uint8Array(ATLAS_W * ATLAS_H * 4), data: new Uint8Array(ATLAS_W * ATLAS_H * 4) };
+  painters().forEach((p, tile) => rasterise(p, tile, base));
+  const target = Array.from({ length: TILE_COUNT }, (_, t) => tileCoverage(base.colour, ATLAS_W, ATLAS_H, t));
+  const levels: Level[] = [base];
+  let w = ATLAS_W, h = ATLAS_H;
   for (let l = 1; l < ATLAS_MIPS; l++) {
-    levels.push(downsample(levels[l - 1], size, target));
-    size /= 2;
+    levels.push(downsample(levels[l - 1], w, h, target));
+    w >>= 1; h >>= 1;
   }
-  return levels;
+  return { colour: levels.map((l) => l.colour), data: levels.map((l) => l.data) };
 }

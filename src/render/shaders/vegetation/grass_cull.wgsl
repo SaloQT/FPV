@@ -70,6 +70,8 @@ fn species(xz : vec2f, wetN : f32, rPick : f32, tuftDist : ptr<function, f32>) -
     *tuftDist = distance(xz, centre) / 0.32;
     if (*tuftDist < 1.0 && rPick < 0.85) { return 2u; }
   }
+  let weedN = tnFbm(xz * 0.35 + vec2f(29.0, 83.0), 2);
+  if (weedN > 0.6 && rPick < 0.4 * smoothstep(0.6, 0.74, weedN)) { return 4u; }
   if (wetN > 0.62 && hash21(bitcast<vec2u>(vec2i(floor(xz * 3.0)))) < 0.5 * smoothstep(0.62, 0.85, wetN)) { return 3u; }
   let meadow = smoothstep(0.52, 0.70, tnFbm(xz * 0.045 + vec2f(5.0, 11.0), 2)) * 0.85;
   return select(0u, 1u, rPick < meadow);
@@ -103,7 +105,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   let lw = terrainLayerWeights(xz, y, nrm.y, maps, vp.grass2.z);
   let cover = (lw.lo.x + lw.lo.y) / max(dot(lw.lo, vec4f(1.0)) + dot(lw.hi, vec4f(1.0)), 1.0e-4);
   let wetN = saturate1(maps.w * 1.8);
-  let density = smoothstep(0.30, 0.65, cover) * (0.3 + 0.7 * wetN) * (1.0 - smoothstep(0.6, 0.9, maps.y));
+  let density = smoothstep(0.30, 0.65, cover) * (0.45 + 0.55 * wetN) * (1.0 - smoothstep(0.6, 0.9, maps.y));
   if (u01(h.z) >= density) { return; }
 
   let g = pcg3(h + vec3u(7u, 13u, 29u));
@@ -116,21 +118,22 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   var height = 0.0;
   var widthMm = 0.0;
   switch (sp) {
-    case 0u: { height = 0.06 + 0.12 * rH; widthMm = 6.0 + 3.0 * rW; }
-    case 1u: { height = 0.25 + 0.35 * rH; widthMm = 7.0 + 4.0 * rW; }
-    case 2u: { height = (0.13 + 0.17 * rH) * (1.0 - 0.35 * tuftDist); widthMm = 8.0 + 4.0 * rW; }
-    default: { height = 0.35 + 0.25 * rH; widthMm = 9.0 + 3.0 * rW; }
+    case 0u: { height = 0.06 + 0.12 * rH; widthMm = 3.5 + 2.0 * rW; }
+    case 1u: { height = 0.25 + 0.35 * rH; widthMm = 4.0 + 3.0 * rW; }
+    case 2u: { height = (0.13 + 0.17 * rH) * (1.0 - 0.35 * tuftDist); widthMm = 5.0 + 3.0 * rW; }
+    case 3u: { height = 0.35 + 0.25 * rH; widthMm = 7.0 + 3.0 * rW; }
+    default: { height = 0.04 + 0.08 * rH; widthMm = 12.0 + 10.0 * rW; }
   }
   height *= 0.85 + 0.35 * wetN;
 
   var code = 0u;
   if (sp != 3u) {
     let flowerN = tnFbm(xz * 0.22 + vec2f(3.0, 71.0), 2);
-    if (u01(q.y) < 0.03 * (0.35 + 1.9 * smoothstep(0.48, 0.68, flowerN))) {
+    if (u01(q.y) < 0.005 * (0.25 + 2.2 * smoothstep(0.52, 0.72, flowerN))) {
       let clump = hash21(bitcast<vec2u>(vec2i(floor(xz / 9.0))));
       code = 1u + select(u32(clump * 4.0) % 4u, q.z % 4u, u01(q.z >> 4u) < 0.25);
       height = max(height, 0.18 + 0.25 * rH);
-    } else if (sp == 1u && u01(q.z) < 0.4) {
+    } else if (sp == 1u && u01(q.z) < 0.12) {
       code = 5u;
     }
   }

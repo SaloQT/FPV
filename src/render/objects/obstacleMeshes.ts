@@ -77,21 +77,18 @@ function rock(b: MeshBuilder, o: TrackObstacle, seed: number): void {
   b.a2 = 0;
 }
 
-function tree(b: MeshBuilder, o: TrackObstacle, seed: number): void {
+/**
+ * The visible tree is a vegetation-module instance: placement.ts puts a real tree of the best-fitting species on the obstacle's spot, so it
+ * has the forest's bark, leaves, LODs and wind. The static mesh only keeps the footing, a stump buried inside that tree's trunk, and two
+ * unreferenced vertices at ground and crown height so the mesh bounds still span the obstacle's full extent.
+ */
+function tree(b: MeshBuilder, o: TrackObstacle): void {
   const r = o.size[0];
   const h = o.size[1];
-  const canopy = Math.max(3.5 * r, 0.2 * h);
   b.kind = KIND.TRUNK;
-  lathe(b, [[0, -0.1], [r * 1.15, -0.1], [r * 1.05, 0.25], [r * 0.6, h * 0.7], [0, h * 0.72]], 8, { polar: true });
-  b.kind = KIND.LEAVES;
-  b.a2 = seeded(seed);
-  for (let k = 0; k < 4; k++) {
-    const yb = h * (0.2 + 0.16 * k);
-    const rad = canopy * (1 - 0.2 * k);
-    const top = yb + h * 0.34;
-    lathe(b, [[0, yb + h * 0.03], [rad, yb], [rad * 0.5, yb + (top - yb) * 0.5], [0, top]], 12, { polar: true, hardAngle: 1.2 });
-  }
-  b.a2 = 0;
+  lathe(b, [[0, -0.1], [r * 0.6, -0.1], [r * 0.5, 0.5], [0, 0.55]], 8, { polar: true });
+  b.vertex([0, -0.1, 0], [0, 1, 0]);
+  b.vertex([0, h * 0.9, 0], [0, 1, 0]);
 }
 
 /** Adds one obstacle at its world position; cloth flags (flagpole) are appended to `flags`. */
@@ -110,7 +107,7 @@ export function buildObstacle(b: MeshBuilder, o: TrackObstacle, index: number, f
       rock(b, o, index + 11);
       break;
     case 'tree':
-      tree(b, o, index + 5);
+      tree(b, o);
       break;
     case 'pole':
       pole(b, 0, 0, o.size[1], 0, o.size[0], KIND.POLE);

@@ -7,7 +7,7 @@
  *                            B sand/snow, dirt = brownish mix), 4 wetness
  *   ?seed=N  ?t=noon|dusk|night  ?quality=low|medium|high|ultra  ?x=&z=  camera position in metres (defaults to a per-view spot)
  *   ?yaw=deg (compass, clockwise from north = -Z)  ?pitch=deg  ?alt=m above ground  ?fov=deg  ?spin=deg/s  ?freeze=1 (fixed clock)
- *   ?frames=N (stop rendering after N frames, keeps screenshots fast on software GPUs)  ?osd=0
+ *   ?frames=N (stop rendering after N frames, ready is published once the GPU finished them: fast, exact screenshots on software GPUs)  ?osd=0
  *   ?veg=0 drops the vegetation and objects modules so only the ground is drawn
  * window.__fpv carries { ready, stats, errors, terrain: TerrainStats, probe }.
  */
@@ -125,9 +125,13 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
     renderer.render(input);
     frameCount++;
     if (osd && frameCount % 10 === 0) drawOsd(osd, osdCanvas, renderer.stats, params.time);
-    if (framesLeftUntilReady > 0 && --framesLeftUntilReady === 0) publish();
-    if (frameCount < params.frames && !renderer.lost) requestAnimationFrame(tick);
-    else if (framesLeftUntilReady > 0) publish();
+    if (frameCount < params.frames && !renderer.lost) {
+      if (params.frames === Infinity && framesLeftUntilReady > 0 && --framesLeftUntilReady === 0) publish();
+      requestAnimationFrame(tick);
+    } else {
+      // The software GPU queues frames far faster than it draws them; ready must wait for the last one or the screenshot is black.
+      void renderer.device.queue.onSubmittedWorkDone().then(publish);
+    }
   };
   requestAnimationFrame(tick);
 }

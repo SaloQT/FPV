@@ -2,12 +2,13 @@ import type { RenderQuality, TerrainData, TrackData } from '../../contracts';
 import { PathIndex } from '../../world/track/pathIndex';
 import { deriveSeed } from '../../world/track/rng';
 import { hash2, smoothstep } from './noise';
-import { PlacementRules, type Pick } from './placementRules';
+import { MAX_TREE_SCALE, MIN_TREE_SCALE, PlacementRules, type Pick } from './placementRules';
 import { COARSE, buildRegion, type Region } from './region';
 import { rockAssets } from './rockGen';
+import { KIND } from './meshBuilder';
 import { SpatialHash } from './spatialHash';
 import { TerrainFields } from './terrainFields';
-import { VARIANT_DEFS, variantPlan } from './variants';
+import { VARIANT_DEFS, VARIANTS_OF, variantPlan } from './variants';
 
 export interface PlacementLimits {
   /** Trees and bushes together. */
@@ -17,10 +18,10 @@ export interface PlacementLimits {
 
 /** Instance budgets per quality tier; the smaller tiers are prefixes of the larger ones (the walk is nearest-track first). */
 export const TIER_LIMITS: Readonly<Record<RenderQuality, PlacementLimits>> = {
-  low: { plants: 12000, rocks: 2000 },
-  medium: { plants: 16000, rocks: 2600 },
-  high: { plants: 20000, rocks: 3200 },
-  ultra: { plants: 25000, rocks: 4000 },
+  low: { plants: 16000, rocks: 2000 },
+  medium: { plants: 22000, rocks: 2600 },
+  high: { plants: 30000, rocks: 3200 },
+  ultra: { plants: 40000, rocks: 4000 },
 };
 
 /** Struct-of-arrays instance list; `variant` indexes VARIANT_DEFS. */
@@ -43,6 +44,8 @@ export interface VegPlacement {
   rocks: InstanceSet;
   trees: number;
   bushes: number;
+  /** The first `obstacleTrees` plants are the track's tree obstacles (real trees on the obstacle's spot, whatever the ground); the rest follow the density rules. */
+  obstacleTrees: number;
 }
 
 export const REGION_RADIUS = 1000;
@@ -61,6 +64,8 @@ const ROCK_PER_COARSE = COARSE / ROCK_CELL;
 const CORRIDOR_DENSITY = 0.55;
 const CORRIDOR_WIDTH = 70;
 const TREE_TRUNK = 0.3;
+/** Unit colour multiplier (decoded as value * 2). */
+const NEUTRAL_TINT = 0x80808080;
 const BUSH_TRUNK = 0.5;
 
 function makeSet(cap: number): InstanceSet {
@@ -103,6 +108,9 @@ interface Tables {
   crown: number[];
   /** Height in metres of each rock mesh at scale 1. */
   rockHeight: number[];
+  /** Trunk radius and crown-top height (m at scale 1) of each plant variant. */
+  trunk: number[];
+  top: number[];
 }
 
 let tables: Tables | null = null;
@@ -111,6 +119,8 @@ function lookup(): Tables {
   tables ??= {
     crown: VARIANT_DEFS.map((_, v) => { const p = variantPlan(v); return p ? Math.max(p.crownR[0], p.crownR[2]) : 0; }),
     rockHeight: VARIANT_DEFS.map((d) => (d.rock >= 0 ? rockAssets()[d.rock].height : 0)),
+    trunk: VARIANT_DEFS.map((_, v) => variantPlan(v)?.trunkRadius ?? 0),
+    top: VARIANT_DEFS.map((_, v) => { const p = variantPlan(v); return p ? (p.foliage === KIND.leaf ? p.crownC[1] + p.crownR[1] - 0.8 : p.height) : 0; }),
   };
   return tables;
 }
@@ -126,6 +136,7 @@ class Placer {
   private readonly tables = lookup();
   private readonly sJit: number;
   private readonly sPerm: number;
+  obstacleTrees = 0;
 
   constructor(readonly terrain: TerrainData, private readonly track: TrackData | null, readonly region: Region) {
     const seed = deriveSeed(terrain.seed, 0x7e6e);
@@ -179,9 +190,37 @@ class Placer {
     return take(out, out.count);
   }
 
+  /**
+   * The track's tree obstacles become real trees: the species and scale whose trunk and height best match the obstacle's collision
+   * cylinder (radius `size[0]`, height `size[1]`), leaning on the local conifer share. Placed first so every quality tier keeps them.
+   */
+  private placeObstacleTrees(out: InstanceSet): void {
+    const f = this.fields, t = this.tables;
+    const trees = [...VARIANTS_OF.spruce, ...VARIANTS_OF.pine, ...VARIANTS_OF.oak, ...VARIANTS_OF.birch];
+    this.track?.obstacles.forEach((o, index) => {
+      if (o.kind !== 'tree') return;
+      const [x, , z] = o.pos, r = o.size[0], h = o.size[1];
+      const hRel = (f.height(x, z) - f.data.minHeight) / Math.max(f.data.maxHeight - f.data.minHeight, 1);
+      const share = this.rules.conifer(x, z, hRel, f.wetness(x, z));
+      let best = trees[0], bestScore = Infinity, bestScale = 1;
+      for (const v of trees) {
+        const sr = r / t.trunk[v], sh = h / t.top[v];
+        const conifer = variantPlan(v)?.foliage === KIND.needle ? 1 : 0;
+        const score = Math.abs(Math.log(sr / sh)) + 0.8 * Math.abs(conifer - share) + 0.3 * hash2(index, v, this.sJit);
+        if (score < bestScore) { bestScore = score; best = v; bestScale = Math.sqrt(sr * sh); }
+      }
+      const scale = Math.min(Math.max(bestScale, MIN_TREE_SCALE), MAX_TREE_SCALE * 1.15);
+      f.gradient(x, z);
+      push(out, x, f.height(x, z) - 0.05 * scale, z, { variant: best, scale, yaw: o.yaw, tint: NEUTRAL_TINT }, packNormal(f.gx, f.gz), this.pathDistance(x, z, 0));
+      this.plantHash.add(x, z, VARIANT_DEFS[best].spacing * scale, 0);
+      this.obstacleTrees++;
+    });
+  }
+
   placePlants(cap: number): InstanceSet {
     const out = makeSet(cap), r = this.region, pick = this.pick, f = this.fields;
     const n2 = PLANT_PER_COARSE * PLANT_PER_COARSE;
+    this.placeObstacleTrees(out);
     for (const c of r.order) {
       if (out.count >= cap) break;
       const ci = r.i0 + (c % r.nx), cj = r.j0 + Math.floor(c / r.nx), cellDist = r.dist[c];
@@ -223,5 +262,5 @@ export function placeVegetation(terrain: TerrainData, track: TrackData | null, l
   const shown = limits.rocks < rocks.count ? take(rocks, limits.rocks) : rocks;
   let trees = 0;
   for (let i = 0; i < plants.count; i++) if (VARIANT_DEFS[plants.variant[i]].group === 'tree') trees++;
-  return { plants, rocks: shown, trees, bushes: plants.count - trees };
+  return { plants, rocks: shown, trees, bushes: plants.count - trees, obstacleTrees: placer.obstacleTrees };
 }

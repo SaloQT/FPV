@@ -10,7 +10,7 @@ function emptySet(): InstanceSet {
   return { count: 0, pos: new Float32Array(0), scale: new Float32Array(0), yaw: new Float32Array(0), variant: new Uint8Array(0), tint: new Uint32Array(0), nrm: new Uint32Array(0), pathDist: new Float32Array(0) };
 }
 
-const nothing: VegPlacement = { plants: emptySet(), rocks: emptySet(), trees: 0, bushes: 0 };
+const nothing: VegPlacement = { plants: emptySet(), rocks: emptySet(), trees: 0, bushes: 0, obstacleTrees: 0 };
 
 describe('forestSpot', () => {
   const { high } = testScene();

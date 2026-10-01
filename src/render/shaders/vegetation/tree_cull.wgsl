@@ -1,5 +1,5 @@
 // One thread per instance slot: distance, pixel-size and frustum culling of a bounding sphere, LOD selection, and an append into the
-// per-(variant, LOD) visible lists. Counts become indirect instance counts in tree_finalize.wgsl; nothing is read back.
+// per-(variant, LOD) visible lists (a plant inside a LOD hand-over band goes into both lists, rocks switch hard). Counts become indirect instance counts in tree_finalize.wgsl; nothing is read back.
 #include "vegetation/veg_params.wgsl"
 #include "vegetation/veg_instance.wgsl"
 
@@ -26,8 +26,14 @@ fn cull(@builtin(global_invocation_id) gid : vec3u) {
   let pxPerM = frame.screen.y * 0.5 * frame.proj[1][1];
   if (r * pxPerM < vp.tree.z * d) { return; }
   if (!frustumSphereVisible(c, r * FRUSTUM_SCALE + FRUSTUM_PAD)) { return; }
-  let reach = r * vp.tree.x;
-  let lod = select(select(2u, 1u, d < v.bound.w * reach), 0u, d < v.bound.z * reach);
-  let slot = atomicAdd(&counts[inst.variant * 3u + lod], 1u);
-  visible[lod * vp.treeCount.x + v.range.x + slot] = i;
+  let e = lodEdges(v, inst);
+  let b = select(LOD_FADE_BAND, 0.0, v.range.z == 2u);
+  if (d < e.x * (1.0 + b)) { append(0u, inst.variant, v.range.x, i); }
+  if (d >= e.x * (1.0 - b) && d < e.y * (1.0 + b)) { append(1u, inst.variant, v.range.x, i); }
+  if (d >= e.y * (1.0 - b)) { append(2u, inst.variant, v.range.x, i); }
+}
+
+fn append(lod : u32, variant : u32, first : u32, i : u32) {
+  let slot = atomicAdd(&counts[variant * 3u + lod], 1u);
+  visible[lod * vp.treeCount.x + first + slot] = i;
 }

@@ -23,19 +23,29 @@ function sameInstances(a: InstanceSet, b: InstanceSet, n: number): void {
   expect(a.nrm.subarray(0, n)).toEqual(b.nrm.subarray(0, n));
 }
 
+/** The plants after the track's tree obstacles, which stand wherever the track put them and are exempt from the density rules. */
+function natural(s: InstanceSet, skip: number): InstanceSet {
+  const n = s.count - skip;
+  return {
+    count: n, pos: s.pos.subarray(skip * 3), scale: s.scale.subarray(skip), yaw: s.yaw.subarray(skip), variant: s.variant.subarray(skip),
+    tint: s.tint.subarray(skip), nrm: s.nrm.subarray(skip), pathDist: s.pathDist.subarray(skip),
+  };
+}
+
 describe('placeVegetation on a generated terrain and race track', () => {
   const { terrain, track, high } = testScene();
   const fields = new TerrainFields(terrain);
-  const { plants, rocks } = high;
+  const { plants: all, rocks } = high;
+  const plants = natural(all, high.obstacleTrees);
 
   it('fills the high tier to its limits with consistent bookkeeping', () => {
-    expect(plants.count).toBe(TIER_LIMITS.high.plants);
+    expect(all.count).toBe(TIER_LIMITS.high.plants);
     expect(rocks.count).toBe(TIER_LIMITS.high.rocks);
-    expect(high.trees + high.bushes).toBe(plants.count);
+    expect(high.trees + high.bushes).toBe(all.count);
     let trees = 0;
-    for (let i = 0; i < plants.count; i++) if (isTree(plants.variant[i])) trees++;
+    for (let i = 0; i < all.count; i++) if (isTree(all.variant[i])) trees++;
     expect(high.trees).toBe(trees);
-    for (const s of [plants, rocks]) {
+    for (const s of [all, rocks]) {
       expect(s.pos.length).toBe(s.count * 3);
       expect(s.scale.length).toBe(s.count);
       expect(s.pathDist.length).toBe(s.count);
@@ -48,7 +58,7 @@ describe('placeVegetation on a generated terrain and race track', () => {
 
   it('places plants from variants 0-7 and rocks from 8-11, using every species', () => {
     const plantCount = new Array<number>(VARIANT_DEFS.length).fill(0), rockCount = new Array<number>(VARIANT_DEFS.length).fill(0);
-    for (let i = 0; i < plants.count; i++) plantCount[plants.variant[i]]++;
+    for (let i = 0; i < all.count; i++) plantCount[all.variant[i]]++;
     for (let i = 0; i < rocks.count; i++) rockCount[rocks.variant[i]]++;
     VARIANT_DEFS.forEach((d, v) => {
       if (d.group === 'rock') { expect(plantCount[v]).toBe(0); expect(rockCount[v]).toBeGreaterThan(100); }
@@ -60,9 +70,9 @@ describe('placeVegetation on a generated terrain and race track', () => {
 
   it('is deterministic: a second run produces identical arrays', () => {
     const again = placeVegetation(terrain, track, TIER_LIMITS.high);
-    sameInstances(again.plants, plants, plants.count);
+    sameInstances(again.plants, all, all.count);
     sameInstances(again.rocks, rocks, rocks.count);
-    expect(again.plants.pathDist).toEqual(plants.pathDist);
+    expect(again.plants.pathDist).toEqual(all.pathDist);
     expect(again.trees).toBe(high.trees);
   }, SLOW);
 
@@ -73,18 +83,34 @@ describe('placeVegetation on a generated terrain and race track', () => {
     expect(low.rocks.count).toBe(TIER_LIMITS.low.rocks);
     expect(ultra.plants.count).toBe(TIER_LIMITS.ultra.plants);
     expect(ultra.rocks.count).toBe(TIER_LIMITS.ultra.rocks);
-    sameInstances(low.plants, plants, low.plants.count);
+    sameInstances(low.plants, all, low.plants.count);
     sameInstances(low.rocks, rocks, low.rocks.count);
-    sameInstances(plants, ultra.plants, plants.count);
+    sameInstances(all, ultra.plants, all.count);
     sameInstances(rocks, ultra.rocks, rocks.count);
   }, SLOW);
 
   it('changes with the terrain seed', () => {
     const other = placeVegetation({ ...terrain, seed: terrain.seed + 1 }, track, { plants: 2000, rocks: 300 });
     let same = 0;
-    for (let i = 0; i < 2000; i++) if (other.plants.pos[i * 3] === plants.pos[i * 3] && other.plants.pos[i * 3 + 2] === plants.pos[i * 3 + 2]) same++;
+    for (let i = 0; i < 2000; i++) if (other.plants.pos[i * 3] === all.pos[i * 3] && other.plants.pos[i * 3 + 2] === all.pos[i * 3 + 2]) same++;
     expect(same).toBeLessThan(100);
   }, SLOW);
+
+  it('turns every tree obstacle into a real tree on its spot, sized to its collision cylinder, ahead of all other plants', () => {
+    const obstacles = track.obstacles.filter((o) => o.kind === 'tree');
+    expect(obstacles.length).toBeGreaterThan(0);
+    expect(high.obstacleTrees).toBe(obstacles.length);
+    obstacles.forEach((o, i) => {
+      expect(all.pos[i * 3]).toBeCloseTo(o.pos[0], 3);
+      expect(all.pos[i * 3 + 2]).toBeCloseTo(o.pos[2], 3);
+      expect(isTree(all.variant[i])).toBe(true);
+      expect(all.yaw[i]).toBeCloseTo(o.yaw, 5);
+      const plan = variantPlan(all.variant[i]);
+      const trunk = (plan?.trunkRadius ?? 0) * all.scale[i];
+      expect(trunk).toBeGreaterThan(o.size[0] * 0.5);
+      expect(trunk).toBeLessThan(o.size[0] * 2);
+    });
+  });
 
   it('keeps trees and bushes on soil, off steep slopes, out of water and rivers and below the tree line', () => {
     const range = terrain.maxHeight - terrain.minHeight;
