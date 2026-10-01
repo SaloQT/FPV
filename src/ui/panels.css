@@ -1,0 +1,88 @@
+/* Failure screen, benchmark results and the extra rows of the F3 overlay. Same look as ui.css; kept separate so each file has one owner. */
+
+.fpv-fail, .fpv-bench, .fpv-perf-passes {
+  --fpv-panel: rgba(15, 18, 25, 0.94);
+  --fpv-line: rgba(255, 255, 255, 0.12);
+  --fpv-text: #eef1f6;
+  --fpv-muted: #a0a9b8;
+  --fpv-accent: #4db4ff;
+  --fpv-accent-ink: #04121f;
+  --fpv-warn: #ffb14d;
+  --fpv-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--fpv-text);
+  box-sizing: border-box;
+}
+.fpv-fail *, .fpv-bench *, .fpv-perf-passes * { box-sizing: border-box; }
+.fpv-fail[hidden], .fpv-bench[hidden], .fpv-perf-passes[hidden] { display: none !important; }
+
+.fpv-fail {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at 50% 40%, rgba(8, 11, 17, 0.9), rgba(2, 3, 6, 0.97));
+}
+.fpv-fail-card { width: min(640px, 100%); margin: auto; padding: 26px 28px 24px; background: var(--fpv-panel); border: 1px solid var(--fpv-line); border-radius: 16px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6); }
+.fpv-fail-title { margin: 0 0 6px; font-size: 22px; font-weight: 650; }
+.fpv-fail-summary { margin: 0 0 14px; color: var(--fpv-muted); }
+.fpv-fail-sub { margin: 0 0 6px; font: 650 11px/1.4 system-ui, sans-serif; letter-spacing: 0.09em; text-transform: uppercase; color: var(--fpv-muted); }
+.fpv-fail-steps { margin: 0 0 14px; padding-left: 20px; }
+.fpv-fail-steps li { margin: 0 0 7px; }
+.fpv-fail-status { min-height: 1.5em; margin: 0 0 10px; color: var(--fpv-warn); }
+.fpv-fail-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.fpv-fail-detail { margin-top: 16px; color: var(--fpv-muted); font-size: 13px; }
+.fpv-fail-detail summary { cursor: pointer; }
+.fpv-fail-detail pre { max-height: 180px; margin: 8px 0 0; padding: 10px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 var(--fpv-mono); background: rgba(255, 255, 255, 0.05); border-radius: 8px; }
+.fpv-fail :focus-visible, .fpv-bench :focus-visible { outline: 2px solid var(--fpv-accent); outline-offset: 2px; }
+
+.fpv-fail .fpv-btn, .fpv-bench .fpv-btn {
+  padding: 8px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fpv-text);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.fpv-fail .fpv-btn:hover:not(:disabled), .fpv-bench .fpv-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+.fpv-fail .fpv-btn:disabled { opacity: 0.4; cursor: default; }
+.fpv-fail .fpv-btn--primary, .fpv-bench .fpv-btn--primary { color: var(--fpv-accent-ink); background: var(--fpv-accent); border-color: transparent; }
+.fpv-fail .fpv-btn--primary:hover:not(:disabled), .fpv-bench .fpv-btn--primary:hover:not(:disabled) { background: #7ac8ff; }
+
+.fpv-bench {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 55;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 18px 20px 16px;
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  background: var(--fpv-panel);
+  border: 1px solid var(--fpv-line);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+.fpv-bench-title { margin: 0 0 2px; font-size: 18px; font-weight: 650; }
+.fpv-bench-note { margin: 0 0 10px; color: var(--fpv-muted); font-size: 13px; }
+.fpv-bench-warn { margin: 0 0 10px; color: var(--fpv-warn); font-size: 13px; }
+.fpv-bench-table { width: 100%; border-collapse: collapse; margin: 0 0 12px; font: 13px/1.5 var(--fpv-mono); font-variant-numeric: tabular-nums; }
+.fpv-bench-table th { padding: 2px 10px 2px 0; text-align: left; font-weight: 400; color: var(--fpv-muted); white-space: nowrap; }
+.fpv-bench-table td { padding: 2px 0; text-align: right; overflow-wrap: anywhere; }
+.fpv-bench-table tr + tr th, .fpv-bench-table tr + tr td { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.fpv-bench-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.fpv-perf-passes { margin: 8px 0 0; width: 100%; border-collapse: collapse; font: 11.5px/1.3 var(--fpv-mono); font-variant-numeric: tabular-nums; }
+.fpv-perf-passes th { padding: 0 8px 3px 0; text-align: left; vertical-align: top; font-weight: 400; color: var(--fpv-muted); white-space: nowrap; }
+.fpv-perf-passes td { padding: 0 0 3px; width: 96px; text-align: right; vertical-align: top; }
+.fpv-perf-bar { display: block; height: 2px; margin-top: 1px; background: var(--fpv-accent); border-radius: 1px; opacity: 0.8; }
+.fpv-perf-errors { color: #ff8080; }

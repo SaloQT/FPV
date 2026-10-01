@@ -37,3 +37,21 @@ fn zodiacalS10(cosElong : f32, sinLat : f32) -> f32 {
 fn zodiacalNits(dir : vec3f, sunDir : vec3f, eclNorth : vec3f) -> vec3f {
   return ZODIACAL_COLOR * (zodiacalS10(dot(dir, sunDir), dot(dir, eclNorth)) * NITS_PER_S10);
 }
+
+// Total exposure (scene-linear value per nit of scene radiance) the camera settles on, from the CPU pre-exposure alone. It is the night branch
+// of targetTotalEv in src/render/post/exposure.ts (night weight 1: the key falls only NIGHT_SLOPE per EV below NIGHT_KNEE_NITS, and the sensor
+// gain ends at MAX_GAIN_EV over the daylight reference), used to keep the moon's exposed peak under the white point whatever the gain is.
+const EXPOSURE_LOG2_KEY : f32 = -2.1844245711374275;
+const EXPOSURE_KEY_KNEE_EV : f32 = 6.643856189774724;
+const EXPOSURE_KEY_SLOPE : f32 = 0.3;
+const EXPOSURE_NIGHT_KNEE_EV : f32 = -3.321928094887362;
+const EXPOSURE_NIGHT_SLOPE : f32 = 0.0;
+const EXPOSURE_MAX_TOTAL_EV : f32 = 6.0123;
+const EXPOSURE_CPU_KEY_EV : f32 = -2.0;
+
+fn nightExposure(preExposure : f32) -> f32 {
+  let lumEv = EXPOSURE_CPU_KEY_EV - log2(preExposure);
+  let keyEv = EXPOSURE_LOG2_KEY + EXPOSURE_KEY_SLOPE * min(lumEv - EXPOSURE_KEY_KNEE_EV, 0.0)
+            + (EXPOSURE_NIGHT_SLOPE - EXPOSURE_KEY_SLOPE) * min(lumEv - EXPOSURE_NIGHT_KNEE_EV, 0.0);
+  return exp2(min(keyEv - lumEv, EXPOSURE_MAX_TOTAL_EV));
+}

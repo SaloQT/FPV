@@ -1,6 +1,7 @@
 import { el, setHidden, setText } from './dom';
-import { FrameHistory, PERF_LABELS, formatPerf, newFrameSummary, newPerfSample, type PerfSource } from './perfModel';
+import { FrameHistory, PERF_LABELS, PERF_PASSES, formatPasses, formatPerf, newFrameSummary, newPerfSample, type PerfSource } from './perfModel';
 import './ui.css';
+import './panels.css';
 
 export interface PerfOptions {
   /** The `#ui` element the overlay is appended to. */
@@ -25,6 +26,11 @@ export class PerfOverlay {
   private readonly sample = newPerfSample();
   private readonly lines: string[] = [];
   private readonly values: HTMLElement[] = [];
+  private readonly passTable: HTMLTableElement;
+  private readonly passValues: HTMLElement[] = [];
+  private readonly passBars: HTMLElement[] = [];
+  private readonly passText: string[] = [];
+  private readonly passShare: number[] = [];
   private readonly ctx: CanvasRenderingContext2D | null;
   private readonly scale: number;
   private lastPaint = -Infinity;
@@ -37,12 +43,22 @@ export class PerfOverlay {
       this.values.push(value);
       list.append(el('dt', '', label), value);
     }
+    this.passTable = el('table', 'fpv-perf-passes');
+    this.passTable.setAttribute('aria-label', 'GPU time per pass');
+    for (const name of PERF_PASSES) {
+      const value = el('span');
+      const bar = el('i', 'fpv-perf-bar');
+      this.passValues.push(value);
+      this.passBars.push(bar);
+      this.passTable.append(el('tr', '', el('th', '', name), el('td', '', value, bar)));
+    }
+    this.passTable.hidden = true;
     const canvas = el('canvas', 'fpv-perf-graph');
     this.scale = Math.max(1, window.devicePixelRatio || 1);
     canvas.width = GRAPH_W * this.scale;
     canvas.height = GRAPH_H * this.scale;
     this.ctx = canvas.getContext('2d');
-    this.element = el('aside', 'fpv-perf', el('h2', 'fpv-perf-title', 'Performance'), list, canvas);
+    this.element = el('aside', 'fpv-perf', el('h2', 'fpv-perf-title', 'Performance'), list, this.passTable, canvas);
     this.element.setAttribute('aria-label', 'Performance');
     this.element.hidden = true;
     opts.root.append(this.element);
@@ -76,11 +92,23 @@ export class PerfOverlay {
     this.history.summarize(this.summary);
     formatPerf(this.sample, this.summary, this.lines);
     for (let i = 0; i < this.values.length; i++) setText(this.values[i], this.lines[i]);
+    this.values[this.values.length - 1].classList.toggle('fpv-perf-errors', this.sample.errors > 0);
+    this.paintPasses();
     this.drawGraph();
   }
 
   dispose(): void {
     this.element.remove();
+  }
+
+  private paintPasses(): void {
+    const measured = formatPasses(this.sample.passMs, this.passText, this.passShare);
+    setHidden(this.passTable, !measured);
+    if (!measured) return;
+    for (let i = 0; i < this.passValues.length; i++) {
+      setText(this.passValues[i], this.passText[i]);
+      this.passBars[i].style.width = `${Math.round(this.passShare[i] * 100)}%`;
+    }
   }
 
   private drawGraph(): void {

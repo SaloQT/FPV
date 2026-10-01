@@ -119,8 +119,12 @@ fn coneSurf(m : MatIn, s : Surf) -> Surf {
   let band = max(sdCover(abs(v - 0.5) - 0.07, m.fp / max(m.a2, 0.01)), sdCover(abs(v - 0.69) - 0.05, m.fp / max(m.a2, 0.01)));
   let scuff = fbm2(vec2f(m.uv.x * 5.0, m.uv.y * 20.0));
   let orange = vec3f(0.85, 0.16, 0.015) * (0.8 + 0.3 * scuff);
-  o.albedo = mix(orange, vec3f(0.72, 0.72, 0.7), band);
-  o.roughness = mix(0.45, 0.22, band);
+  // Dust and splashed soil on the lower third, sun-bleached paint on the shoulder.
+  let dirt = smoothstep(0.38, 0.0, v) * (0.25 + 0.6 * fbm2(vec2f(m.uv.x * 9.0, m.uv.y * 30.0)));
+  let faded = smoothstep(0.55, 1.0, v) * 0.18;
+  let paint = mix(orange, vec3f(0.62, 0.2, 0.05), faded);
+  o.albedo = mix(mix(paint, vec3f(0.72, 0.72, 0.7), band), vec3f(0.1, 0.075, 0.05), dirt * (1.0 - 0.5 * band));
+  o.roughness = mix(0.45, 0.22, band) + 0.4 * dirt;
   return o;
 }
 

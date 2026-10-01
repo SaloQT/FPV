@@ -39,9 +39,10 @@ describe('settings tabs', () => {
       if (c?.kind !== 'select') throw new Error(`${id} is not a select`);
       return c.options.map((o) => o.value);
     };
-    expect(values('targetFps')).toEqual(['60', '120', '144', '165', '240', '360']);
+    expect(values('targetFps')).toEqual(['0', '60', '120', '144', '165', '240', '360']);
+    expect(values('frameCap')).toEqual(['0', '240', '144', '120', '60', '30']);
     expect(values('timeScale')).toEqual(['0', '1', '10', '60', '600']);
-    expect(values('quality')).toEqual(['low', 'medium', 'high', 'ultra']);
+    expect(values('quality')).toEqual(['low', 'medium', 'high', 'ultra', 'perf240']);
     expect(values('quadPreset')).toEqual(['QUAD_5IN_6S', 'QUAD_3IN_4S']);
   });
 
@@ -81,6 +82,21 @@ describe('control writes', () => {
         for (const o of c.options) expect(c.read(applied(c, o.value)), where).toBe(o.value);
       }
     }
+  });
+
+  it('Performance 240 is High with the preset on; any real tier turns the preset off again', () => {
+    const q = controls(TABS).map((c) => c.control).find((c) => c.id === 'quality');
+    if (q?.kind !== 'select') throw new Error('missing quality select');
+    const base = { ...defaultAppSettings(), quality: 'ultra' as const };
+    expect(q.write('perf240', base)).toEqual({ quality: 'high', performance240: true });
+    expect(q.write('low', { ...base, performance240: true })).toEqual({ quality: 'low', performance240: false });
+  });
+
+  it('the old v-sync toggle is gone and the frame cap says what browsers can do', () => {
+    const all = controls(TABS).map((c) => c.control);
+    expect(all.some((c) => c.id === 'vsync')).toBe(false);
+    const cap = all.find((c) => c.id === 'frameCap');
+    expect(cap?.hint ?? '').toMatch(/cannot turn v-sync off/i);
   });
 
   it('write only the gamepad calibration of the axis they name', () => {

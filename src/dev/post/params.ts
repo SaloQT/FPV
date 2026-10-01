@@ -37,12 +37,13 @@ export interface SceneState {
 
 /**
  * Radiances of the two scene looks. Day: the CPU pre-exposure of the noon astro is about 4e-5, so the ground lands near 0.25.
- * Night: the night astro gives about 50 (CPU headroom only); the ground is about 1 nit, which the camera's +10 EV gain cap still
- * shows dark but visible: anything dimmer (moonlit terrain, 0.01 nit) is below the display floor at that gain.
+ * Night: the night astro (a moonlit night) gives a pre-exposure of about 50, i.e. a 0.18 card at 5e-3 nits; the dev ground is about
+ * 5e-3 nits (radiance 1 = 7300 nits) so the camera, which runs near its +20 EV starlight gain there, shows it dark but readable, with the
+ * lamps and the sun disc far above the white point.
  */
 export const LOOKS: Record<Look, { time: TimeOfDay; radiance: number; sunNits: number; lampNits: number }> = {
   day: { time: 'noon', radiance: 1, sunNits: 1.6e9, lampNits: 2e4 },
-  night: { time: 'night', radiance: 1.6e-4, sunNits: 2500, lampNits: 1e5 },
+  night: { time: 'night', radiance: 7e-7, sunNits: 2500, lampNits: 1e5 },
 };
 
 const VIEWS: readonly View[] = ['scene', 'sun', 'grid'];

@@ -70,6 +70,11 @@ export class AppAudio {
     if (!this.muted) this.engine?.beeper.finished();
   }
 
+  /** The race-start beeps: three short ones for 3, 2, 1 and a long one for 0 (GO). */
+  countdown(n: number): void {
+    if (!this.muted) this.engine?.beeper.countdown(n);
+  }
+
   dispose(): void {
     this.engine?.dispose();
     this.engine = null;

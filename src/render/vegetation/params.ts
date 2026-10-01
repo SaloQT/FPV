@@ -10,8 +10,9 @@ export const CHUNK_BYTES = 16;
 export const VEG_PARAM_BYTES = 144;
 /** Blade instance buffers never exceed this, whatever the tier asks for (further clamped to the device limits). */
 export const MAX_GRASS_BYTES = 192 * 1024 * 1024;
-/** Share of the full-circle instance count each LOD region can hold; a 120 degree camera sees at most about half the circle. */
-const CAP_FRACTION = 0.55;
+/** Share of the full-circle instance count each LOD region can hold. A wide FPV lens sees about 0.4 of the circle, but a tilted-down view
+ * and the patch-level culling add to it, and an overflow drops whole patches (bare rectangles in the sward), so the margin is generous. */
+const CAP_FRACTION = 0.8;
 const NO_QUAD = -1e9;
 /** The tier tables count blades loosely; a meadow has thousands per m2 and a near blade is a handful of pixels wide, so the near field is scaled up. */
 export function nearDensity(tierBladesPerM2: number): number {
@@ -84,7 +85,7 @@ export function grassBudget(q: Pick<QualityProfile, 'grassBladesPerM2' | 'grassD
     distance: far,
     lodDistance: [lod0, lod1],
     caps: [c0, c1, c2],
-    chunkCap: Math.ceil((CAP_FRACTION * annulusSlots(0, far, density, fullRadius, far)) / CHUNK_SLOTS) + patches * patches,
+    chunkCap: Math.ceil(annulusSlots(0, far, density, fullRadius, far) / CHUNK_SLOTS) + patches * patches,
     offsets: [0, c0 * BLADE_BYTES, (c0 + c1) * BLADE_BYTES],
     bladeBytes: (c0 + c1 + c2) * BLADE_BYTES,
   };

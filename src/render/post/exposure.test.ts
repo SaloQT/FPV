@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
 import {
-  DAY_TOTAL_EV, EXPOSURE_TUNING as T, accumulate, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines, exposureOutput,
-  luminanceOf, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
+  DAY_TOTAL_EV, EXPECTED_MEAN_EV, EXPOSURE_TUNING as T, accumulate, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines,
+  exposureOutput, keyEvFor, luminanceOf, nightWeight, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
 } from './exposure';
 
 const KEY_EV = Math.log2(T.key);
@@ -133,8 +133,8 @@ describe('targetTotalEv', () => {
     expect(displayed(T.keyKneeNits / 16)).toBeCloseTo(T.key * 16 ** -T.keySlope, 6);
   });
 
-  it('never lifts the gain above maxGainEv, so a night is a dark picture, also under starlight', () => {
-    for (const nits of [0.5, 0.2, 0.015, 3e-5]) {
+  it('settles at the sensor-gain cap for every scene darker than a moonlit ground, so a moonless night is a dark picture', () => {
+    for (const nits of [2e-4, 4.6e-5, 3e-5, 1e-7]) {
       const pre = 0.25 / nits;
       const [ratio, gainEv, , totalEv] = exposureOutput(targetTotalEv(groundEv, pre), pre, groundEv);
       expect(gainEv).toBeCloseTo(T.maxGainEv, 9);
@@ -143,10 +143,39 @@ describe('targetTotalEv', () => {
     }
   });
 
-  it('shows a moonlit ground far below mid grey and a dusk ground below the key but above black', () => {
-    expect(displayed(0.015)).toBeLessThan(0.002);
+  it('stays at the cap up to a quarter-moon ground, then lets the exposure fall as the scene brightens', () => {
+    const gain = (nits: number): number => exposureOutput(targetTotalEv(groundEv, 0.25 / nits), 0.25 / nits, groundEv)[1];
+    expect(gain(4e-4)).toBeCloseTo(T.maxGainEv, 9);
+    expect(gain(1e-3)).toBeLessThan(T.maxGainEv);
+    expect(gain(1e-3)).toBeGreaterThan(gain(1e-2));
+    expect(gain(1e-2)).toBeGreaterThan(gain(0.1));
+  });
+
+  it('shows a moonless ground nearly black, a moonlit one dark but readable, and a dusk ground below the key but above black', () => {
+    expect(displayed(4.6e-5)).toBeLessThan(0.004);
+    expect(displayed(4.3e-4)).toBeGreaterThan(0.02);
+    expect(displayed(4.3e-4)).toBeLessThan(0.035);
     expect(displayed(5)).toBeGreaterThan(0.02);
     expect(displayed(5)).toBeLessThan(T.key);
+  });
+
+  it('keeps the displayed key rising with the scene from the starlit cap up to the daylight key', () => {
+    let prev = 0;
+    for (const nits of [1e-6, 1e-5, 4.6e-5, 4.3e-4, 3e-3, 0.03, 0.3, 3, 30, 300, 3000]) {
+      const d = displayed(nits);
+      expect(d).toBeGreaterThanOrEqual(prev * 0.999);
+      prev = d;
+    }
+  });
+
+  it('leaves the exposure above keyNightKneeNits exactly as the single-slope key law made it', () => {
+    for (const nits of [0.1, 0.5, 5, 50, 100, 5000]) {
+      const meanEv = groundEv + 1.3;
+      const preEv = Math.log2(0.25 / nits);
+      const keyEv = Math.log2(T.key) + T.keySlope * Math.min(meanEv - preEv - Math.log2(T.keyKneeNits), 0);
+      const want = Math.min(Math.max(preEv + keyEv - meanEv, DAY_TOTAL_EV + T.minGainEv), DAY_TOTAL_EV + T.maxGainEv);
+      expect(targetTotalEv(meanEv, 0.25 / nits)).toBeCloseTo(want, 9);
+    }
   });
 
   it('limits the gain to maxGainEv and the darkening to minGainEv, whatever the metered value', () => {
@@ -166,6 +195,64 @@ describe('targetTotalEv', () => {
   it('takes at most protectMaxEv from a lift, so a dark scene with a bright decile is still brightened', () => {
     const [ratio] = exposureOutput(targetTotalEv(KEY_EV - 3, DAY_PRE, KEY_EV + 3), DAY_PRE, KEY_EV - 3);
     expect(ratio).toBeCloseTo(2 ** (3 - T.protectMaxEv), 9);
+  });
+});
+
+describe('night regime', () => {
+  const preEvFor = (nits: number): number => Math.log2(0.25 / nits);
+
+  it('weighs the astronomy estimate fully below nightBlendLoNits, not at all above nightBlendHiNits, and smoothly in between', () => {
+    expect(nightWeight(preEvFor(T.nightBlendLoNits * 0.5))).toBe(1);
+    expect(nightWeight(preEvFor(T.nightBlendLoNits))).toBeCloseTo(1, 12);
+    expect(nightWeight(preEvFor(T.nightBlendHiNits))).toBeCloseTo(0, 12);
+    expect(nightWeight(preEvFor(5))).toBe(0);
+    let prev = 1;
+    for (let l = T.nightBlendLoNits; l <= T.nightBlendHiNits; l *= 1.1) {
+      const w = nightWeight(preEvFor(l));
+      expect(w).toBeLessThanOrEqual(prev + 1e-12);
+      prev = w;
+    }
+  });
+
+  it('is derived from the CPU key: a pre-exposure of key / nits implies exactly those nits', () => {
+    expect(EXPECTED_MEAN_EV).toBeCloseTo(-2, 12);
+    expect(EXPECTED_MEAN_EV - preEvFor(0.01)).toBeCloseTo(Math.log2(0.01), 12);
+  });
+
+  it('ignores a dark or ordinary metered mean and the highlight protection when it is dark, and obeys them by day', () => {
+    const night = 0.25 / 4e-4;
+    const base = targetTotalEv(EXPECTED_MEAN_EV, night);
+    for (const mean of [-12, -6, -2, EXPECTED_MEAN_EV + T.nightMarginEv]) expect(targetTotalEv(mean, night, mean + 6)).toBeCloseTo(base, 12);
+    const day = 0.25 / 2000;
+    expect(targetTotalEv(EXPECTED_MEAN_EV + 2, day)).toBeLessThan(targetTotalEv(EXPECTED_MEAN_EV, day) - 1);
+    expect(targetTotalEv(EXPECTED_MEAN_EV, day, 8)).toBeLessThan(targetTotalEv(EXPECTED_MEAN_EV, day));
+  });
+
+  it('still lowers the exposure, one EV per EV, for a dark-estimate frame that is metered far brighter than the estimate (floodlit)', () => {
+    const night = 0.25 / 4e-4;
+    const base = targetTotalEv(EXPECTED_MEAN_EV, night);
+    const lit = EXPECTED_MEAN_EV + T.nightMarginEv;
+    expect(targetTotalEv(lit + 2, night)).toBeCloseTo(base - 2, 9);
+    expect(targetTotalEv(lit + 5, night)).toBeCloseTo(base - 5, 9);
+    expect(targetTotalEv(lit + 5, night)).toBeLessThan(base);
+  });
+
+  it('changes continuously with the pre-exposure through the blend range', () => {
+    let prev = targetTotalEv(-4, 0.25 / 1);
+    for (let l = 1; l > 1e-4; l *= 0.97) {
+      const t = targetTotalEv(-4, 0.25 / l);
+      expect(Math.abs(t - prev)).toBeLessThan(0.1);
+      prev = t;
+    }
+  });
+
+  it('has a key that is continuous at both knees and falls keySlope, then keyNightSlope, per EV of luminance', () => {
+    const kneeEv = Math.log2(T.keyKneeNits), nightEv = Math.log2(T.keyNightKneeNits);
+    expect(keyEvFor(kneeEv + 5)).toBeCloseTo(KEY_EV, 12);
+    expect(keyEvFor(kneeEv)).toBeCloseTo(KEY_EV, 12);
+    expect(keyEvFor(kneeEv - 1)).toBeCloseTo(KEY_EV - T.keySlope, 12);
+    expect(keyEvFor(nightEv) - keyEvFor(nightEv - 4)).toBeCloseTo(4 * T.keyNightSlope, 12);
+    expect(keyEvFor(nightEv + 1) - keyEvFor(nightEv)).toBeCloseTo(T.keySlope, 12);
   });
 });
 
@@ -246,5 +333,41 @@ describe('exposure shader sources', () => {
     const code = resolveShader('post/histogram.wgsl', exposureDefines());
     expect(code).not.toContain('${');
     expect(Array.from(code.matchAll(/@compute[^\n]*\n\s*fn\s+(\w+)/g), (m) => m[1])).toEqual(['hist', 'reduce']);
+  });
+
+  it('carries the night blend and the night key slope into the shader', () => {
+    const d = exposureDefines();
+    expect(d.NIGHT_SLOPE).toBe(T.keyNightSlope);
+    expect(d.NIGHT_KNEE_EV).toBeCloseTo(Math.log2(T.keyNightKneeNits), 12);
+    expect(d.NIGHT_BLEND_HI_EV).toBeCloseTo(Math.log2(T.nightBlendHiNits), 12);
+    expect(d.NIGHT_BLEND_LO_EV).toBeCloseTo(Math.log2(T.nightBlendLoNits), 12);
+    expect(d.EXPECTED_MEAN_EV).toBeCloseTo(-2, 12);
+    expect(d.NIGHT_MARGIN_EV).toBe(T.nightMarginEv);
+    expect(d.MAX_GAIN_EV).toBe(T.maxGainEv);
+  });
+});
+
+describe('night exposure mirror in sky/night_light.wgsl', () => {
+  const src = resolveShader('sky/night_light.wgsl', {});
+  const c = (name: string): number => Number(src.match(new RegExp(`const ${name}\\s*:\\s*f32\\s*=\\s*([^;]+);`))?.[1]);
+
+  it('carries the same key law and gain cap as the exposure stage', () => {
+    expect(c('EXPOSURE_LOG2_KEY')).toBeCloseTo(KEY_EV, 9);
+    expect(c('EXPOSURE_KEY_KNEE_EV')).toBeCloseTo(Math.log2(T.keyKneeNits), 9);
+    expect(c('EXPOSURE_KEY_SLOPE')).toBe(T.keySlope);
+    expect(c('EXPOSURE_NIGHT_KNEE_EV')).toBeCloseTo(Math.log2(T.keyNightKneeNits), 9);
+    expect(c('EXPOSURE_NIGHT_SLOPE')).toBe(T.keyNightSlope);
+    expect(c('EXPOSURE_MAX_TOTAL_EV')).toBeCloseTo(DAY_TOTAL_EV + T.maxGainEv, 3);
+    expect(c('EXPOSURE_CPU_KEY_EV')).toBeCloseTo(EXPECTED_MEAN_EV, 12);
+  });
+
+  it('computes, from the pre-exposure alone, the exposure the stage settles on for a scene metered at the CPU estimate', () => {
+    const mirror = (pre: number): number => {
+      const lumEv = c('EXPOSURE_CPU_KEY_EV') - Math.log2(pre);
+      const keyEv = c('EXPOSURE_LOG2_KEY') + c('EXPOSURE_KEY_SLOPE') * Math.min(lumEv - c('EXPOSURE_KEY_KNEE_EV'), 0)
+        + (c('EXPOSURE_NIGHT_SLOPE') - c('EXPOSURE_KEY_SLOPE')) * Math.min(lumEv - c('EXPOSURE_NIGHT_KNEE_EV'), 0);
+      return 2 ** Math.min(keyEv - lumEv, c('EXPOSURE_MAX_TOTAL_EV'));
+    };
+    for (let pre = 1e-5; pre <= 1e3; pre *= 1.7) expect(Math.log2(mirror(pre))).toBeCloseTo(targetTotalEv(EXPECTED_MEAN_EV, pre), 2);
   });
 });

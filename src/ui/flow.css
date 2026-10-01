@@ -1,0 +1,147 @@
+/* Session flow: result card, pause badge, mouse hint, world card with the track map, time-of-day control. Same look as ui.css. */
+
+.fpv-finish, .fpv-badge, .fpv-hint-lock {
+  --fpv-panel: rgba(15, 18, 25, 0.9);
+  --fpv-card: rgba(255, 255, 255, 0.045);
+  --fpv-line: rgba(255, 255, 255, 0.09);
+  --fpv-text: #eef1f6;
+  --fpv-muted: #a0a9b8;
+  --fpv-accent: #4db4ff;
+  --fpv-accent-ink: #04121f;
+  --fpv-good: #62f58a;
+  --fpv-warn: #ffc233;
+  --fpv-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--fpv-text);
+  -webkit-font-smoothing: antialiased;
+  box-sizing: border-box;
+}
+.fpv-finish *, .fpv-badge *, .fpv-hint-lock * { box-sizing: border-box; }
+.fpv-finish[hidden], .fpv-badge[hidden], .fpv-hint-lock[hidden] { display: none !important; }
+
+/* Result card: sits on the right of the picture so the hovering quad stays visible. */
+.fpv-finish {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+.fpv-finish-card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px 16px;
+  overflow-y: auto;
+  pointer-events: auto;
+  background: var(--fpv-panel);
+  border: 1px solid var(--fpv-line);
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(18px) saturate(1.3);
+}
+.fpv-finish-title { margin: 0; font-size: 26px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fpv-good); }
+.fpv-finish-body { display: flex; flex-direction: column; gap: 12px; }
+.fpv-finish-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.fpv-finish-stat { padding: 8px 12px; background: var(--fpv-card); border: 1px solid var(--fpv-line); border-radius: 10px; }
+.fpv-finish-label { display: block; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fpv-muted); }
+.fpv-finish-value { display: block; font: 650 20px/1.3 var(--fpv-mono); font-variant-numeric: tabular-nums; }
+.fpv-finish-laps { display: grid; gap: 2px; max-height: 190px; overflow-y: auto; }
+.fpv-finish-row { display: grid; grid-template-columns: 1fr auto 84px; gap: 14px; padding: 4px 10px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.fpv-finish-row:nth-child(odd) { background: rgba(255, 255, 255, 0.04); }
+.fpv-finish-row--best { color: var(--fpv-warn); font-weight: 650; }
+.fpv-finish-time { font-family: var(--fpv-mono); }
+.fpv-finish-delta { text-align: right; font-family: var(--fpv-mono); color: var(--fpv-muted); }
+.fpv-finish-row--best .fpv-finish-delta { color: var(--fpv-warn); }
+.fpv-finish-bars { display: flex; align-items: flex-end; gap: 3px; height: 74px; padding: 6px 8px 0; background: var(--fpv-card); border: 1px solid var(--fpv-line); border-radius: 10px; }
+.fpv-finish-col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 3px; }
+.fpv-finish-bar { min-height: 4px; background: var(--fpv-accent); border-radius: 3px 3px 0 0; opacity: 0.85; }
+.fpv-finish-bar--slow { background: var(--fpv-warn); }
+.fpv-finish-gate { font: 10px/1.2 var(--fpv-mono); text-align: center; color: var(--fpv-muted); white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.fpv-finish-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+.fpv-finish .fpv-spacer { flex: 1; }
+.fpv-finish :focus-visible { outline: 2px solid var(--fpv-accent); outline-offset: 2px; }
+
+/* Pause badge and the mouse-capture hint. */
+.fpv-badge, .fpv-hint-lock {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 18, 25, 0.78);
+  border: 1px solid var(--fpv-line);
+  font-size: 13px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.fpv-badge { top: 44%; margin-top: 56px; z-index: 25; }
+.fpv-badge strong { font-family: var(--fpv-mono); font-weight: 600; margin-right: 8px; }
+.fpv-hint-lock { bottom: 74px; color: var(--fpv-text); }
+.fpv-hint-lock kbd { font: 600 12px var(--fpv-mono); padding: 1px 6px; border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 5px; background: rgba(255, 255, 255, 0.1); }
+
+/* World card on the start screen: the map of the track and the controls that shape it. */
+.fpv-world-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 10px; }
+.fpv-map-frame { position: relative; overflow: hidden; background: linear-gradient(160deg, #0b1018, #111b2a); border: 1px solid var(--fpv-line); border-radius: 10px; }
+.fpv-map-canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
+.fpv-map-canvas--busy { opacity: 0.42; transition: opacity 0.15s; }
+.fpv-map-status { position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 7px 10px; font-size: 12.5px; background: rgba(10, 13, 19, 0.86); border: 1px solid var(--fpv-line); border-radius: 8px; }
+.fpv-map-status--error { color: #ffb14d; }
+.fpv-map-bar { height: 4px; margin-top: 6px; overflow: hidden; background: rgba(255, 255, 255, 0.14); border-radius: 2px; }
+.fpv-map-bar-fill { width: 0; height: 100%; background: var(--fpv-accent); transition: width 0.2s; }
+.fpv-map-summary { display: grid; gap: 1px; margin: 8px 2px 0; font: 12.5px/1.4 var(--fpv-mono); color: var(--fpv-text); }
+.fpv-map-summary-time { color: var(--fpv-muted); }
+.fpv-map-legend { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 4px 2px 0; font-size: 11.5px; color: var(--fpv-muted); }
+.fpv-map-dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px; border-radius: 2px; }
+.fpv-world-controls { display: grid; gap: 1px; align-content: start; }
+.fpv-world .fpv-row { grid-template-columns: 62px minmax(0, 1fr); gap: 3px 10px; padding: 5px 0; border-top: 0; }
+.fpv-world .fpv-row--toggle { grid-template-columns: minmax(0, 1fr) auto; }
+.fpv-world .fpv-value { min-width: 40px; }
+.fpv-world .fpv-label { font-size: 13px; }
+.fpv-world-line { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; align-items: center; gap: 6px 8px; }
+.fpv-world-line .fpv-label { font-size: 13px; }
+.fpv-seed { font-family: var(--fpv-mono); letter-spacing: 0.02em; }
+.fpv-world-seed .fpv-hint { margin: 3px 0 0; }
+.fpv-start .fpv-hint, .fpv-world .fpv-hint { font-size: 12px; }
+
+/* Time of day. */
+.fpv-time { display: grid; gap: 9px; }
+.fpv-time-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.fpv-time-now { font: 700 30px/1 var(--fpv-mono); font-variant-numeric: tabular-nums; }
+.fpv-time-body { font-size: 13.5px; color: var(--fpv-muted); }
+.fpv-segment { display: flex; gap: 3px; padding: 3px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--fpv-line); border-radius: 9px; }
+.fpv-segment-btn { flex: 1; padding: 6px 8px; font: inherit; font-size: 13px; font-weight: 600; color: var(--fpv-muted); white-space: nowrap; background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.fpv-segment-btn:hover { color: var(--fpv-text); background: rgba(255, 255, 255, 0.07); }
+.fpv-segment-btn--on, .fpv-segment-btn--on:hover { color: var(--fpv-accent-ink); background: var(--fpv-accent); }
+.fpv-time-line { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.fpv-time-line .fpv-range:disabled { opacity: 0.4; cursor: default; }
+.fpv-value--wide { min-width: 138px; font-size: 12.5px; }
+.fpv-time .fpv-hint { margin: 0; }
+
+/* Pause dialog clock, info rows. */
+.fpv-menu-clock { position: absolute; top: 14px; left: 50%; display: flex; align-items: baseline; gap: 12px; padding: 5px 16px; font-size: 13px; color: var(--fpv-muted); white-space: nowrap; background: rgba(15, 18, 25, 0.72); border: 1px solid var(--fpv-line); border-radius: 999px; transform: translateX(-50%); pointer-events: none; }
+.fpv-menu-clock-time { font: 650 15px var(--fpv-mono); color: var(--fpv-text); }
+.fpv-static { color: var(--fpv-text); }
+
+@media (max-width: 860px) {
+  .fpv-start-cols { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .fpv-world-grid { grid-template-columns: minmax(0, 1fr); }
+  .fpv-finish-stats { grid-template-columns: minmax(0, 1fr); }
+  .fpv-finish-row { grid-template-columns: 1fr auto 70px; gap: 8px; }
+}
+
+.fpv-help-clock { font: 13px var(--fpv-mono); color: var(--fpv-muted); white-space: nowrap; }
+.fpv-hero:disabled { opacity: 0.6; cursor: progress; box-shadow: none; transform: none; }
+
+.fpv-start .fpv-keylist { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
+.fpv-start .fpv-keyrow { grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
+.fpv-start .fpv-keyrow dd { font-size: 13px; line-height: 1.25; }
+.fpv-world .fpv-row > .fpv-hint { grid-column: 1 / -1; margin: 0; }
+.fpv-world-style { margin: 0 0 4px; }

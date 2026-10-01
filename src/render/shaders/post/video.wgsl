@@ -30,6 +30,21 @@ fn videoBurstCover(v : f32, frame : u32, vn : f32) -> f32 {
 
 fn videoLuma(e : vec3f) -> f32 { return dot(e, vec3f(0.299, 0.587, 0.114)); }
 
+// The camera's low-light colour processing on the encoded colour: below LOW_LIGHT_END luma the chroma is thinned (chroma noise reduction)
+// and the white point drifts cool (the usual night grade, close to what a dark-adapted eye sees), fully so under LOW_LIGHT_START. Luma is kept.
+const LOW_LIGHT_START : f32 = 0.03;
+const LOW_LIGHT_END : f32 = 0.22;
+const LOW_LIGHT_DESAT : f32 = 0.5;
+const LOW_LIGHT_TINT : vec3f = vec3f(0.94, 0.99, 1.08);
+
+fn lowLightGrade(e : vec3f) -> vec3f {
+  let y = videoLuma(e);
+  let k = 1.0 - smoothstep(LOW_LIGHT_START, LOW_LIGHT_END, y);
+  if (k <= 0.0) { return e; }
+  let o = mix(e, vec3f(y), LOW_LIGHT_DESAT * k) * mix(vec3f(1.0), LOW_LIGHT_TINT, k);
+  return o * (y / max(videoLuma(o), 1e-4));
+}
+
 // 8x8 blocks with a per-block random offset before quantisation: coarse steps in luma, coarser in chroma, plus a small per-block DC error.
 fn videoMacroblock(e : vec3f, pix : vec2f, frame : u32, vn : f32) -> vec3f {
   let m = smoothstep(0.5, 1.0, vn);
@@ -46,7 +61,7 @@ fn videoMacroblock(e : vec3f, pix : vec2f, frame : u32, vn : f32) -> vec3f {
 // Scanline shimmer, block artifacts and static bursts on the encoded colour `e` of output pixel `pix` (uv = pix / size).
 fn videoPost(e : vec3f, pix : vec2f, uv : vec2f, frame : u32, vn : f32) -> vec3f {
   let shimmer = 1.0 + vn * (0.06 * (unitOpen(pcgHash(u32(pix.y) + frame * 2246822519u)) - 0.5) - 0.02 * f32(u32(pix.y) & 1u));
-  var o = videoMacroblock(e * shimmer, pix, frame, vn);
+  var o = videoMacroblock(lowLightGrade(e) * shimmer, pix, frame, vn);
   let cover = videoBurstCover(uv.y, frame, vn);
   if (cover > 0.0) {
     let snow = 0.1 + 0.75 * unitOpen(pcg3d(vec3u(vec2u(pix) / vec2u(2u, 1u), frame)).x);

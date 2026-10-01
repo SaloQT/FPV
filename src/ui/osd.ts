@@ -1,7 +1,8 @@
 import type { HudModel } from './hud';
 import { addCrosshair, addHorizon, SegmentBatch } from './osdHorizon';
 import { COLOR_AMBER, COLOR_GREEN, COLOR_RED, COLOR_WHITE, Painter } from './osdPainter';
-import { drawFinishCard, drawRacePanel } from './osdRace';
+import { drawCountdown, drawRacePanel } from './osdRace';
+import { StickGauge } from './osdSticks';
 import type { OsdContext, OsdSurface } from './osdTypes';
 
 const FLASH_PERIOD_MS = 1000;
@@ -19,6 +20,7 @@ export class OsdRenderer {
   private readonly painter: Painter;
   private readonly cross = new SegmentBatch();
   private readonly horizon = new SegmentBatch();
+  private readonly sticks = new StickGauge();
 
   constructor(
     private readonly surface: OsdSurface,
@@ -54,15 +56,19 @@ export class OsdRenderer {
   draw(m: HudModel, nowMs: number): void {
     this.resize();
     this.clear();
-    if (!m.visible) return;
+    if (!m.visible && !m.countdown.visible) return;
     const p = this.painter;
     p.layout(this.surface.width, this.surface.height, m.osdScale);
     p.begin();
-    if (m.fpv) this.drawAttitude(m);
-    this.drawCorners(m, nowMs);
-    drawRacePanel(p, m);
-    this.drawWarnings(m, nowMs);
-    drawFinishCard(p, m);
+    // The race start is drawn in every camera and with the OSD switched off: it is part of the race, not of the FPV display.
+    if (m.visible) {
+      if (m.fpv) this.drawAttitude(m);
+      this.drawCorners(m, nowMs);
+      drawRacePanel(p, m);
+      this.sticks.draw(this.g, p, m);
+      this.drawWarnings(m, nowMs);
+    }
+    drawCountdown(p, m);
   }
 
   private drawAttitude(m: HudModel): void {

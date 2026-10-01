@@ -86,7 +86,11 @@ export function paintLeaf(l: Leaf, u: number, v: number, o: Sample): boolean {
     return false;
   }
   if (s >= 1) return false;
-  const hw = l.w * Math.sin(Math.PI * Math.pow(s, 0.72)) * (1 + l.lobeAmp * Math.sin(s * l.lobes * TAU + l.lobePhase));
+  // Deep amplitudes give rounded lobes with narrow sinuses (oak); shallow ones a smooth serrated edge.
+  const edge = l.lobeAmp > 0.2
+    ? 1 - l.lobeAmp * (1 - Math.pow(Math.abs(Math.sin(s * l.lobes * Math.PI + l.lobePhase)), 0.5))
+    : 1 + l.lobeAmp * Math.sin(s * l.lobes * TAU + l.lobePhase);
+  const hw = l.w * Math.sin(Math.PI * Math.pow(s, 0.72)) * edge;
   if (a >= hw) return false;
   const r = a / hw;
   const f = s * 7 - r * 1.5;
@@ -141,7 +145,7 @@ function sprig(rng: Rng, s: SprigSpec): Painter {
 }
 
 /** Broadleaf twig with lobed, oak-like leaves about 0.14 m long on a 0.48 m card. */
-export const sprigPainter = (rng: Rng): Painter => sprig(rng, { count: 7, len: 0.28, w: 0.078, lobes: 3, lobeAmp: 0.16, angle: [0.65, 1.05], droop: 0 });
+export const sprigPainter = (rng: Rng): Painter => sprig(rng, { count: 9, len: 0.29, w: 0.07, lobes: 4.5, lobeAmp: 0.5, angle: [0.8, 1.3], droop: 0 });
 
 /** Small serrated ovate birch leaves on a drooping twig. */
 export const birchPainter = (rng: Rng): Painter => sprig(rng, { count: 9, len: 0.22, w: 0.07, lobes: 9, lobeAmp: 0.06, angle: [0.7, 1.15], droop: 0.35 });

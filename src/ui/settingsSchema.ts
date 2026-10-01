@@ -88,6 +88,12 @@ function bool(v: unknown, fb: boolean): boolean {
   return typeof v === 'boolean' ? v : fb;
 }
 
+/** 0 means "follow the display"; anything else is clamped to [min, max]. */
+function zeroOr(min: number, max: number): (v: unknown, fb: number) => number {
+  const clamp = num(min, max, true);
+  return (v, fb) => (v === 0 ? 0 : clamp(v, fb));
+}
+
 function oneOf<T extends string>(values: readonly T[]): (v: unknown, fb: T) => T {
   return (v, fb) => (typeof v === 'string' && (values as readonly string[]).includes(v) ? (v as T) : fb);
 }
@@ -114,7 +120,9 @@ const MAX_TIME_MS = 8.64e15;
 
 const RULES: Rules = {
   quality: oneOf(QUALITY_TIERS),
-  targetFps: num(30, 1000, true),
+  targetFps: zeroOr(30, 1000),
+  frameCap: zeroOr(15, 1000),
+  performance240: bool,
   dynamicResolution: bool,
   renderScale: num(0.25, 1),
   fov: num(30, 150),
@@ -128,7 +136,6 @@ const RULES: Rules = {
   seed: num(0, 4294967295, true),
   trackStyle: oneOf(TRACK_STYLES),
   mouseSensitivity: num(0.1, 5),
-  vsync: bool,
   mouseCentering: num(0, 1),
   mouseExpo: num(0, 1),
   mouseDeadzone: num(0, 0.3),

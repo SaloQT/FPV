@@ -1,12 +1,17 @@
 import { DEFAULT_BINDINGS, type Bindings } from '../input/bindings';
-import { blurActive, el, setHidden } from './dom';
-import type { ControlHost, PadView } from './menuHost';
+import { skyReadout, hourOf } from './clockModel';
+import { blurActive, el, setHidden, setText } from './dom';
+import { extendTabs } from './menuExtras';
+import type { ControlHost, LiveSky, PadView } from './menuHost';
 import type { MenuAction, MenuPreset, TabId } from './menuSchema';
 import { SettingsPanel, type SettingsOrigin } from './menuSettings';
 import { StartPanel } from './menuStart';
 import { buildTabs } from './menuTabs';
+import { PilotOptionsStore } from './pilotOptions';
 import { sanitizeSettings, type AppSettings } from './settingsSchema';
+import type { PreviewState } from './trackPreviewModel';
 import './ui.css';
+import './flow.css';
 
 export type MenuScreen = 'none' | 'start' | 'settings';
 
@@ -23,6 +28,10 @@ export interface MenuOptions {
   /** Live gamepad for the calibration readout (`InputManager.gamepad`); the app keeps polling it while the menu is open. */
   gamepad?: PadView | null;
   bindings?: Bindings;
+  /** The pilot options the clock, race-start and stick-indicator controls edit; the app listens to the same store. */
+  options?: PilotOptionsStore;
+  /** The address share links are built on; defaults to the page's own. */
+  shareBase?: () => string;
 }
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]';
@@ -39,18 +48,30 @@ export class MenuUI {
   private current: MenuScreen = 'none';
   private origin: SettingsOrigin = 'pause';
   private frame = 0;
+  private live: (() => LiveSky | null) | null = null;
+  private readonly options: PilotOptionsStore;
+  private readonly clock = el('div', 'fpv-menu-clock');
+  private readonly clockWhen = el('strong', 'fpv-menu-clock-time', '');
+  private readonly clockSky = el('span', 'fpv-menu-clock-sky', '');
 
   constructor(private readonly opts: MenuOptions) {
     this.settings = opts.settings;
+    this.options = opts.options ?? new PilotOptionsStore(null);
     const host: ControlHost = {
       settings: () => this.settings,
       change: (patch) => this.change(patch),
       action: (action) => opts.onAction(action),
       pad: () => opts.gamepad ?? null,
+      options: () => this.options.get(),
+      patchOptions: (patch) => this.options.patch(patch),
+      onOptions: (fn) => this.options.subscribe(fn),
+      live: () => this.live?.() ?? null,
+      shareBase: opts.shareBase ?? (() => location.href),
     };
     this.start = new StartPanel(host, opts.bindings ?? DEFAULT_BINDINGS, () => opts.onAction('start'), () => this.openSettings('start'));
-    this.panel = new SettingsPanel(buildTabs(opts.presets), host, () => this.back());
-    this.element = el('div', 'fpv-menu', this.start.root, this.panel.root);
+    this.panel = new SettingsPanel(extendTabs(buildTabs(opts.presets), opts.presets), host, () => this.back());
+    this.clock.append(this.clockWhen, this.clockSky);
+    this.element = el('div', 'fpv-menu', this.start.root, this.panel.root, this.clock);
     this.element.addEventListener('keydown', (e) => this.trapTab(e));
     this.paint();
     opts.root.append(this.element);
@@ -69,6 +90,16 @@ export class MenuUI {
     if (settings === this.settings) return;
     this.settings = settings;
     this.syncVisible();
+  }
+
+  /** Connects the running sim: the clock readouts and the time controls read the live sim time and sky from it. */
+  setLive(live: (() => LiveSky | null) | null): void {
+    this.live = live;
+  }
+
+  /** The track the start screen's map shows, or how far the next one is. */
+  setPreview(state: PreviewState): void {
+    this.start.setPreview(state);
   }
 
   showStart(): void {
@@ -121,24 +152,39 @@ export class MenuUI {
     this.syncVisible();
     cancelAnimationFrame(this.frame);
     this.frame = 0;
-    if (screen === 'none') blurActive();
-    else if (screen === 'start') this.start.focus();
-    else {
-      this.panel.focus();
-      this.frame = requestAnimationFrame(this.loop);
+    if (screen === 'none') {
+      blurActive();
+      return;
     }
+    if (screen === 'start') this.start.focus();
+    else this.panel.focus();
+    this.frame = requestAnimationFrame(this.loop);
   }
 
   private paint(): void {
     setHidden(this.element, this.current === 'none');
     setHidden(this.start.root, this.current !== 'start');
     setHidden(this.panel.root, this.current !== 'settings');
+    if (this.current !== 'settings') setHidden(this.clock, true);
   }
 
   private readonly loop = (): void => {
     this.frame = requestAnimationFrame(this.loop);
-    this.panel.tick();
+    if (this.current === 'start') this.start.tick();
+    else this.panel.tick();
+    this.paintClock();
   };
+
+  /** The sim time and the sun or moon over the pause dialog, so the sky is never a mystery behind the glass. */
+  private paintClock(): void {
+    const live = this.live?.() ?? null;
+    const show = this.current === 'settings' && live !== null;
+    setHidden(this.clock, !show);
+    if (!show || live === null) return;
+    const r = skyReadout(hourOf(live.timeMs, this.settings.observer.longitudeDeg), live);
+    setText(this.clockWhen, r.time);
+    setText(this.clockSky, r.text.slice(r.time.length).trim());
+  }
 
   /** Keeps Tab inside the open dialog so focus cannot wander onto the page underneath. */
   private trapTab(e: KeyboardEvent): void {

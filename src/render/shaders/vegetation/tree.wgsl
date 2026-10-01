@@ -21,9 +21,10 @@ const ALPHA_CUT : f32 = 0.5;
 const CLASS_FIRST_LEAF : u32 = 4u;
 const CLASS_NEEDLE : u32 = 5u;
 const CLASS_BLOB : u32 = 6u;
-const BARK_ROUGHNESS : f32 = 0.9;
-const LEAF_ROUGHNESS : f32 = 0.78;
-const NEEDLE_ROUGHNESS : f32 = 0.92;
+const BARK_ROUGHNESS : f32 = 0.95;
+// Dark leaves under a broad rough specular lobe would reflect as much white as green (F0 0.04 against albedo 0.1): foliage is shaded fully rough.
+const LEAF_ROUGHNESS : f32 = 1.0;
+const NEEDLE_ROUGHNESS : f32 = 1.0;
 // The atlas stores the colour multiplier divided by this (COLOUR_RANGE in leafAtlas.ts).
 const COLOUR_RANGE : f32 = 3.0;
 // How far the painted per-leaf tilt bends the crown normal, and the height (m) of the bark fissures for the bump normal.
@@ -181,6 +182,10 @@ fn fs(in : VsOut) -> FsOut {
     let tb = uvTangents(dpx, dpy, dux, duy);
     let tilt = d.rg * 2.0 - 1.0;
     n = normalize(n + (tb[0] * tilt.x + tb[1] * tilt.y) * LEAF_TILT);
+    // Leaves are thin and double sided: a normal facing away from the eye is mirrored about the view plane (continuous at the silhouette),
+    // so the underside of a sunlit crown shows transmitted light and ground bounce instead of the sunlit top's reflection.
+    let eye = normalize(frame.camPos.xyz - in.world);
+    n = normalize(n - 2.0 * min(dot(n, eye), 0.0) * eye);
     rough = select(LEAF_ROUGHNESS, NEEDLE_ROUGHNESS, cls == CLASS_NEEDLE);
     translucency = min(v.leafTone.a * d.b * LEAF_TRANSMIT, 1.0);
     ao = saturate1(in.shade.x * (0.4 + 0.6 * d.a));

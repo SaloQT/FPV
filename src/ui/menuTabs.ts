@@ -1,6 +1,7 @@
 import { localSolarHours, withLocalSolarHours } from '../game/clock';
 import { formatHours } from '../game/units';
 import type { GamepadConfig, StickRole } from '../input/gamepadMap';
+import type { AppSettings } from './settingsSchema';
 import {
   bearing, button, choice, fixed, numberChoice, percent, slider, solarDate, toggle, withSolarDate,
   type Control, type DateControl, type MenuPreset, type MenuSection, type MenuTab, type NumberControl, type SelectControl, type SelectOption,
@@ -10,10 +11,22 @@ import {
 const degrees = fixed(0, '°');
 const times = (unit: string) => fixed(2, unit);
 
+/** The preset is not a fifth tier: it is `high` with the cheaper ray, probe, cloud and grass budgets (see render/qualityPresets.ts). */
+export const PERFORMANCE_240 = 'perf240';
 const QUALITY: readonly SelectOption[] = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' },
+  { value: PERFORMANCE_240, label: 'Performance 240' },
 ];
-const TARGET_FPS = [60, 120, 144, 165, 240, 360].map((value) => ({ value, label: `${value} fps` }));
+const AUTO_FPS = { value: 0, label: 'Display refresh (measured)' };
+const TARGET_FPS = [AUTO_FPS, ...[60, 120, 144, 165, 240, 360].map((value) => ({ value, label: `${value} fps` }))];
+const FRAME_CAPS = [{ value: 0, label: 'Display refresh (no cap)' }, ...[240, 144, 120, 60, 30].map((value) => ({ value, label: `${value} fps` }))];
+
+const QUALITY_CONTROL: SelectControl = {
+  kind: 'select', id: 'quality', label: 'Quality', options: QUALITY,
+  hint: 'Higher tiers add lighting and terrain detail and cost GPU time. Performance 240 is High with cheaper ray, probe, cloud and grass budgets for 240 Hz displays.',
+  read: (s) => (s.performance240 ? PERFORMANCE_240 : s.quality),
+  write: (v) => (v === PERFORMANCE_240 ? { quality: 'high', performance240: true } : { quality: v as AppSettings['quality'], performance240: false }),
+};
 const MODES: readonly SelectOption[] = [{ value: 'acro', label: 'Acro' }, { value: 'angle', label: 'Angle' }, { value: 'horizon', label: 'Horizon' }];
 const TRACKS: readonly SelectOption[] = [
   { value: 'race', label: 'Race' }, { value: 'freestyle', label: 'Freestyle' }, { value: 'mountain', label: 'Mountain' }, { value: 'sprint', label: 'Sprint' },
@@ -87,11 +100,11 @@ export function buildTabs(presets: readonly MenuPreset[]): readonly MenuTab[] {
   return [
     tab('graphics', 'Graphics',
       section('Picture',
-        choice('quality', 'Quality', QUALITY, 'Higher tiers add lighting and terrain detail and cost GPU time.'),
+        QUALITY_CONTROL,
         slider('renderScale', 'Render scale', 0.25, 1, 0.05, percent, 'Share of the native resolution that is rendered.'),
-        toggle('dynamicResolution', 'Dynamic resolution', 'Lowers the render scale to hold the target frame rate.'),
-        numberChoice('targetFps', 'Target frame rate', TARGET_FPS),
-        toggle('vsync', 'V-sync', 'Browsers pace frames to the display refresh; this is a request, not a guarantee.')),
+        toggle('dynamicResolution', 'Dynamic resolution', 'Lowers the render scale when the GPU cannot hold the target frame rate, and raises it again when there is headroom.'),
+        numberChoice('targetFps', 'Target frame rate', TARGET_FPS, 'What dynamic resolution aims for. The default is the display refresh rate measured at startup.'),
+        numberChoice('frameCap', 'Frame cap', FRAME_CAPS, 'Browsers cannot turn v-sync off: frames always follow the display refresh. A cap below it skips refreshes to save power and heat.')),
       section('FPV video', fov(),
         slider('lensDistortion', 'Lens distortion', 0, 1, 0.05, percent),
         slider('videoNoise', 'Video noise', 0, 1, 0.05, percent, 'Analog and digital link artefacts.'))),

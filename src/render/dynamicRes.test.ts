@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DisplayPeriodEstimator, DynamicResolutionController, SCALE_STEPS, scaledSize } from './dynamicRes';
+import { DisplayPeriodEstimator, DynamicResolutionController, resolveTargetFps, SCALE_STEPS, scaledSize } from './dynamicRes';
 
 function run(c: DynamicResolutionController, frames: number, gpuMs: number | null, frameMs: number, target = 240, enabled = true): number {
   let s = c.scale;
@@ -31,13 +31,13 @@ describe('DynamicResolutionController', () => {
   it('steps down when the GPU exceeds the budget and respects the 20-frame minimum spacing', () => {
     const c = new DynamicResolutionController();
     expect(c.scale).toBe(1);
-    run(c, 19, 8, 4.17);
+    run(c, 19, 5, 4.17);
     expect(c.scale).toBe(1);
-    run(c, 1, 8, 4.17);
+    run(c, 1, 5, 4.17);
     expect(c.scale).toBe(0.9);
-    run(c, 19, 8, 4.17);
+    run(c, 19, 5, 4.17);
     expect(c.scale).toBe(0.9);
-    run(c, 1, 8, 4.17);
+    run(c, 1, 5, 4.17);
     expect(c.scale).toBe(0.8);
   });
 
@@ -61,14 +61,14 @@ describe('DynamicResolutionController', () => {
     expect(c.scale).toBe(1);
   });
 
-  it('steps back up only after 3 s of headroom, and not into a scale that failed in the last 10 s', () => {
+  it('steps back up only after 3 s of headroom, and not into a scale that failed in the last 8 s', () => {
     const c = new DynamicResolutionController();
     run(c, 20, 12, 8.33, 120);
     expect(c.scale).toBe(0.9);
-    // 2 ms vs an 8.33 ms budget is plenty of headroom, but 1.0 failed <10 s ago.
-    run(c, 1000, 2, 8.33, 120);
+    // 2 ms vs an 8.33 ms budget is plenty of headroom, but 1.0 failed <8 s ago.
+    run(c, 700, 2, 8.33, 120);
     expect(c.scale).toBe(0.9);
-    run(c, 300, 2, 8.33, 120);
+    run(c, 400, 2, 8.33, 120);
     expect(c.scale).toBe(1);
   });
 
@@ -107,6 +107,129 @@ describe('DynamicResolutionController', () => {
     run(c, 100, 50, 0, 240);
     run(c, 100, 50, 5000, 240);
     expect(c.scale).toBe(1);
+  });
+});
+
+describe('DynamicResolutionController robustness', () => {
+  it('a big overshoot (more than 1.6x the budget) drops two steps at once', () => {
+    const c = new DynamicResolutionController();
+    run(c, 20, 8, 4.17);
+    expect(c.scale).toBe(0.8);
+  });
+
+  it('decides on GPU time when it is available: a frame time pinned at a slow display does not matter', () => {
+    const c = new DynamicResolutionController();
+    run(c, 600, 2, 16.67, 240);
+    expect(c.gpuDriven).toBe(true);
+    expect(c.scale).toBe(1);
+    const d = new DynamicResolutionController();
+    run(d, 100, null, 16.67, 240);
+    expect(d.gpuDriven).toBe(false);
+  });
+
+  it('is CPU-bound proof: long frames with a cheap GPU never lower the resolution', () => {
+    const c = new DynamicResolutionController();
+    run(c, 3000, 1.5, 12, 120);
+    expect(c.scale).toBe(1);
+  });
+
+  it('steps up only when the cost predicted at the next step fits with margin (dead band)', () => {
+    // At 0.9 the area ratio to 1.0 is 1/0.81: 3.0 ms -> 3.7 ms predicted, over 0.85 x 4.17 = 3.54 ms.
+    const stay = new DynamicResolutionController();
+    run(stay, 20, 5, 4.17, 240);
+    expect(stay.scale).toBe(0.9);
+    run(stay, 4000, 3.0, 4.17, 240);
+    expect(stay.scale).toBe(0.9);
+    const go = new DynamicResolutionController();
+    run(go, 20, 5, 4.17, 240);
+    run(go, 4000, 2.6, 4.17, 240);
+    expect(go.scale).toBe(1);
+  });
+
+  it('one missed refresh in thirty does not move the scale in frame-time mode (240 Hz)', () => {
+    const c = new DynamicResolutionController();
+    let s = 1;
+    for (let i = 0; i < 6000; i++) s = c.update(null, i % 30 === 0 ? 8.33 : 4.17, 240, true);
+    expect(s).toBe(1);
+  });
+
+  it('frame-time mode drops when a fifth of the refreshes are missed', () => {
+    const c = new DynamicResolutionController();
+    for (let i = 0; i < 400; i++) c.update(null, i % 5 === 0 ? 8.33 : 4.17, 240, true);
+    expect(c.scale).toBeLessThan(1);
+  });
+
+  it('converges instead of oscillating: a plant whose full-resolution cost misses the budget settles', () => {
+    // Frame time without GPU timing: the display period unless the (area-proportional) cost exceeds it.
+    const c = new DynamicResolutionController();
+    c.setMeasuredRefreshHz(144);
+    const period = 1000 / 144;
+    const changes: number[] = [];
+    let last = c.scale;
+    let t = 0;
+    let lateFrames = 0, lateAtFull = 0;
+    const total = 20000;
+    for (let i = 0; i < total; i++) {
+      const cost = 9.5 * c.scale * c.scale;
+      const frame = Math.max(period, cost) + (i % 7 === 0 ? 0.3 : 0);
+      t += frame;
+      const s = c.update(null, frame, 144, true);
+      if (s !== last) { changes.push(t); last = s; }
+      if (i > total * (2 / 3)) { lateFrames++; if (s === 1) lateAtFull++; }
+    }
+    // Failed probes back off, so the time spent back at the failing full resolution is a tiny share.
+    expect(lateAtFull / lateFrames).toBeLessThan(0.03);
+    expect(changes.length).toBeLessThan(16);
+    expect(c.scale).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it('a settled scale is held for a minute without a single change when the GPU time is steady', () => {
+    const c = new DynamicResolutionController();
+    for (let i = 0; i < 3000; i++) c.update(10 * c.scale * c.scale, 8.33, 120, true);
+    const settled = c.scale;
+    let changes = 0;
+    for (let i = 0; i < 7200; i++) if (c.update(10 * c.scale * c.scale, 8.33, 120, true) !== settled) { changes++; break; }
+    expect(changes).toBe(0);
+  });
+
+  it('without a measured refresh a GPU-bound app looks like a slow display and is not scaled; with one it is', () => {
+    const blind = new DynamicResolutionController();
+    for (let i = 0; i < 2000; i++) blind.update(null, 9.5, 144, true);
+    expect(blind.scale).toBe(1);
+    const informed = new DynamicResolutionController();
+    informed.setMeasuredRefreshHz(144);
+    for (let i = 0; i < 2000; i++) informed.update(null, 9.5, 144, true);
+    expect(informed.scale).toBeLessThan(1);
+  });
+
+  it('a measured refresh is lowered when frames arrive faster than it (window moved to a faster monitor)', () => {
+    const c = new DynamicResolutionController();
+    c.setMeasuredRefreshHz(60);
+    for (let i = 0; i < 1500; i++) c.update(null, 1000 / 240, 240, true);
+    expect(c.displayPeriodMs).toBeLessThan(5);
+  });
+
+  it('reset restores full resolution and forgets failed steps', () => {
+    const c = new DynamicResolutionController();
+    run(c, 100, 8, 4.17);
+    expect(c.scale).toBeLessThan(1);
+    c.reset();
+    expect(c.scale).toBe(1);
+  });
+});
+
+describe('resolveTargetFps', () => {
+  it('0 means the measured display refresh, a value means that value', () => {
+    expect(resolveTargetFps(0, 144, 0)).toBe(144);
+    expect(resolveTargetFps(240, 144, 0)).toBe(240);
+  });
+  it('falls back to 60 when the refresh is unknown', () => {
+    expect(resolveTargetFps(0, 0, 0)).toBe(60);
+  });
+  it('never aims above the frame cap', () => {
+    expect(resolveTargetFps(0, 240, 60)).toBe(60);
+    expect(resolveTargetFps(144, 240, 120)).toBe(120);
+    expect(resolveTargetFps(60, 240, 120)).toBe(60);
   });
 });
 

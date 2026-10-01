@@ -8,6 +8,12 @@ const EV_MAX : f32 = ${EV_MAX};
 const KEY : f32 = ${KEY};
 const KEY_KNEE_EV : f32 = ${KEY_KNEE_EV};
 const KEY_SLOPE : f32 = ${KEY_SLOPE};
+const NIGHT_KNEE_EV : f32 = ${NIGHT_KNEE_EV};
+const NIGHT_SLOPE : f32 = ${NIGHT_SLOPE};
+const NIGHT_BLEND_HI_EV : f32 = ${NIGHT_BLEND_HI_EV};
+const NIGHT_BLEND_LO_EV : f32 = ${NIGHT_BLEND_LO_EV};
+const NIGHT_MARGIN_EV : f32 = ${NIGHT_MARGIN_EV};
+const EXPECTED_MEAN_EV : f32 = ${EXPECTED_MEAN_EV};
 const KNEE : f32 = ${KNEE};
 const KNEE_W : f32 = ${KNEE_WIDTH};
 const CENTER_BIAS : f32 = ${CENTER_BIAS};
@@ -87,12 +93,22 @@ fn topQuantileEv(total : f32) -> f32 {
   return binCenterEv(0u);
 }
 
-// The key falls with the metered scene luminance, the bright decile may not sit far over the key, and the sensor gain is limited both ways.
+// Weight of the CPU's astronomy-based scene estimate (it is encoded in the pre-exposure) against the metered mean: 1 in the dark.
+fn nightWeight(preEv : f32) -> f32 {
+  return 1.0 - smoothstep(NIGHT_BLEND_LO_EV, NIGHT_BLEND_HI_EV, EXPECTED_MEAN_EV - preEv);
+}
+
+// The key falls with the scene luminance, the bright decile may not sit far over the key (not in the dark), the sensor gain is limited both ways.
+// In the dark the estimate replaces the metered mean, but a frame metered more than NIGHT_MARGIN_EV brighter than it (artificial light) still lowers the gain.
 fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
-  let keyEv = LOG2_KEY + KEY_SLOPE * min(meanEv - preEv - KEY_KNEE_EV, 0.0);
-  let shift = keyEv - meanEv;
-  let protectedShift = max(min(shift, LOG2_KEY + CLIP_EV - highEv), shift - PROTECT_MAX_EV);
-  let gain = clamp(preEv + protectedShift - DAY_TOTAL_EV, MIN_GAIN_EV, MAX_GAIN_EV);
+  let night = nightWeight(preEv);
+  let used = mix(meanEv, EXPECTED_MEAN_EV, night);
+  let lumEv = used - preEv;
+  let keyEv = LOG2_KEY + KEY_SLOPE * min(lumEv - KEY_KNEE_EV, 0.0) + (NIGHT_SLOPE - KEY_SLOPE) * min(lumEv - NIGHT_KNEE_EV, 0.0);
+  let shift = keyEv - used;
+  let protectedShift = mix(max(min(shift, LOG2_KEY + CLIP_EV - highEv), shift - PROTECT_MAX_EV), shift, night);
+  let floodlit = night * max(meanEv - EXPECTED_MEAN_EV - NIGHT_MARGIN_EV, 0.0);
+  let gain = max(clamp(preEv + protectedShift - DAY_TOTAL_EV, MIN_GAIN_EV, MAX_GAIN_EV) - floodlit, MIN_GAIN_EV);
   return preEv + clamp(DAY_TOTAL_EV + gain - preEv, -MAX_RATIO_EV, MAX_RATIO_EV);
 }
 

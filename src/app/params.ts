@@ -10,6 +10,8 @@
  *   quality=low|medium|high|ultra
  *   scale=<0.25..1>       render scale        dyn=0|1  dynamic resolution
  *   gates=<n> laps=<n>    track size          wind=<m/s> winddir=<deg from>
+ *   diff=<0..100>         track difficulty in percent (the share links carry it)
+ *   countdown=0|1         race-start countdown: off for `autostart` runs unless asked for with 1
  *   advance=<frames>      run this many deterministic frames before `ready` (default: see SCENARIO_ADVANCE)
  *   agl=<m>               altitude above ground the hover scenario holds (default 1.5; 0.3 skims the grass)
  *   fixeddt=<s>           fixed frame dt for the deterministic runs (default 1/60)
@@ -39,6 +41,10 @@ export interface AppParams {
   dyn?: boolean;
   gates?: number;
   laps?: number;
+  /** Track difficulty 0..1. */
+  difficulty?: number;
+  /** Race-start countdown forced on or off; undefined follows the pilot's option (off for autostart runs). */
+  countdown?: boolean;
   wind?: number;
   windDir?: number;
   /** Frames to run deterministically (fixed dt) before the app reports ready. */
@@ -84,6 +90,7 @@ export function parseParams(search: string): AppParams {
   const autostart = flag('autostart') ?? false;
   const gates = num(q, 'gates');
   const laps = num(q, 'laps');
+  const diff = num(q, 'diff');
   const scale = num(q, 'scale');
   const fixedDt = num(q, 'fixeddt');
   const agl = num(q, 'agl');
@@ -99,6 +106,8 @@ export function parseParams(search: string): AppParams {
     dyn: flag('dyn'),
     gates: gates === undefined ? undefined : Math.max(1, Math.round(gates)),
     laps: laps === undefined ? undefined : Math.max(1, Math.round(laps)),
+    difficulty: diff === undefined ? undefined : Math.min(1, Math.max(0, diff / 100)),
+    countdown: flag('countdown'),
     wind: num(q, 'wind'),
     windDir: num(q, 'winddir'),
     advance: Math.max(0, Math.floor(advance ?? defaultAdvance(scenario, autostart))),
@@ -123,6 +132,7 @@ export function settingsPatch(p: AppParams, base: Pick<AppSettings, 'timeMs' | '
   if (p.dyn !== undefined) out.dynamicResolution = p.dyn;
   if (p.gates !== undefined) out.gateCount = p.gates;
   if (p.laps !== undefined) out.laps = p.laps;
+  if (p.difficulty !== undefined) out.difficulty = p.difficulty;
   if (p.wind !== undefined) out.windSpeed = Math.max(0, p.wind);
   if (p.windDir !== undefined) out.windDirDeg = ((p.windDir % 360) + 360) % 360;
   if (p.hours !== undefined) out.timeMs = hoursToTimeMs(base.timeMs, base.observer.longitudeDeg, p.hours);

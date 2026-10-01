@@ -1,6 +1,8 @@
 import type { PadSample } from '../input/gamepadMap';
+import type { SkyBodies } from './clockModel';
 import { el, uid } from './dom';
 import type { Control, MenuAction } from './menuSchema';
+import type { PilotOptions } from './pilotOptions';
 import type { AppSettings } from './settingsSchema';
 
 /** The live pad state the calibration readout draws; `GamepadInput` satisfies it. */
@@ -11,12 +13,26 @@ export interface PadView {
   readonly sample: Readonly<Pick<PadSample, 'roll' | 'pitch' | 'yaw' | 'throttleDirect' | 'profile'>>;
 }
 
+/** The running sim as the menu shows it: the sim clock and where the sun and moon stand. */
+export interface LiveSky extends SkyBodies {
+  /** Simulated time, ms since the epoch (UTC). The settings' `timeMs` goes stale while the clock runs. */
+  timeMs: number;
+}
+
 /** What a control needs from the menu: the current settings and the two ways to talk to the app. */
 export interface ControlHost {
   settings(): AppSettings;
   change(patch: Partial<AppSettings>): void;
   action(action: MenuAction): void;
   pad(): PadView | null;
+  /** The pilot options (clock mode, race start, stick indicator); `onOptions` listens for changes and returns the unsubscribe. */
+  options(): PilotOptions;
+  patchOptions(patch: Partial<PilotOptions>): void;
+  onOptions(fn: (o: PilotOptions) => void): () => void;
+  /** Live sim clock and sky, or null while the app has not connected it. */
+  live(): LiveSky | null;
+  /** The page address share links are built on. */
+  shareBase(): string;
 }
 
 export interface BuiltControl {

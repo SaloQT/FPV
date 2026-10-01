@@ -23,7 +23,7 @@ export const MISSED_SHOW_S = 3;
 const FRESH_MAH = 20;
 
 /** Slots in `HudModel.keys`, the last quantised value each cached text was built from. */
-const K = { Cell: 0, Pack: 1, Mah: 2, Timer: 3, Current: 4, Throttle: 5, Speed: 6, Alt: 7, Gate: 8, Lap: 9, LapTime: 10, Best: 11, Split: 12, Missed: 13, Finish: 14, Count: 15 } as const;
+const K = { Cell: 0, Pack: 1, Mah: 2, Timer: 3, Current: 4, Throttle: 5, Speed: 6, Alt: 7, Gate: 8, Lap: 9, LapTime: 10, Best: 11, Split: 12, Missed: 13, Count: 14 } as const;
 
 export interface HudRace {
   active: boolean;
@@ -38,11 +38,24 @@ export interface HudRace {
   missedVisible: boolean;
 }
 
-export interface HudFinish {
+/** The race-start sequence: big text in the middle of the picture. `text` is empty during the lead-in. */
+export interface HudCountdown {
   visible: boolean;
-  totalText: string;
-  bestText: string;
-  lapTexts: string[];
+  text: string;
+  caption: string;
+  /** The number on screen: 3, 2, 1, 0 for GO, -1 for the lead-in. */
+  value: number;
+  /** 0..1 through the current number. */
+  fraction: number;
+}
+
+/** The two-box stick indicator: left stick is yaw (x) and throttle (y), right stick is roll (x) and pitch (y), all -1..1 except throttle 0..1. */
+export interface HudSticks {
+  visible: boolean;
+  roll: number;
+  pitch: number;
+  yaw: number;
+  throttle: number;
 }
 
 /** Everything the OSD draws, as ready-made strings and flags. `buildHud` rewrites it in place every frame. */
@@ -80,7 +93,10 @@ export interface HudModel {
   respawn: boolean;
   message: string;
   race: HudRace;
-  finish: HudFinish;
+  countdown: HudCountdown;
+  /** The pilot wants the stick indicator (set from the options, `buildHud` leaves it alone). */
+  sticksEnabled: boolean;
+  sticks: HudSticks;
   /** Cache bookkeeping owned by `buildHud`. */
   keys: Float64Array;
 }
@@ -97,7 +113,9 @@ export function createHudModel(): HudModel {
       active: false, gateText: '', lapText: '', lapTimeText: '', bestText: '', splitText: '', splitVisible: false, splitAhead: false,
       missedText: '', missedVisible: false,
     },
-    finish: { visible: false, totalText: '', bestText: '', lapTexts: [] },
+    countdown: { visible: false, text: '', caption: '', value: -1, fraction: 0 },
+    sticksEnabled: true,
+    sticks: { visible: false, roll: 0, pitch: 0, yaw: 0, throttle: 0 },
     keys,
   };
 }
@@ -141,7 +159,34 @@ export function buildHud(
   out.respawn = snap.respawnOffered && !settings.autoRespawn;
   out.message = snap.message;
   fillRace(snap, out, k);
+  fillCountdown(snap, out);
+  fillSticks(snap, out);
   return out;
+}
+
+const COUNT_TEXT = ['GO', '1', '2', '3'] as const;
+const COUNT_CAPTION = 'RACE START';
+const GO_CAPTION = 'ARM AND FLY';
+const LEAD_CAPTION = 'GET READY';
+
+function fillCountdown(snap: SessionSnapshot, out: HudModel): void {
+  const c = snap.countdown;
+  const o = out.countdown;
+  o.visible = c.active && snap.state !== 'menu' && snap.state !== 'paused';
+  if (!o.visible) return;
+  o.value = c.value;
+  o.fraction = c.fraction;
+  o.text = c.value < 0 ? '' : (COUNT_TEXT[c.value] ?? '');
+  o.caption = c.value < 0 ? LEAD_CAPTION : c.value === 0 ? GO_CAPTION : COUNT_CAPTION;
+}
+
+function fillSticks(snap: SessionSnapshot, out: HudModel): void {
+  const s = out.sticks;
+  s.visible = out.sticksEnabled && out.visible;
+  s.roll = snap.stick.roll;
+  s.pitch = snap.stick.pitch;
+  s.yaw = snap.stick.yaw;
+  s.throttle = snap.throttle;
 }
 
 function fillBattery(state: QuadState, out: HudModel, k: Float64Array): void {
@@ -177,8 +222,6 @@ function fillRace(snap: SessionSnapshot, out: HudModel, k: Float64Array): void {
   const r = snap.race;
   const o = out.race;
   o.active = r.active;
-  const f = out.finish;
-  f.visible = r.active && r.finished;
   if (!r.active) return;
   const gate = Math.min(r.nextGate + 1, r.gateCount);
   if (!sameKey(k, K.Gate, gate * 1000 + r.gateCount)) o.gateText = `GATE ${gate}/${r.gateCount}`;
@@ -190,13 +233,4 @@ function fillRace(snap: SessionSnapshot, out: HudModel, k: Float64Array): void {
   if (o.splitVisible && !sameKey(k, K.Split, Math.round(r.splitDelta * 1000))) o.splitText = formatSplit(r.splitDelta);
   o.missedVisible = r.missedGate >= 0 && snap.simTime - r.missedAt < MISSED_SHOW_S;
   if (o.missedVisible && !sameKey(k, K.Missed, r.missedGate)) o.missedText = `MISSED GATE ${r.missedGate + 1}`;
-  if (f.visible && !sameKey(k, K.Finish, Math.round(r.totalTime * 1000) * 64 + r.lapTimes.length)) fillFinish(snap, f);
-}
-
-function fillFinish(snap: SessionSnapshot, f: HudFinish): void {
-  const r = snap.race;
-  f.totalText = formatTime(r.totalTime);
-  f.bestText = formatTime(r.bestLap);
-  f.lapTexts.length = r.lapTimes.length;
-  for (let i = 0; i < r.lapTimes.length; i++) f.lapTexts[i] = `LAP ${i + 1}  ${formatTime(r.lapTimes[i])}`;
 }

@@ -97,9 +97,10 @@ function gauss4(px: number, py: number, frame: number): number[] {
 }
 
 function sensorSigma(c: number, gainEv: number, amp: number): number {
-  const [shot, read, maxEv, , shutterEv] = SENSOR;
-  const gain = 2 ** clamp(gainEv - shutterEv, 0, maxEv - shutterEv);
-  return amp * Math.sqrt(shot * Math.max(c, 0) * gain + read * read * gain);
+  const [shot, read, maxEv, , shutterEv, nrFloor] = SENSOR;
+  const isoEv = clamp(gainEv - shutterEv, 0, maxEv - shutterEv);
+  const nr = 1 + (nrFloor - 1) * (isoEv / (maxEv - shutterEv));
+  return amp * nr * Math.sqrt(shot * Math.max(c, 0) * 2 ** isoEv + read * read * 2 ** isoEv);
 }
 
 function sensorNoise(c: V3, px: number, py: number, frame: number, gainEv: number, amp: number): V3 {
@@ -391,7 +392,7 @@ describe('sensor noise model', () => {
     const maxEv = SENSOR[2];
     expect(sensorSigma(0.3, 6, 0)).toBe(0);
     expect(sensorSigma(0.3, 6, 1)).toBeCloseTo(0.5 * sensorSigma(0.3, 6, 2), 12);
-    expect(sensorSigma(0.2, maxEv, 1)).toBeGreaterThan(4 * sensorSigma(0.2, 0, 1));
+    expect(sensorSigma(0.2, maxEv, 1)).toBeGreaterThan(2 * sensorSigma(0.2, 0, 1));
     expect(sensorSigma(0.2, -6, 1)).toBeCloseTo(sensorSigma(0.2, 0, 1), 12);
     expect(sensorSigma(0.2, 30, 1)).toBeCloseTo(sensorSigma(0.2, maxEv, 1), 12);
     expect(maxEv).toBeLessThanOrEqual(10);
@@ -401,6 +402,20 @@ describe('sensor noise model', () => {
     const shutterEv = SENSOR[4];
     expect(sensorSigma(0.2, shutterEv, 1)).toBeCloseTo(sensorSigma(0.2, 0, 1), 12);
     expect(sensorSigma(0.2, shutterEv + 2, 1)).toBeGreaterThan(sensorSigma(0.2, shutterEv, 1));
+  });
+
+  it('applies the temporal noise reduction only as the ISO gain rises, down to nrFloor at the cap', () => {
+    const [shot, read, maxEv, , shutterEv, nrFloor] = SENSOR;
+    const raw = (c: number, gainEv: number): number => {
+      const g = 2 ** clamp(gainEv - shutterEv, 0, maxEv - shutterEv);
+      return Math.sqrt(shot * c * g + read * read * g);
+    };
+    expect(sensorSigma(0.1, shutterEv, 1) / raw(0.1, shutterEv)).toBeCloseTo(1, 12);
+    expect(sensorSigma(0.1, maxEv, 1) / raw(0.1, maxEv)).toBeCloseTo(nrFloor, 12);
+    expect(sensorSigma(0.1, 20, 1)).toBeCloseTo(sensorSigma(0.1, maxEv, 1), 12);
+    expect(sensorSigma(0.1, (shutterEv + maxEv) / 2, 1) / raw(0.1, (shutterEv + maxEv) / 2)).toBeCloseTo((1 + nrFloor) / 2, 12);
+    expect(nrFloor).toBeGreaterThan(0.2);
+    expect(nrFloor).toBeLessThan(0.6);
   });
 
   it('has Poisson shot statistics: variance linear in the signal on top of the read-noise floor', () => {
@@ -420,8 +435,8 @@ describe('sensor noise model', () => {
       prev = rel;
     }
     const dark = sensorSigma(0.05, maxEv, amp) / 0.05;
-    expect(dark).toBeGreaterThan(0.12);
-    expect(dark).toBeLessThan(0.45);
+    expect(dark).toBeGreaterThan(0.07);
+    expect(dark).toBeLessThan(0.3);
     expect(sensorSigma(0.18, maxEv, amp) / 0.18).toBeLessThan(0.15);
   });
 
@@ -442,6 +457,46 @@ describe('sensor noise model', () => {
       expect(luma2 / N / sigma2).toBeCloseTo(1 - (SENSOR[3] * 2) / 3, 1);
       for (let k = 0; k < 3; k++) expect(Math.abs(mean[k] / N)).toBeLessThan(0.05 * Math.sqrt(sigma2) + 1e-9);
     }
+  });
+});
+
+describe('low-light grade', () => {
+  const num = (name: string): number => Number(videoSrc.match(new RegExp(`const ${name} : f32 = ([^;]+);`))?.[1]);
+  const [START, END, DESAT] = ['LOW_LIGHT_START', 'LOW_LIGHT_END', 'LOW_LIGHT_DESAT'].map(num);
+  const TINT = nums(videoSrc, /const LOW_LIGHT_TINT : vec3f = vec3f\(([^)]*)\)/);
+  const vluma = (e: V3): number => 0.299 * e[0] + 0.587 * e[1] + 0.114 * e[2];
+  function grade(e: V3): V3 {
+    const y = vluma(e);
+    const k = 1 - smooth(START, END, y);
+    if (k <= 0) return e;
+    const o = e.map((v, i) => (v + (y - v) * DESAT * k) * (1 + (TINT[i] - 1) * k)) as V3;
+    return o.map((v) => v * (y / Math.max(vluma(o), 1e-4))) as V3;
+  }
+
+  it('leaves everything brighter than LOW_LIGHT_END untouched and keeps the luma of every pixel', () => {
+    expect(grade([0.4, 0.3, 0.2])).toEqual([0.4, 0.3, 0.2]);
+    for (const e of [[0.05, 0.04, 0.03], [0.1, 0.12, 0.05], [0.02, 0.01, 0.03], [0.2, 0.15, 0.1]] as V3[]) expect(vluma(grade(e))).toBeCloseTo(vluma(e), 9);
+  });
+
+  it('thins the chroma and turns a warm dark sky neutral to cool, fully below LOW_LIGHT_START', () => {
+    const warm: V3 = [0.02, 0.018, 0.015];
+    const g = grade(warm);
+    expect(g[2] / g[0]).toBeGreaterThan(warm[2] / warm[0]);
+    expect(g[2] / g[0]).toBeGreaterThan(0.95);
+    const sat = (c: V3): number => Math.max(...c) - Math.min(...c);
+    expect(sat(grade([0.03, 0.01, 0.005]))).toBeLessThan(0.75 * sat([0.03, 0.01, 0.005]));
+    expect(START).toBeGreaterThan(0);
+    expect(END).toBeLessThan(0.3);
+  });
+
+  it('fades in continuously with darkness and never makes black non-black', () => {
+    let prev = 0;
+    for (let y = 0.3; y > 0.001; y *= 0.93) {
+      const d = Math.abs(grade([y * 1.2, y, y * 0.8])[0] / (y * 1.2) - 1);
+      expect(d).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = d;
+    }
+    expect(grade([0, 0, 0])).toEqual([0, 0, 0]);
   });
 });
 

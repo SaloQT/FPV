@@ -134,6 +134,17 @@ describe('validation', () => {
     expect(s.osdScale).toBe(2);
   });
 
+  it('targetFps and frameCap: 0 means the display, other values are clamped and rounded', () => {
+    const store = new SettingsStore(new MemoryStorage());
+    expect(store.get()).toMatchObject({ targetFps: 0, frameCap: 0, performance240: false });
+    store.patch({ targetFps: 165, frameCap: 59.6 });
+    expect(store.get()).toMatchObject({ targetFps: 165, frameCap: 60 });
+    store.patch({ targetFps: 7, frameCap: 5000 });
+    expect(store.get()).toMatchObject({ targetFps: 30, frameCap: 1000 });
+    store.patch({ targetFps: 0, frameCap: 0 });
+    expect(store.get()).toMatchObject({ targetFps: 0, frameCap: 0 });
+  });
+
   it('rounds integer settings', () => {
     const store = new SettingsStore(new MemoryStorage());
     store.patch({ targetFps: 143.6, seed: 12.4 });
@@ -143,11 +154,11 @@ describe('validation', () => {
 
   it('keeps the old value for the wrong type, NaN or Infinity', () => {
     const store = new SettingsStore(new MemoryStorage());
-    store.patch({ fov: 'wide', renderScale: Number.NaN, vsync: 1, quality: 'ludicrous', mode: 3 } as unknown as Partial<AppSettings>);
+    store.patch({ fov: 'wide', renderScale: Number.NaN, performance240: 1, quality: 'ludicrous', mode: 3 } as unknown as Partial<AppSettings>);
     const s = store.get();
     expect(s.fov).toBe(DEFAULT_SETTINGS.fov);
     expect(s.renderScale).toBe(DEFAULT_SETTINGS.renderScale);
-    expect(s.vsync).toBe(DEFAULT_SETTINGS.vsync);
+    expect(s.performance240).toBe(DEFAULT_SETTINGS.performance240);
     expect(s.quality).toBe(DEFAULT_SETTINGS.quality);
     expect(s.mode).toBe(DEFAULT_SETTINGS.mode);
     store.patch({ windSpeed: Infinity });
@@ -254,7 +265,9 @@ describe('persistence', () => {
   it('migrates the bare, unversioned layout of older builds', () => {
     const mem = new MemoryStorage();
     mem.data.set(SETTINGS_KEY, JSON.stringify({ fov: 88, vsync: true }));
-    expect(new SettingsStore(mem).get()).toMatchObject({ fov: 88, vsync: true });
+    const s = new SettingsStore(mem).get();
+    expect(s.fov).toBe(88);
+    expect('vsync' in s).toBe(false);
   });
 
   it('reads a newer version best-effort', () => {

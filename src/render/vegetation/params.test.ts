@@ -57,6 +57,23 @@ describe('grassBudget', () => {
     }
   });
 
+  it('lists every patch of the full circle at full density, so a down-looking wide lens never loses a patch to a full work list', () => {
+    for (const b of budgets) {
+      const full = annulusSlots(0, b.distance, b.slotsPerPatch / (b.patchSize * b.patchSize), b.fullRadius, b.distance);
+      expect(b.chunkCap).toBeGreaterThanOrEqual(Math.ceil(full / CHUNK_SLOTS) + b.cellsPerSide * b.cellsPerSide);
+    }
+  });
+
+  it('leaves each LOD region room for most of the full circle, since an overflow drops whole patches rather than single blades', () => {
+    for (const b of budgets) {
+      const density = b.slotsPerPatch / (b.patchSize * b.patchSize);
+      const edges = [0, b.lodDistance[0], b.lodDistance[1], b.distance];
+      b.caps.forEach((cap, i) => {
+        expect(cap).toBeGreaterThanOrEqual(0.75 * annulusSlots(edges[i], edges[i + 1], density, b.fullRadius, b.distance));
+      });
+    }
+  });
+
   it('hashes 4 m patches into a camera-centred grid that covers the view distance', () => {
     for (const [i, b] of budgets.entries()) {
       const q = qualityProfile(TIERS[i]);

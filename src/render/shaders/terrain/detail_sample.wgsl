@@ -46,7 +46,7 @@ fn dsLayerTile(layer : i32) -> f32 {
     case 1: { return 1.5; }
     case 2: { return 2.3; }
     case 3: { return 1.4; }
-    case 4: { return 4.5; }
+    case 4: { return 3.0; }
     case 5: { return 3.0; }
     case 6: { return 4.0; }
     default: { return 1.6; }

@@ -20,30 +20,22 @@ export function drawRacePanel(p: Painter, m: HudModel): void {
   p.pair('SPLIT', r.splitText, right, y, 'right', r.splitAhead ? COLOR_GREEN : COLOR_RED);
 }
 
-const CARD_ROWS_MAX = 10;
+const COUNT_COLORS: Readonly<Record<number, string>> = { 3: COLOR_WHITE, 2: COLOR_AMBER, 1: COLOR_RED, 0: COLOR_GREEN };
+/** The number fades from full to this alpha over its second, so each new one reads as a fresh beat. */
+const COUNT_FADE_TO = 0.55;
 
-/** Centre card with the total, the best lap and every lap once the race is over. */
-export function drawFinishCard(p: Painter, m: HudModel): void {
-  const f = m.finish;
-  if (!f.visible) return;
-  const laps = Math.min(f.lapTexts.length, CARD_ROWS_MAX);
-  const w = p.charMain * 24;
-  const h = p.big * 1.4 + p.line * (3.2 + laps);
-  const x = (p.width - w) / 2;
-  let y = (p.height - h) / 2;
-  p.fillRect(x, y, w, h, 'rgba(8,10,14,0.66)');
+/** The 3-2-1-GO of a race start in the middle of the picture, with a one-line caption under it. */
+export function drawCountdown(p: Painter, m: HudModel): void {
+  const c = m.countdown;
+  if (!c.visible) return;
   const cx = p.width / 2;
-  y += p.big * 1.15;
-  p.useBig();
-  p.text('FINISHED', cx, y, 'center', COLOR_GREEN);
-  y += p.line * 1.3;
-  p.pair('TOTAL', f.totalText, cx + w * 0.4, y, 'right');
-  y += p.line;
-  p.pair('BEST', f.bestText, cx + w * 0.4, y, 'right', COLOR_AMBER);
-  y += p.line * 0.5;
-  p.useMain();
-  for (let i = 0; i < laps; i++) {
-    y += p.line;
-    p.text(f.lapTexts[i], cx, y, 'center', COLOR_WHITE);
+  const y = p.height * 0.44;
+  p.alpha(1 - (1 - COUNT_FADE_TO) * c.fraction);
+  if (c.text.length > 0) {
+    p.useHuge();
+    p.text(c.text, cx, y + p.huge * 0.35, 'center', COUNT_COLORS[c.value] ?? COLOR_WHITE);
   }
+  p.alpha(1);
+  p.useBig();
+  p.text(c.caption, cx, c.text.length > 0 ? y + p.huge * 0.35 + p.big * 1.6 : y, 'center', c.value === 0 ? COLOR_GREEN : COLOR_WHITE);
 }

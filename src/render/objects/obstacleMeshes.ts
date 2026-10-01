@@ -1,4 +1,4 @@
-/** Track obstacle meshes baked in world space: cones, poles, flag poles, walls, rocks and stand-in trees. */
+/** Track obstacle meshes baked in world space: cones, poles, flag poles, walls, rocks and the footing of tree obstacles. */
 import type { TrackObstacle, Vec3 } from '../../contracts';
 import { pole } from './gateMeshes';
 import { KIND, type ClothFlag } from './materials';

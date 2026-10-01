@@ -61,12 +61,17 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   let fan = smoothstep(0.30, 0.65, dep) * (1.0 - smoothstep(0.05, 0.14, slope));
   let scree = smoothstep(0.10, 0.20, slope) * (1.0 - steep) * smoothstep(0.40, 0.70, tnFbm(q * 0.35 + vec2f(2.0, 19.0), 2));
 
+  // Waterline: wet sand, pebbles and mud below about a metre of the water surface, no sward on it; the seabed seen through the water
+  // is the same sediment (everything below the surface counts as fully shore).
+  var shore = 0.0;
+  if (waterLevel > -1.0e8) { shore = 1.0 - smoothstep(0.1, 1.0, y - waterLevel); }
+
   // The sward thins in metre-scale patches, more on slopes, dry ground and thin soil; soil shows through the gaps.
   let dry = glDryness(xz, wet);
   let patchN = tnFbm(q * 0.55 + vec2f(23.0, 51.0), 3);
   let thinSoil = 1.0 - smoothstep(0.30, 0.70, soilJ);
   let sparse = smoothstep(0.60, 0.86, patchN + 0.30 * smoothstep(0.03, 0.15, slope) + 0.18 * dry + 0.25 * thinSoil);
-  let cover = smoothstep(0.22, 0.65, soilJ) * gentle * (1.0 - 0.85 * gully) * (1.0 - 0.8 * rill);
+  let cover = smoothstep(0.22, 0.65, soilJ) * gentle * (1.0 - 0.85 * gully) * (1.0 - 0.8 * rill) * (1.0 - 0.95 * shore);
   let sward = cover * (1.0 - 0.9 * sparse);
   let grass = sward * (1.0 - dry);
   let hay = sward * dry;
@@ -74,15 +79,14 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   let channel = smoothstep(0.5, 0.9, flow);
   let dirt = 0.10 + 0.9 * smoothstep(0.05, 0.35, soilJ) * (1.0 - smoothstep(0.35, 0.7, soilJ)) + 0.7 * channel
     + 0.9 * cover * sparse + 0.9 * gully + 0.8 * rill;
-  let gravel = 0.7 * scree + 0.7 * channel * (0.4 + 0.6 * dep) + 0.6 * fan * (0.3 + 0.7 * smoothstep(0.3, 0.7, flow)) + 0.4 * gully * dep;
+  let gravel = 0.7 * scree + 0.7 * channel * (0.4 + 0.6 * dep) + 0.6 * fan * (0.3 + 0.7 * smoothstep(0.3, 0.7, flow)) + 0.4 * gully * dep
+    + 0.55 * shore * smoothstep(0.35, 0.65, tnFbm(q * 0.2 + vec2f(44.0, 12.0), 2));
 
-  var shore = 0.0;
-  if (waterLevel > -1.0e8) { shore = 1.0 - smoothstep(-8.0, 3.5, y - waterLevel); }
-  let sand = max(shore, 0.3 * smoothstep(0.5, 0.85, dep) * gentle);
+  let sand = max(0.9 * shore, 0.3 * smoothstep(0.5, 0.85, dep) * gentle);
 
   let pat = smoothstep(0.42, 0.70, tnFbm(q * 0.08 + vec2f(31.0, 17.0), 2));
   let bank = smoothstep(0.7, 0.95, wet) * (1.0 - smoothstep(0.05, 0.14, slope));
-  let loam = (0.3 * wet * smoothstep(0.35, 0.8, soilJ) * pat + 0.8 * bank * (0.3 + 0.7 * pat)) * (1.0 - smoothstep(0.06, 0.16, slope));
+  let loam = (0.3 * wet * smoothstep(0.35, 0.8, soilJ) * pat + 0.8 * bank * (0.3 + 0.7 * pat) + 0.6 * shore * (0.3 + 0.7 * pat)) * (1.0 - smoothstep(0.06, 0.16, slope));
 
   let snow = smoothstep(0.78, 0.86, hRel + 0.05 * jitter) * gentle;
   let keep = 1.0 - snow;
@@ -111,7 +115,7 @@ fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
       let warp = 2.2 * tnFbm(xz * 0.03 + vec2f(3.0, 44.0), 2);
       let band = 0.5 + 0.5 * sin(y * 0.85 + warp * 6.0);
       let tone = mix(vec3f(1.12, 1.0, 0.88), vec3f(0.86, 0.9, 0.98), band);
-      let lichen = smoothstep(0.60, 0.72, tnFbm(xz * 0.21 + vec2f(71.0, 9.0), 2)) * 0.5;
+      let lichen = smoothstep(0.60, 0.72, tnFbm(xz * 0.21 + vec2f(71.0, 9.0), 2)) * smoothstep(0.38, 0.62, tnFbm(xz * 3.7 + vec2f(8.0, 33.0), 2)) * 0.55;
       return mix(glBaseColor(GL_ROCK) * tone, vec3f(0.20, 0.21, 0.08), lichen);
     }
     case 5: { return glBaseColor(GL_SAND) * (0.9 + 0.2 * tnFbm(xz * 0.13 + vec2f(9.0, 3.0), 2)); }

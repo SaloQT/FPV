@@ -3,83 +3,12 @@
 //   outB: rg = tangent-space normal xy (slope, x = +u, y = +v) * 0.5 + 0.5, b = roughness, a = cavity AO
 // Every noise is periodic in uv (integer lattice periods), so the arrays tile seamlessly. Self-contained on purpose: math.wgsl needs Frame.
 #include "terrain/ground_palette.wgsl"
+#include "terrain/detail_noise.wgsl"
 
 @group(0) @binding(0) var outA : texture_storage_2d_array<rgba8unorm, write>;
 @group(0) @binding(1) var outB : texture_storage_2d_array<rgba8unorm, write>;
 
 const SIZE : f32 = 512.0;
-const TAU_D : f32 = 6.28318530718;
-
-fn pcgh(v : u32) -> u32 {
-  let s = v * 747796405u + 2891336453u;
-  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-  return (w >> 22u) ^ w;
-}
-fn hash2(ip : vec2i, seed : u32) -> u32 { return pcgh(u32(ip.x) + pcgh(u32(ip.y) + pcgh(seed))); }
-fn f01(h : u32) -> f32 { return f32(h >> 8u) * (1.0 / 16777216.0); }
-fn wrapLattice(ip : vec2i, per : vec2i) -> vec2i { return ((ip % per) + per) % per; }
-
-fn pGrad(ip : vec2i, per : vec2i, seed : u32) -> vec2f {
-  let a = f01(hash2(wrapLattice(ip, per), seed)) * TAU_D;
-  return vec2f(cos(a), sin(a));
-}
-
-// Periodic Perlin noise, about [-1, 1]; `per` lattice cells across the tile on each axis.
-fn pNoise(uv : vec2f, per : vec2i, seed : u32) -> f32 {
-  let p = uv * vec2f(per);
-  let i = floor(p);
-  let f = p - i;
-  let ip = vec2i(i);
-  let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  let a = dot(pGrad(ip, per, seed), f);
-  let b = dot(pGrad(ip + vec2i(1, 0), per, seed), f - vec2f(1.0, 0.0));
-  let c = dot(pGrad(ip + vec2i(0, 1), per, seed), f - vec2f(0.0, 1.0));
-  let d = dot(pGrad(ip + vec2i(1, 1), per, seed), f - vec2f(1.0, 1.0));
-  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 1.4142;
-}
-
-// Periodic fbm remapped to about [0, 1]; the frequency doubles per octave.
-fn pFbm(uv : vec2f, freq : i32, octaves : i32, seed : u32) -> f32 {
-  var sum = 0.0;
-  var amp = 0.5;
-  var norm = 0.0;
-  var fr = freq;
-  for (var o = 0; o < octaves; o++) {
-    sum += amp * pNoise(uv, vec2i(fr), seed + u32(o) * 101u);
-    norm += amp;
-    amp *= 0.5;
-    fr *= 2;
-  }
-  return 0.5 + 0.5 * sum / norm;
-}
-
-// Periodic cellular noise: (F1, F2, random id of the nearest feature point).
-fn pWorley(uv : vec2f, freq : i32, seed : u32) -> vec3f {
-  let p = uv * f32(freq);
-  let base = floor(p);
-  let f = p - base;
-  let i = vec2i(base);
-  var d1 = 8.0;
-  var d2 = 8.0;
-  var id = 0.0;
-  for (var y = -1; y <= 1; y++) {
-    for (var x = -1; x <= 1; x++) {
-      let cell = vec2i(x, y);
-      let h = hash2(wrapLattice(i + cell, vec2i(freq)), seed);
-      let pt = vec2f(cell) + vec2f(f01(h), f01(pcgh(h))) - f;
-      let d = dot(pt, pt);
-      if (d < d1) { d2 = d1; d1 = d; id = f01(pcgh(h ^ 2654435769u)); } else if (d < d2) { d2 = d; }
-    }
-  }
-  return vec3f(sqrt(d1), sqrt(d2), id);
-}
-
-fn contrast(x : f32, k : f32) -> f32 { return saturate(0.5 + (x - 0.5) * k); }
-fn cavity(h : f32) -> f32 { return 0.4 + 0.6 * smoothstep(0.1, 0.7, h); }
-
-fn srgbEncode(c : vec3f) -> vec3f {
-  return select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, 12.92 * c, c <= vec3f(0.0031308));
-}
 
 struct Surf {
   h : f32,
@@ -209,47 +138,105 @@ fn surfHay(uv : vec2f) -> Surf {
   return s;
 }
 
+// Colour of one stone relative to the layer mean: tan, grey, dark basalt-like, rust and the odd pale quartz.
+fn stoneTone(id : f32) -> vec3f {
+  if (id < 0.30) { return vec3f(1.18, 1.04, 0.84); }
+  if (id < 0.58) { return vec3f(0.92, 0.94, 0.98); }
+  if (id < 0.80) { return vec3f(0.55, 0.55, 0.58); }
+  if (id < 0.89) { return vec3f(1.12, 0.86, 0.72); }
+  return vec3f(1.45, 1.42, 1.36);
+}
+
+// Bare soil: fine grain and crumbly clods in two sizes, scattered pebbles of every colour pressed into it and a few hairline drying cracks.
 fn surfDirt(uv : vec2f) -> Surf {
   var s : Surf;
   let n1 = pFbm(uv, 6, 4, 9u);
   let n2 = pFbm(uv, 26, 3, 10u);
-  let grain = pNoise(uv, vec2i(140), 11u) * 0.5 + 0.5;
-  let w = pWorley(uv, 12, 12u);
-  let pebble = (1.0 - smoothstep(0.0, 0.26, w.x)) * step(0.7, w.z);
-  s.h = saturate(0.42 * contrast(n1, 1.7) + 0.28 * contrast(n2, 1.6) + 0.12 * grain + 0.38 * pebble);
-  let soil = mix(vec3f(0.62, 0.60, 0.58), vec3f(1.30, 1.22, 1.12), s.h);
-  s.tone = mix(soil, vec3f(1.5, 1.45, 1.4) * (0.7 + 0.3 * w.z), pebble);
-  s.rough = 0.02 * (grain - 0.5) - 0.08 * pebble;
-  s.ao = cavity(s.h);
+  let grain = pNoise(uv, vec2i(180), 11u) * 0.5 + 0.5;
+  let clod = pStones(uv, 12, 12u, 0.38, 0.70, 0.7, 0.95);
+  let crumb = pStones(uv, 33, 71u, 0.34, 0.66, 0.75, 0.95);
+  let peb = pStones(uv, 11, 72u, 0.10, 0.30, 0.7, 0.55);
+  let peb2 = pStones(uv, 29, 73u, 0.18, 0.42, 0.75, 0.30);
+  let w = pCell(uv + 0.02 * vec2f(pNoise(uv, vec2i(7), 74u), pNoise(uv, vec2i(7), 75u)), 6, 76u);
+  let crack = (1.0 - smoothstep(0.0, 0.04, w.f2 - w.f1)) * smoothstep(0.55, 0.75, pFbm(uv, 5, 3, 77u));
+  let soilH = 0.30 * contrast(n1, 1.7) + 0.16 * contrast(n2, 1.6) + 0.10 * grain + 0.20 * max(clod.h, 0.0) + 0.12 * max(crumb.h, 0.0);
+  let pebH = max(0.25 + 0.55 * peb.h, 0.20 + 0.45 * peb2.h);
+  let onPebble = max(peb.h, peb2.h) > 0.0;
+  s.h = saturate(select(soilH, max(soilH, pebH), onPebble) - 0.25 * crack);
+  let soil = mix(vec3f(0.60, 0.58, 0.56), vec3f(1.28, 1.20, 1.10), saturate(soilH * 1.5)) * (0.90 + 0.20 * clod.id) * (0.9 + 0.2 * grain);
+  let pid = select(peb2.id, peb.id, peb.h >= peb2.h);
+  let pt = stoneTone(pid) * (0.6 + 0.6 * sqrt(max(1.0 - select(peb2.rr, peb.rr, peb.h >= peb2.h), 0.0)));
+  s.tone = select(soil, pt, onPebble && pebH >= soilH) * (1.0 - 0.45 * crack);
+  s.rough = 0.02 * (grain - 0.5) - select(0.0, 0.08, onPebble);
+  s.ao = cavity(s.h) * (1.0 - 0.5 * crack);
   return s;
 }
 
+// Gravel: stones of three sizes stacked over a dirty sand fill, with different shapes, colours and heights, so no two neighbours match
+// and the gaps stay dark. Every stone is a rounded dome; the largest ones stand proud.
 fn surfGravel(uv : vec2f) -> Surf {
   var s : Surf;
-  let w = pWorley(uv, 16, 13u);
-  let r = w.x / 0.62;
-  let dome = sqrt(saturate(1.0 - r * r));
-  let crev = smoothstep(0.0, 0.12, w.y - w.x);
-  let shape = 0.35 + 0.65 * fract(w.z * 7.3);
-  s.h = saturate(0.1 + 0.9 * dome * shape);
-  let stone = mix(vec3f(0.72, 0.70, 0.68), vec3f(1.30, 1.18, 1.00), fract(w.z * 13.7)) * (0.55 + 0.6 * dome);
-  s.tone = stone * mix(0.4, 1.0, crev);
-  s.rough = 0.05 * (fract(w.z * 3.1) - 0.5);
-  s.ao = crev * (0.4 + 0.6 * dome);
+  let big = pStones(uv, 7, 13u, 0.34, 0.60, 0.62, 0.9);
+  let mid = pStones(uv, 17, 41u, 0.32, 0.60, 0.65, 0.95);
+  let fine = pStones(uv, 43, 43u, 0.32, 0.62, 0.7, 1.0);
+  let grain = pNoise(uv, vec2i(200), 44u) * 0.5 + 0.5;
+  let sandN = pFbm(uv, 12, 3, 45u);
+  var h = 0.10 + 0.08 * sandN;
+  var tone = vec3f(0.62, 0.56, 0.48) * (0.8 + 0.4 * grain);
+  var ao = 0.35;
+  var rough = 0.06;
+  let hf = 0.14 + 0.26 * fine.h;
+  if (fine.h > 0.0 && hf > h) {
+    h = hf;
+    tone = stoneTone(fine.id) * (0.55 + 0.55 * sqrt(max(1.0 - fine.rr, 0.0)));
+    ao = 0.45 + 0.55 * sqrt(max(1.0 - fine.rr, 0.0));
+    rough = -0.04;
+  }
+  let hm = 0.22 + 0.42 * mid.h;
+  if (mid.h > 0.0 && hm > h) {
+    h = hm;
+    tone = stoneTone(mid.id) * (0.55 + 0.55 * sqrt(max(1.0 - mid.rr, 0.0)));
+    ao = 0.45 + 0.55 * sqrt(max(1.0 - mid.rr, 0.0));
+    rough = -0.05;
+  }
+  let hb = 0.30 + 0.70 * big.h;
+  if (big.h > 0.0 && hb > h) {
+    h = hb;
+    tone = stoneTone(big.id) * (0.55 + 0.55 * sqrt(max(1.0 - big.rr, 0.0)));
+    ao = 0.45 + 0.55 * sqrt(max(1.0 - big.rr, 0.0));
+    rough = -0.05;
+  }
+  s.h = saturate(h);
+  s.tone = tone;
+  s.rough = rough;
+  s.ao = ao;
   return s;
 }
 
+// Jointed, weathered rock: irregular blocks at two scales whose joints fade in and out along their length, each block with its own height
+// and tilt, warped bedding bands, a rough grain and vertical rain streaks. Joints are never a regular honeycomb.
 fn surfRock(uv : vec2f) -> Surf {
   var s : Surf;
-  let w = pWorley(uv, 5, 14u);
-  let crack = 1.0 - smoothstep(0.0, 0.07, w.y - w.x);
-  let strata = 0.5 + 0.5 * sin(TAU_D * (9.0 * uv.y + 1.6 * pFbm(uv, 4, 3, 15u)));
-  let n = pFbm(uv, 8, 5, 16u);
-  let fine = pFbm(uv, 40, 3, 17u);
-  s.h = saturate(0.42 * contrast(n, 1.6) + 0.22 * strata + 0.30 * contrast(fine, 1.5) - 0.45 * crack + 0.10);
-  s.tone = mix(vec3f(0.60, 0.60, 0.62), vec3f(1.40, 1.30, 1.15), s.h) * mix(0.88, 1.12, strata) * (1.0 - 0.55 * crack);
-  s.rough = 0.05 * (fine - 0.5) + 0.06 * crack;
-  s.ao = cavity(s.h) * (1.0 - 0.6 * crack);
+  let q = uv + 0.03 * vec2f(pNoise(uv, vec2i(5), 61u), pNoise(uv, vec2i(5), 62u)) + 0.006 * vec2f(pNoise(uv, vec2i(23), 63u), pNoise(uv, vec2i(23), 64u));
+  let big = pCell(q, 4, 14u);
+  let sub = pCell(q, 11, 31u);
+  let open1 = 0.25 + 0.75 * smoothstep(0.30, 0.62, pFbm(uv, 9, 3, 65u));
+  let open2 = smoothstep(0.42, 0.70, pFbm(uv, 14, 3, 66u));
+  let joint1 = (1.0 - smoothstep(0.0, 0.05 + 0.13 * open1, big.f2 - big.f1)) * open1;
+  let joint2 = (1.0 - smoothstep(0.0, 0.05 + 0.08 * open2, sub.f2 - sub.f1)) * open2;
+  let ang = TAU_D * fract(big.id * 7.7);
+  let tilt = vec2f(cos(ang), sin(ang)) * (0.12 + 0.28 * fract(big.id * 3.3));
+  let plate = (big.id - 0.5) * 0.26 + dot(big.d, tilt) * 0.55 + (sub.id - 0.5) * 0.10;
+  let strata = 0.5 + 0.5 * sin(TAU_D * (11.0 * uv.y + 1.8 * pFbm(uv, 4, 3, 15u)));
+  let grain = pFbm(uv, 40, 4, 17u);
+  let pits = pNoise(uv, vec2i(150), 67u);
+  let rain = pNoise(uv, vec2i(44, 5), 68u) * 0.5 + 0.5;
+  s.h = saturate(0.5 + plate + 0.07 * strata + 0.26 * (grain - 0.5) + 0.08 * pits - 0.34 * joint1 - 0.18 * joint2);
+  let block = 0.90 + 0.20 * fract(big.id * 5.1);
+  s.tone = mix(vec3f(0.62, 0.62, 0.64), vec3f(1.30, 1.22, 1.10), s.h) * block * mix(0.92, 1.06, strata) * mix(0.82, 1.04, rain)
+    * (1.0 - 0.6 * joint1) * (1.0 - 0.35 * joint2) * (0.9 + 0.2 * grain);
+  s.rough = 0.06 * (grain - 0.5) + 0.06 * joint1;
+  s.ao = cavity(s.h) * (1.0 - 0.6 * joint1) * (1.0 - 0.3 * joint2);
   return s;
 }
 
@@ -276,13 +263,17 @@ fn surfSnow(uv : vec2f) -> Surf {
   return s;
 }
 
+// Moist crumbly loam: irregular clods of two sizes, dark organic specks and damp patches.
 fn surfLoam(uv : vec2f) -> Surf {
   var s : Surf;
-  let w = pWorley(uv, 30, 23u);
-  let crumb = 1.0 - smoothstep(0.0, 0.7, w.x);
-  s.h = saturate(0.5 * contrast(pFbm(uv, 9, 4, 24u), 1.6) + 0.5 * crumb);
-  s.tone = mix(vec3f(0.60, 0.60, 0.62), vec3f(1.35, 1.30, 1.20), s.h);
-  s.rough = 0.0;
+  let clod = pStones(uv, 10, 23u, 0.40, 0.72, 0.65, 0.95);
+  let crumb = pStones(uv, 27, 78u, 0.34, 0.66, 0.7, 0.95);
+  let fbm = pFbm(uv, 9, 4, 24u);
+  let speck = smoothstep(0.72, 0.9, pNoise(uv, vec2i(120), 79u) * 0.5 + 0.5);
+  let damp = smoothstep(0.35, 0.70, pFbm(uv, 4, 3, 80u));
+  s.h = saturate(0.34 * contrast(fbm, 1.6) + 0.30 * max(clod.h, 0.0) + 0.22 * max(crumb.h, 0.0) + 0.1);
+  s.tone = mix(vec3f(0.58, 0.58, 0.60), vec3f(1.32, 1.26, 1.16), s.h) * (0.88 + 0.24 * clod.id) * mix(1.0, 0.72, damp) * (1.0 - 0.45 * speck);
+  s.rough = -0.06 * damp;
   s.ao = cavity(s.h);
   return s;
 }

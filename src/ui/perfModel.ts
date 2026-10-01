@@ -7,13 +7,34 @@ export interface PerfSample {
   gpuMs: number;
   renderWidth: number;
   renderHeight: number;
+  /** Width of the output (canvas) in pixels, to show how much of it is rendered; 0 when unknown. */
+  outWidth: number;
   /** Dynamic resolution factor in 0..1 (1 is the full render scale). */
   scale: number;
   physicsMs: number;
   physicsSteps: number;
   quality: RenderQuality;
   adapter: string;
+  /** 'Performance 240' preset on top of `quality`. */
+  performance240: boolean;
+  /** Display refresh rate measured at startup in Hz; 0 when it was not measured. */
+  refreshHz: number;
+  /** The frame rate dynamic resolution aims at. */
+  targetFps: number;
+  /** Frame cap in fps; 0 means none. */
+  frameCap: number;
+  /** What the dynamic-resolution controller decides on. */
+  driver: 'gpu' | 'frame-time' | 'off';
+  /** GPU milliseconds per frame section (NaN when not measured), named by `PERF_PASSES`. */
+  passMs: number[];
+  /** Every GPU, shader and module error so far. */
+  errors: number;
+  /** The adapter is a software rasteriser. */
+  software: boolean;
 }
+
+/** Frame sections in the order of `GpuTimer.passMs`, with the names the overlay shows. */
+export const PERF_PASSES: readonly string[] = ['Pre (LUTs, culling)', 'G-buffer', 'Ray tracing', 'Lighting', 'Sky and forward', 'Post'];
 
 export interface PerfSource {
   /** Writes the current numbers into `out`; called a few times a second, never per frame. */
@@ -21,7 +42,10 @@ export interface PerfSource {
 }
 
 export function newPerfSample(): PerfSample {
-  return { cpuMs: 0, gpuMs: NaN, renderWidth: 0, renderHeight: 0, scale: 1, physicsMs: 0, physicsSteps: 0, quality: 'high', adapter: '' };
+  return {
+    cpuMs: 0, gpuMs: NaN, renderWidth: 0, renderHeight: 0, outWidth: 0, scale: 1, physicsMs: 0, physicsSteps: 0, quality: 'high', adapter: '',
+    performance240: false, refreshHz: 0, targetFps: 0, frameCap: 0, driver: 'off', passMs: PERF_PASSES.map(() => NaN), errors: 0, software: false,
+  };
 }
 
 export interface FrameSummary {
@@ -92,21 +116,48 @@ export class FrameHistory {
   }
 }
 
-export const PERF_LABELS: readonly string[] = ['FPS', 'Frame', 'CPU', 'GPU', 'Render', 'Physics', 'Quality', 'Adapter'];
+export const PERF_LABELS: readonly string[] = ['FPS', 'Frame', 'CPU', 'GPU', 'Render', 'Display', 'Target', 'Physics', 'Quality', 'Adapter', 'Errors'];
 
 function ms(v: number): string {
   return `${v.toFixed(v < 10 ? 2 : 1)} ms`;
 }
+
+/** "960 x 540, 50% of output" plus the dynamic-resolution factor while it is below 100%. */
+function renderText(s: PerfSample): string {
+  const size = `${s.renderWidth} x ${s.renderHeight}`;
+  const share = s.outWidth > 0 ? `, ${Math.round((s.renderWidth / s.outWidth) * 100)}% of output` : '';
+  const dyn = s.scale < 0.995 ? `, dynamic ${Math.round(s.scale * 100)}%` : '';
+  return size + share + dyn;
+}
+
+const DRIVER_TEXT: Record<PerfSample['driver'], string> = { gpu: 'GPU timed', 'frame-time': 'frame timed', off: 'dynamic res off' };
 
 /** Fills `out` with one display string per `PERF_LABELS` entry. */
 export function formatPerf(s: PerfSample, f: FrameSummary, out: string[]): string[] {
   out[0] = f.avgFps > 0 ? `${Math.round(f.avgFps)} avg, ${Math.round(f.lowFps)} 1% low` : '-';
   out[1] = f.avgMs > 0 ? `${ms(f.avgMs)} (worst ${ms(f.worstMs)})` : '-';
   out[2] = ms(s.cpuMs);
-  out[3] = Number.isFinite(s.gpuMs) ? ms(s.gpuMs) : 'not measured';
-  out[4] = `${s.renderWidth} x ${s.renderHeight} at ${Math.round(s.scale * 100)}%`;
-  out[5] = `${ms(s.physicsMs)}, ${s.physicsSteps} ${s.physicsSteps === 1 ? 'step' : 'steps'}`;
-  out[6] = s.quality;
-  out[7] = s.adapter.length > 0 ? s.adapter : 'unknown';
+  out[3] = Number.isFinite(s.gpuMs) ? ms(s.gpuMs) : 'not measured (no timestamp-query)';
+  out[4] = renderText(s);
+  const display = s.refreshHz > 0 ? `${Math.round(s.refreshHz)} Hz measured` : 'not measured';
+  out[5] = s.frameCap > 0 ? `${display}, cap ${s.frameCap}` : display;
+  out[6] = s.targetFps > 0 ? `${Math.round(s.targetFps)} fps, ${DRIVER_TEXT[s.driver]}` : '-';
+  out[7] = `${ms(s.physicsMs)}, ${s.physicsSteps} ${s.physicsSteps === 1 ? 'step' : 'steps'}`;
+  out[8] = s.performance240 ? `${s.quality} + Performance 240` : s.quality;
+  out[9] = s.adapter.length > 0 ? (s.software ? `${s.adapter} (software)` : s.adapter) : 'unknown';
+  out[10] = String(s.errors);
   return out;
+}
+
+/** Per-section GPU times for the overlay table: `text[i]` is "1.23 ms", `share[i]` the section's fraction of the measured total (0..1). Returns false when nothing was measured. */
+export function formatPasses(passMs: readonly number[], text: string[], share: number[]): boolean {
+  let total = 0;
+  for (const v of passMs) if (Number.isFinite(v)) total += v;
+  for (let i = 0; i < passMs.length; i++) {
+    const v = passMs[i];
+    const ok = Number.isFinite(v);
+    text[i] = ok ? ms(v) : '-';
+    share[i] = ok && total > 0 ? v / total : 0;
+  }
+  return total > 0;
 }

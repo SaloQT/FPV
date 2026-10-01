@@ -30,10 +30,10 @@ struct VsOut {
 
 fn flowerColor(code : u32) -> vec3f {
   switch (code) {
-    case 1u: { return vec3f(0.50, 0.48, 0.42); }
+    case 1u: { return vec3f(0.66, 0.64, 0.56); }
     case 2u: { return vec3f(0.55, 0.38, 0.02); }
-    case 3u: { return vec3f(0.13, 0.05, 0.24); }
-    default: { return vec3f(0.34, 0.09, 0.12); }
+    case 3u: { return vec3f(0.15, 0.07, 0.25); }
+    default: { return vec3f(0.42, 0.07, 0.05); }
   }
 }
 

@@ -1,4 +1,5 @@
 import type { FrameInfo, RenderContext } from '../contracts';
+import { CPU_EXPOSURE_KEY } from '../exposure';
 import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
 
 /**
@@ -9,6 +10,9 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * frame would land far above the key, and the key itself falls with the metered scene luminance so a dark scene stays dark.
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
+ * Night: below ~0.03 nits of CPU-estimated scene luminance the metered mean (black trees, a few stars) is replaced by that estimate, so the
+ * exposure follows the astronomy (moonless: the full +20 EV of a starlight camera, a sky near black with stars and Milky Way readable; moon up:
+ * the same gain until the 0.18-card reaches its dusk display level, then it falls), and the key stays flat below keyNightKneeNits.
  */
 export const EXPOSURE_TUNING = {
   bins: 64,
@@ -19,6 +23,17 @@ export const EXPOSURE_TUNING = {
   /** Metered scene luminance (nits) under which the key falls, and by how much per EV of scene luminance (0: constant key). */
   keyKneeNits: 100,
   keySlope: 0.3,
+  /** Below this scene luminance (deep twilight, moonlight) the key falls only keyNightSlope per EV, so a 0.18 card keeps its dark but readable display level until the gain runs out. */
+  keyNightKneeNits: 0.1,
+  keyNightSlope: 0,
+  /**
+   * The CPU's scene-luminance estimate (astronomy only) takes over from the metered mean in the dark: its weight is 0 above nightBlendHiNits and
+   * 1 below nightBlendLoNits. A night frame is mostly black trees and a few stars, so its metered mean says nothing about how bright the night is.
+   */
+  nightBlendHiNits: 0.03,
+  nightBlendLoNits: 0.003,
+  /** In the dark only a metered mean more than this many EV above the estimate counts (artificial light): the exposure may fall for it, never rise. */
+  nightMarginEv: 2,
   trimLow: 0.05,
   trimHigh: 0.05,
   /** Highlights above key * 2^knee are compressed with a tanh whose asymptote is kneeWidth EV higher. */
@@ -41,17 +56,22 @@ export const EXPOSURE_TUNING = {
   maxDt: 0.25,
   /** Luminance of a 0.18 grey card at noon: the CPU pre-exposure there is 1 / (4 * dayReferenceNits). */
   dayReferenceNits: 5000,
-  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV): a moonless night is a dark picture, not a grey one. */
-  maxGainEv: 10,
+  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV). A starlight camera needs ~+20 EV; the key law keeps a moonless sky near black. */
+  maxGainEv: 20.3,
   minGainEv: -6,
-  /** Numeric guard only: a starlit pre-exposure is +13 EV, so a dark picture legitimately needs a ratio of 2^-17. */
-  maxRatioEv: 20,
+  /** Numeric guard only: a starlit pre-exposure is +10 EV and a bright day -14 EV, so the ratio legitimately spans 2^-24..2^+6. */
+  maxRatioEv: 26,
 } as const;
 
 const T = EXPOSURE_TUNING;
 export const DAY_TOTAL_EV = -Math.log2(4 * T.dayReferenceNits);
 const LOG2_KEY = Math.log2(T.key);
 const KEY_KNEE_EV = Math.log2(T.keyKneeNits);
+const NIGHT_KNEE_EV = Math.log2(T.keyNightKneeNits);
+const NIGHT_BLEND_HI_EV = Math.log2(T.nightBlendHiNits);
+const NIGHT_BLEND_LO_EV = Math.log2(T.nightBlendLoNits);
+/** log2 of the pre-exposed luminance the CPU pre-exposure gives the surface it was computed from. */
+export const EXPECTED_MEAN_EV = Math.log2(CPU_EXPOSURE_KEY);
 const LUMA = [0.2126, 0.7152, 0.0722] as const;
 
 /** Soft-clips an absolute log2 luminance (pre-exposed units): identity below key * 2^knee, tanh compression above. */
@@ -116,16 +136,32 @@ export function topQuantileEv(hist: ArrayLike<number>, fraction: number = T.clip
   return binCenterEv(0);
 }
 
+/** log2 of the key the metered mean goes to, for a metered scene luminance of lumEv (log2 nits): slope keySlope below keyKneeNits, keyNightSlope below keyNightKneeNits. */
+export function keyEvFor(lumEv: number): number {
+  return LOG2_KEY + T.keySlope * Math.min(lumEv - KEY_KNEE_EV, 0) + (T.keyNightSlope - T.keySlope) * Math.min(lumEv - NIGHT_KNEE_EV, 0);
+}
+
+/** Weight (0..1) of the astronomy-based estimate against the metered mean, from the CPU pre-exposure alone (it encodes the estimated scene luminance). */
+export function nightWeight(preEv: number): number {
+  const x = Math.min(Math.max((EXPECTED_MEAN_EV - preEv - NIGHT_BLEND_LO_EV) / (NIGHT_BLEND_HI_EV - NIGHT_BLEND_LO_EV), 0), 1);
+  return 1 - x * x * (3 - 2 * x);
+}
+
 /**
  * Total exposure (EV, log2 of pre-exposure * ratio) the metered mean asks for. The mean goes to a key that falls below keyKneeNits, the
  * bright decile (`highEv`, uncompressed) may not end up more than clipEv over the key, and the sensor-gain and ratio limits apply last.
+ * In the dark the metered mean gives way to the value the CPU's scene estimate implies (see nightWeight), except that a frame far brighter
+ * than that estimate (a floodlit scene) still lowers the exposure; the highlight protection is off.
  */
 export function targetTotalEv(meanEv: number, preExposure: number, highEv: number = -Infinity): number {
   const preEv = Math.log2(Math.max(preExposure, 1e-12));
-  const keyEv = LOG2_KEY + T.keySlope * Math.min(meanEv - preEv - KEY_KNEE_EV, 0);
-  const shift = keyEv - meanEv;
-  const protectedShift = Math.max(Math.min(shift, LOG2_KEY + T.clipEv - highEv), shift - T.protectMaxEv);
-  const gain = Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV, T.minGainEv), T.maxGainEv);
+  const night = nightWeight(preEv);
+  const used = meanEv + night * (EXPECTED_MEAN_EV - meanEv);
+  const keyEv = keyEvFor(used - preEv);
+  const shift = keyEv - used;
+  const protectedShift = shift + (1 - night) * (Math.max(Math.min(shift, LOG2_KEY + T.clipEv - highEv), shift - T.protectMaxEv) - shift);
+  const floodlit = night * Math.max(meanEv - EXPECTED_MEAN_EV - T.nightMarginEv, 0);
+  const gain = Math.max(Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV, T.minGainEv), T.maxGainEv) - floodlit, T.minGainEv);
   return preEv + Math.min(Math.max(DAY_TOTAL_EV + gain - preEv, -T.maxRatioEv), T.maxRatioEv);
 }
 
@@ -150,7 +186,7 @@ export function luminanceOf(r: number, g: number, b: number): number {
 
 export function exposureDefines(): Record<string, number> {
   return {
-    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
+    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, NIGHT_KNEE_EV, NIGHT_SLOPE: T.keyNightSlope, NIGHT_BLEND_HI_EV, NIGHT_BLEND_LO_EV, NIGHT_MARGIN_EV: T.nightMarginEv, EXPECTED_MEAN_EV, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
     CENTER_BIAS: T.centerBias, VERT_BIAS: T.vertBias, CLIP_FRAC: T.clipFrac, CLIP_EV: T.clipEv, PROTECT_MAX_EV: T.protectMaxEv,
     STRIDE: T.stride, WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_HIGH: T.trimHigh, TAU_BRIGHTEN: T.tauBrighten,
     TAU_DARKEN: T.tauDarken, DEADBAND: T.deadbandEv, MAX_DT: T.maxDt, DAY_TOTAL_EV, MAX_GAIN_EV: T.maxGainEv,

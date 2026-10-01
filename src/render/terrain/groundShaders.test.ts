@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { AstroState, CameraState } from '../../contracts';
+import { FRAME_OFFSETS, FrameUniforms, type FrameUniformInput } from '../frameUniforms';
 import { resolveShader } from '../shaderLib';
 import palette from '../shaders/terrain/ground_palette.wgsl?raw';
 import gbuffer from '../shaders/terrain/gbuffer.wgsl?raw';
@@ -59,6 +61,62 @@ describe('G-buffer motion vectors', () => {
   it('reprojects grass from its previous-frame wind pose, not from the current one', () => {
     expect(grass).toMatch(/o\.motion = motionVectorPrev\(world, world \+ \(prevCentre - centre\)\)/);
     expect(grass).toContain('time - frame.params.x');
+  });
+});
+
+const rad = (d: number): number => (d * Math.PI) / 180;
+const UP_SUN: AstroState = {
+  julianDate: 2461000, sunDir: [0, 1, 0], moonDir: [0, -1, 0], sunElevation: Math.PI / 2, moonElevation: -Math.PI / 2,
+  moonIlluminatedFraction: 0.5, moonPhaseAngle: 0, equatorialToWorld: [1, 2, 3, 4, 5, 6, 7, 8, 9], planets: [],
+};
+
+function frameInput(pos: [number, number, number], frameIndex: number): FrameUniformInput {
+  const camera: CameraState = { pos, quat: [0, 0, 0, 1], fovY: rad(90), aspect: 16 / 9, near: 0.05, far: 1e5 };
+  return { camera, astro: UP_SUN, dt: 1 / 60, time: 3, frameIndex, width: 960, height: 540, preExposure: 0.01, qualityFlags: 1, observerAltitudeM: 100, jitter: true, terrain: null };
+}
+
+// The same arithmetic as motionVectorPrev in gbuffer.wgsl, on the uniforms the renderer actually uploads.
+function motionVectorPrev(f32: Float32Array, w: number[], wPrev: number[]): [number, number] {
+  const project = (offset: number, p: number[]): [number, number] => {
+    const c = [0, 1, 2, 3].map((row) => [0, 1, 2, 3].reduce((s, col) => s + f32[offset + col * 4 + row] * [p[0], p[1], p[2], 1][col], 0));
+    const cw = Math.max(c[3], 1e-3);
+    return [(c[0] / cw) * 0.5 + 0.5, 0.5 - (c[1] / cw) * 0.5];
+  };
+  const prev = project(FRAME_OFFSETS.prevViewProj, wPrev), cur = project(FRAME_OFFSETS.viewProjUnjittered, w);
+  return [prev[0] - cur[0], prev[1] - cur[1]];
+}
+
+describe('static-world motion vectors on the real frame uniforms', () => {
+  const terrainPoints = [[3, -1.5, -12], [-40, 2, -80], [250, 9, -900], [0.4, -2, -1.1]];
+
+  it('are exactly zero for a static camera whatever the TAA jitter does', () => {
+    const fu = new FrameUniforms();
+    fu.write(frameInput([10, 5, 20], 0));
+    fu.write(frameInput([10, 5, 20], 1));
+    for (const p of terrainPoints) {
+      const mv = motionVectorPrev(fu.f32, p, p);
+      expect(mv[0]).toBe(0);
+      expect(mv[1]).toBe(0);
+    }
+  });
+
+  it('follow the camera motion: a 0.1 m sidestep moves a point 10 m ahead by 0.1 / (10 tan(fov/2) aspect) / 2 in uv', () => {
+    const fu = new FrameUniforms();
+    fu.write(frameInput([0, 0, 0], 0));
+    fu.write(frameInput([0.1, 0, 0], 1));
+    const mv = motionVectorPrev(fu.f32, [0, 0, -10], [0, 0, -10]);
+    expect(mv[0]).toBeCloseTo(0.1 / (10 * Math.tan(rad(45)) * (16 / 9)) / 2, 6);
+    expect(mv[1]).toBeCloseTo(0, 7);
+  });
+
+  it('give an animated blade the velocity of its own bend only, zero when the pose did not change', () => {
+    const fu = new FrameUniforms();
+    fu.write(frameInput([0, 1, 0], 0));
+    fu.write(frameInput([0, 1, 0], 1));
+    expect(motionVectorPrev(fu.f32, [0.5, 0.2, -3], [0.5, 0.2, -3])).toEqual([0, 0]);
+    const mv = motionVectorPrev(fu.f32, [0.5, 0.2, -3], [0.46, 0.2, -3]);
+    expect(mv[0]).toBeLessThan(0);
+    expect(Math.abs(mv[1])).toBeLessThan(1e-9);
   });
 });
 

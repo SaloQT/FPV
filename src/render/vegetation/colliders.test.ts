@@ -117,8 +117,8 @@ describe('buildRtProxies', () => {
     prims.forEach((p, k) => expect(p.type).toBe(k % 2 === 0 ? 'capsule' : 'sphere'));
   });
 
-  it('uses the dark foliage material: albedo (0.08, 0.16, 0.04), rough, dielectric', () => {
-    expect(RT_FOLIAGE).toEqual({ albedo: [0.08, 0.16, 0.04], roughness: 1, metalness: 0 });
+  it('uses the dark foliage material: albedo (0.045, 0.09, 0.025), rough, dielectric', () => {
+    expect(RT_FOLIAGE).toEqual({ albedo: [0.045, 0.09, 0.025], roughness: 1, metalness: 0 });
     for (const p of prims) expect(p.material).toBe(RT_FOLIAGE);
   });
 

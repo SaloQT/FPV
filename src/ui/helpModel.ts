@@ -67,9 +67,16 @@ export function buildHelp(bindings: Bindings = DEFAULT_BINDINGS): readonly HelpS
       title: 'Mouse',
       rows: [
         { keys: ['Click'], label: 'Capture the mouse; Esc gives it back' },
-        { keys: ['Move'], label: 'Roll and pitch (mouse up is nose up)' },
+        { keys: ['Move'], label: 'Roll and pitch (left and right roll, mouse up is nose up)' },
         { keys: ['Drag'], label: 'Orbit the quad in the free camera' },
         { keys: ['Wheel'], label: 'Zoom the free camera' },
+      ],
+    },
+    {
+      title: 'On screen',
+      rows: [
+        { keys: ['3 2 1'], label: 'Race start: the quad stays disarmed until GO (switch off in Settings for free flight)' },
+        { keys: ['Boxes'], label: 'Stick indicator: yaw and throttle on the left, roll and pitch on the right' },
       ],
     },
     { title: 'Gamepad or radio', rows: padRows() },

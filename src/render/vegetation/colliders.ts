@@ -21,7 +21,8 @@ const BOULDER_HALF = 0.7;
 
 export const RT_PRIM_CAP = 600;
 export const RT_TREE_COUNT = RT_PRIM_CAP / 2;
-export const RT_FOLIAGE: RTMaterial = { albedo: [0.08, 0.16, 0.04], roughness: 1, metalness: 0 };
+/** Bulk canopy reflectance (leaves, gaps and bark averaged), lower than a single leaf's 0.1 to 0.15 green. */
+export const RT_FOLIAGE: RTMaterial = { albedo: [0.045, 0.09, 0.025], roughness: 1, metalness: 0 };
 
 interface Candidate {
   dist: number;

@@ -1,4 +1,5 @@
 import { localSolarHours } from '../game/clock';
+import type { BuiltControl, ControlHost } from './menuHost';
 import type { AppSettings } from './settingsSchema';
 
 /** What a menu button asks the app to do; values are changed through `onChange` instead. */
@@ -71,7 +72,13 @@ export interface GamepadControl extends Base {
   kind: 'gamepad';
 }
 
-export type Control = SliderControl | ToggleControl | SelectControl | NumberControl | DateControl | ButtonControl | GamepadControl;
+/** A control that builds its own DOM against the host: for settings that are not plain `AppSettings` keys. */
+export interface CustomControl extends Base {
+  kind: 'custom';
+  build(host: ControlHost): BuiltControl;
+}
+
+export type Control = SliderControl | ToggleControl | SelectControl | NumberControl | DateControl | ButtonControl | GamepadControl | CustomControl;
 
 export interface MenuSection {
   title: string;

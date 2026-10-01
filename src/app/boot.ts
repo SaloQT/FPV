@@ -6,31 +6,32 @@ import { CameraRig } from '../game/cameraRig';
 import { GameSession } from '../game/session';
 import { createSessionSnapshot } from '../game/sessionTypes';
 import { InputManager } from '../input/inputManager';
-import { createAtmosphereModule } from '../render/atmosphere';
-import { createObjectsModule } from '../render/objects';
 import { createPostProcessor } from '../render/post';
 import { Renderer } from '../render/renderer';
-import { createRTModule } from '../render/rt';
-import { createTerrainModule } from '../render/terrain';
-import { createVegetationModule } from '../render/vegetation';
 import { getPreset } from '../sim/presets';
 import { QuadPhysics } from '../sim/quad';
+import { classifyStartupError } from '../ui/errorMessages';
 import { LoadingOverlay } from '../ui/loading';
 import { newPerfSample } from '../ui/perfModel';
-import { SETTINGS_KEY } from '../ui/settingsSchema';
+import { defaultAppSettings, SETTINGS_KEY } from '../ui/settingsSchema';
 import { SettingsStore, type StorageLike } from '../ui/settingsStore';
 import { SimClock as AstroClock } from '../world/astro';
 import { menuAction, startAudioOnGesture, wireSession, wireSettings } from './actions';
 import { AppAudio } from './audio';
+import { startBench } from './bench';
+import { failApp, installGlobalErrorHandlers } from './failure';
 import { SETTLE_RENDERS, makePerfSource } from './frame';
 import { createLoop, attachResize } from './loop';
 import { PadGround } from './padGround';
 import { hasPersistentOverrides, parseParams, settingsPatch } from './params';
+import { benchSettingsPatch, parsePerfParams, perfSettingsPatch, withBench, type PerfParams } from './perfParams';
+import { createAppModules, installRecovery } from './recover';
+import { measureRefresh } from './refresh';
 import { ScenarioPilot } from './scenario';
-import { fail, loadWorld, trackRequest, worldDeps } from './scene';
-import { reportError, type AppCtx, type AppMods } from './state';
+import { loadWorld, trackRequest, worldDeps } from './scene';
+import type { AppCtx, AppMods } from './state';
 import { advanceFrames, installHooks, markReady } from './testHooks';
-import { createUi, showMessage } from './ui';
+import { createUi } from './ui';
 import { WindModel } from './wind';
 import { buildWorld, type World } from './world';
 
@@ -58,10 +59,11 @@ function memoryCopyOfSaved(): StorageLike {
   };
 }
 
-function createStore(search: string): { store: SettingsStore; params: ReturnType<typeof parseParams> } {
-  const params = parseParams(search);
+function createStore(search: string, perf: PerfParams): { store: SettingsStore; params: ReturnType<typeof parseParams> } {
+  const params = withBench(parseParams(search), perf);
   const saved = new SettingsStore();
-  const patch = settingsPatch(params, saved.get());
+  const patch = { ...settingsPatch(params, saved.get()), ...perfSettingsPatch(perf) };
+  if (perf.bench) Object.assign(patch, benchSettingsPatch(params, perf, saved.get(), defaultAppSettings()));
   const store = hasPersistentOverrides(patch) ? new SettingsStore(memoryCopyOfSaved()) : saved;
   store.patch(patch);
   return { store, params };
@@ -69,37 +71,46 @@ function createStore(search: string): { store: SettingsStore; params: ReturnType
 
 export default async function boot(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement): Promise<void> {
   const root = document.getElementById('ui') ?? document.body;
+  installGlobalErrorHandlers(root);
   if (!('gpu' in navigator) || !navigator.gpu) {
-    showMessage(root, 'WebGPU is not available', 'This simulator needs a browser with WebGPU (Chrome or Edge 113+, Safari 18+, or Firefox with WebGPU enabled) and a supported graphics card.');
-    reportError('WebGPU is not available in this browser (navigator.gpu is missing)');
+    failApp(root, 'no-webgpu', `navigator.gpu is ${typeof navigator.gpu}; isSecureContext = ${window.isSecureContext}; ${navigator.userAgent}`);
     return;
   }
   const loading = new LoadingOverlay(root);
   loading.setProgress('Starting', 0);
-  let ctx: AppCtx | null = null;
+  const perf = parsePerfParams(location.search);
+  let ctx: AppCtx;
   try {
-    ctx = await start(canvas, osdCanvas, root, loading);
+    ctx = await start(canvas, osdCanvas, root, loading, perf);
   } catch (e) {
     loading.hide();
-    if (ctx) fail(ctx, 'The simulator could not start', e);
-    else {
-      reportError(`The simulator could not start: ${(e as Error)?.message ?? e}`);
-      if (e instanceof Error && e.stack) console.error(e.stack);
-      showMessage(root, 'The simulator could not start', String((e as Error)?.message ?? e));
-    }
+    failApp(root, classifyStartupError(e), e);
     return;
   }
   loading.hide();
   markReady(ctx);
-  if (!ctx.params.hold) createLoop(ctx).start();
+  if (ctx.params.hold) return;
+  const loop = createLoop(ctx);
+  installRecovery(ctx, loop);
+  if (perf.bench) void startBench(ctx, loop, perf);
+  loop.start();
 }
 
-async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, root: HTMLElement, loading: LoadingOverlay): Promise<AppCtx> {
-  const { store, params } = createStore(location.search);
-  const settings = store.get();
+/** The refresh rate of the display: from `?refresh=`, else measured over ~60 idle frames before the heavy startup work begins. */
+async function displayRefresh(perf: PerfParams, loading: LoadingOverlay): Promise<number> {
+  if (perf.refresh !== undefined) return perf.refresh;
+  loading.setProgress('Measuring the display', 0.02);
+  const m = await measureRefresh();
+  if (m.source === 'fallback') console.warn('display refresh could not be measured (hidden tab or throttled frames): assuming 60 Hz');
+  return m.hz;
+}
 
-  const mods: AppMods = { atmosphere: createAtmosphereModule(), objects: createObjectsModule(), vegetation: createVegetationModule() };
-  const modules = [mods.atmosphere, createTerrainModule(), mods.vegetation, mods.objects, createRTModule()];
+async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, root: HTMLElement, loading: LoadingOverlay, perf: PerfParams): Promise<AppCtx> {
+  const { store, params } = createStore(location.search, perf);
+  const settings = store.get();
+  const refreshHz = await displayRefresh(perf, loading);
+
+  const { mods, list: modules } = createAppModules();
 
   // The GPU device and the terrain/track both take a while and do not depend on each other.
   let deviceDone = 0;
@@ -107,6 +118,7 @@ async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, ro
   const bar = (stage: string): void => loading.setProgress(stage, BAR_START + BAR_DEVICE * deviceDone + BAR_WORLD * worldFrac);
   bar('Starting the GPU');
   const rendererP = Renderer.create(canvas, settings, modules, createPostProcessor()).then((r) => {
+    r.setDisplayRefresh(refreshHz);
     deviceDone = 1;
     bar('GPU ready');
     return r;

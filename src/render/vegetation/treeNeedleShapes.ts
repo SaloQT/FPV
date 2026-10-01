@@ -1,5 +1,5 @@
-import type { Rng } from '../../world/track/rng';
-import { hash2, valueNoise2 } from './noise';
+import { Rng } from '../../world/track/rng';
+import { hash2 } from './noise';
 import { Grid, sat, type Painter, type Sample } from './treeLeafShapes';
 
 const TAU = Math.PI * 2;
@@ -89,26 +89,66 @@ export function sprayPainter(rng: Rng): Painter {
   return needlePainter(needles, null);
 }
 
-/** A conifer silhouette for the far billboards: tiers of drooping branch skirts, clumpy needle edge, darker toward the trunk. */
+/** A drooping branch seen from the side: a tapered capsule from the trunk (ax, ay) to the tip (bx, by), radius r0 at the trunk and r1 at the tip. */
+interface Skirt { ax: number; ay: number; bx: number; by: number; r0: number; r1: number; shade: number; hue: number }
+
+/** Position along the skirt (0 at the trunk, 1 at the tip) when (u, v) is inside it, else -1. */
+function skirtHit(k: Skirt, u: number, v: number): number {
+  const dx = k.bx - k.ax, dy = k.by - k.ay;
+  const t = sat(((u - k.ax) * dx + (v - k.ay) * dy) / (dx * dx + dy * dy + 1e-12));
+  const r = k.r0 + (k.r1 - k.r0) * t;
+  const d = Math.hypot(u - (k.ax + dx * t), v - (k.ay + dy * t)) / r;
+  return d < 1 ? t : -1;
+}
+
+/**
+ * A far spruce silhouette seen from the side: whorls of drooping branches (the ones pointing at the viewer fold into a dense core, the ones
+ * pointing sideways make the ragged outline), thick at the trunk and thinning to needle-clump tips, dark deep inside and paler at the tips.
+ */
 export function conifer(seed: number): Painter {
-  const tiers = 9;
+  const rng = new Rng(seed);
+  const skirts: Skirt[] = [];
+  const whorls = 24;
+  for (let k = 0; k < whorls; k++) {
+    const t = (k + rng.range(0.15, 0.85)) / whorls, y = 0.045 + 0.865 * Math.pow(t, 0.95);
+    const reach = 0.05 + 0.43 * Math.pow(t, 0.85);
+    const count = 13;
+    for (let b = 0; b < count; b++) {
+      const az = (b / count) * TAU + k * 1.9 + rng.range(-0.25, 0.25);
+      const side = Math.sin(az), len = reach * Math.abs(side) * rng.range(0.6, 1.08);
+      const droop = (0.016 + 0.085 * t) * (0.35 + Math.abs(side)) * rng.range(0.7, 1.3);
+      skirts.push({
+        ax: 0.5, ay: y, bx: 0.5 + Math.sign(side) * len, by: y + droop, r0: 0.02 + 0.026 * t, r1: 0.011 + 0.012 * t,
+        shade: 0.55 + 0.4 * rng.next(), hue: rng.next() < 0.3 ? 0.3 + 0.1 * rng.next() : 0.06 * rng.next(),
+      });
+    }
+  }
+  skirts.push({ ax: 0.5, ay: 0.18, bx: 0.5, by: 0.025, r0: 0.014, r1: 0.003, shade: 0.8, hue: 0.32 });
+  const grid = new Grid<Skirt>(20);
+  for (const k of skirts) {
+    const m = k.r0 + 0.004;
+    grid.add(k, Math.min(k.ax, k.bx) - m, Math.min(k.ay, k.by) - m, Math.max(k.ax, k.bx) + m, Math.max(k.ay, k.by) + m);
+  }
   return (u, v, o) => {
-    if (v < 0.03) return false;
-    const t = (v - 0.03) / 0.87;
-    if (t > 1) {
-      if (v < 0.985 && Math.abs(u - 0.5) < 0.022) { o.shade = 0.28; o.hue = 0; o.thin = 0; o.tu = 0; o.tv = 0; o.open = 0.4; return true; }
+    if (v > 0.93) {
+      if (v < 0.985 && Math.abs(u - 0.5) < 0.02) { o.shade = 0.28; o.hue = 0; o.thin = 0; o.tu = 0; o.tv = 0; o.open = 0.4; return true; }
       return false;
     }
-    const tier = t * tiers, local = tier - Math.floor(tier);
-    const w = 0.4 * Math.pow(t, 0.85) * (0.55 + 0.45 * Math.pow(local, 0.7)) * (0.9 + 0.2 * valueNoise2(u * 14, v * 30, seed));
-    const dx = u - 0.5, rim = Math.abs(dx) / Math.max(w, 1e-3);
-    if (rim > 1) return false;
-    if (rim > 0.55 && hash2(Math.floor(u * 110), Math.floor(v * 110), seed) < (rim - 0.55) * 1.5) return false;
-    const clump = valueNoise2(u * 60, v * 60, seed + 5);
-    o.shade = Math.min((0.45 + 0.5 * Math.sqrt(rim)) * (0.7 + 0.3 * (1 - local)) * (0.8 + 0.4 * clump), 1);
-    o.hue = 0.05 * clump; o.thin = 0.5;
-    o.tu = Math.sign(dx) * 0.5 * rim; o.tv = 0.25 - 0.5 * local;
-    o.open = 0.35 + 0.65 * sat(rim * 1.1) * (0.6 + 0.4 * local);
-    return true;
+    const list = grid.at(u, v);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const k = list[i], t = skirtHit(k, u, v);
+      if (t < 0) continue;
+      const along = sat(t), fray = hash2(Math.floor(u * 230), Math.floor(v * 230), seed);
+      if (along > 0.55 && fray < (along - 0.55) * 1.1) continue;
+      const lat = Math.sign(k.bx - k.ax), up = Math.sign(v - (k.ay + (k.by - k.ay) * along));
+      o.shade = Math.min(k.shade * (0.62 + 0.5 * along) * (0.85 + 0.3 * fray), 1);
+      o.hue = along > 0.8 ? Math.max(k.hue, 0.28) : k.hue;
+      o.thin = 0.5;
+      o.tu = lat * 0.45 * along;
+      o.tv = 0.2 * up;
+      o.open = 0.22 + 0.78 * along;
+      return true;
+    }
+    return false;
   };
 }

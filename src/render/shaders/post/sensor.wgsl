@@ -5,7 +5,9 @@ const TAU : f32 = 6.28318530717959;
 
 // shot: signal variance per unit signal at the reference gain (~3000 e- full well); read: read-noise sigma at unity gain.
 // Both scale with the ISO gain (shot as G, read as sqrt(G) after the analog stage), so the relative grain falls as the signal rises.
-// The exposure's gain EV is the whole brightening over noon; the first shutterEv of it is shutter time and aperture, not ISO.
+// The exposure's gain EV is the whole brightening over noon; the first shutterEv of it is shutter time and aperture, not ISO. The ISO stage
+// stops at maxGainEv; the rest of a starlight exposure (up to +20 EV) is optics and frame integration, which add no noise of their own.
+// nrFloor: the camera's temporal noise reduction cuts the noise amplitude to this share at the full ISO gain (1 = off), linearly in gain EV.
 // chroma: share of the noise variance that is independent per channel (the rest is one luma-correlated draw): a camera's colour
 // noise is weaker than its luma noise, and it does not grow towards the night.
 struct SensorModel {
@@ -14,8 +16,9 @@ struct SensorModel {
   maxGainEv : f32,
   chroma : f32,
   shutterEv : f32,
+  nrFloor : f32,
 };
-const SENSOR : SensorModel = SensorModel(3.0e-4, 4.0e-3, 10.0, 0.2, 4.0);
+const SENSOR : SensorModel = SensorModel(3.0e-4, 4.0e-3, 10.0, 0.2, 4.0, 0.33);
 
 fn pcgHash(v : u32) -> u32 {
   let s = v * 747796405u + 2891336453u;
@@ -47,8 +50,10 @@ fn gauss4(pix : vec2u, frame : u32) -> vec4f {
 
 // Additive noise for the exposed signal `c`. amp is the user's videoNoise scaled to a multiplier; gainEv is the sensor gain over daylight.
 fn sensorNoise(c : vec3f, pix : vec2f, frame : u32, gainEv : f32, amp : f32) -> vec3f {
-  let gain = exp2(clamp(gainEv - SENSOR.shutterEv, 0.0, SENSOR.maxGainEv - SENSOR.shutterEv));
-  let sigma = amp * sqrt(SENSOR.shot * max(c, vec3f(0.0)) * gain + SENSOR.read * SENSOR.read * gain);
+  let isoEv = clamp(gainEv - SENSOR.shutterEv, 0.0, SENSOR.maxGainEv - SENSOR.shutterEv);
+  let gain = exp2(isoEv);
+  let nr = mix(1.0, SENSOR.nrFloor, isoEv / (SENSOR.maxGainEv - SENSOR.shutterEv));
+  let sigma = (amp * nr) * sqrt(SENSOR.shot * max(c, vec3f(0.0)) * gain + SENSOR.read * SENSOR.read * gain);
   let g = gauss4(vec2u(pix), frame);
   return (sqrt(1.0 - SENSOR.chroma) * g.w + sqrt(SENSOR.chroma) * g.xyz) * sigma;
 }

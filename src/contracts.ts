@@ -233,8 +233,12 @@ export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
 
 export interface Settings {
   quality: RenderQuality;
-  /** Target frame rate for the dynamic-resolution controller (e.g. 240). */
+  /** Target frame rate for the dynamic-resolution controller; 0 follows the measured display refresh rate. */
   targetFps: number;
+  /** Frame cap in fps; 0 follows the display. Browsers cannot turn v-sync off, so this only throttles below the refresh rate. */
+  frameCap: number;
+  /** 'Performance 240' preset: `quality` with lower ray, probe, cloud and grass budgets, aimed at 240 Hz displays. */
+  performance240: boolean;
   dynamicResolution: boolean;
   /** 0.25..1.0 fraction of native resolution before dynamic scaling. */
   renderScale: number;
@@ -250,12 +254,13 @@ export interface Settings {
   seed: number;
   trackStyle: TrackData['style'];
   mouseSensitivity: number;
-  vsync: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   quality: 'high',
-  targetFps: 240,
+  targetFps: 0,
+  frameCap: 0,
+  performance240: false,
   dynamicResolution: true,
   renderScale: 1,
   fov: 100,
@@ -269,5 +274,4 @@ export const DEFAULT_SETTINGS: Settings = {
   seed: 1337,
   trackStyle: 'race',
   mouseSensitivity: 1,
-  vsync: false,
 };

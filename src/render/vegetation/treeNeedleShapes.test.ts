@@ -66,4 +66,20 @@ describe('conifer silhouette', () => {
     expect(inner).toBeGreaterThan(0);
     expect(rim).toBeGreaterThan(0);
   });
+
+  it('has a ragged, tapering outline with no regular banding: the covered width changes gradually from row to row', () => {
+    for (let y = 40; y < 108; y++) expect(Math.abs(r.width[y + 1] - r.width[y])).toBeLessThan(0.12);
+    const widths = r.width.slice(30, 108);
+    expect(Math.max(...widths)).toBeGreaterThan(Math.min(...widths) * 1.5);
+    const ragged = r.cover.slice(50, 110).filter((c, i) => c < r.width[50 + i] * 0.92).length;
+    expect(ragged).toBeGreaterThan(15);
+  });
+
+  it('is deterministic and puts pale new growth on the branch tips only', () => {
+    const again = rows(conifer(23));
+    expect(again.cover).toEqual(r.cover);
+    const tips = r.samples.filter((s) => s.hue > 0.25), core = r.samples.filter((s) => s.hue < 0.1);
+    expect(tips.length).toBeGreaterThan(0);
+    expect(tips.reduce((a, s) => a + s.open, 0) / tips.length).toBeGreaterThan(core.reduce((a, s) => a + s.open, 0) / core.length);
+  });
 });

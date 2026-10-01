@@ -3,7 +3,10 @@ import type { AstroState } from '../contracts';
 export const SUN_TOA_LUX = 1.27e5;
 export const STARLIGHT_FLOOR_NITS = 3e-5;
 const MIN_PRE = 1e-6;
-const MAX_PRE = 1e2;
+/** A starlit night needs a total exposure of ~50 per nit, so the clamp sits at 1 / (4 * 2.5e-4 nits); fp16 holds 60000 / 1000 nits of HDR. */
+export const MAX_PRE = 1e3;
+/** The scene-linear value the CPU pre-exposure gives a surface of the estimated luminance (a 0.18 grey card under the estimated light). */
+export const CPU_EXPOSURE_KEY = 0.25;
 
 /**
  * Allen: apparent magnitude of the moon from phase angle (0 = full), then lux = 10^(-0.4 (m + 14.18)); ~0.263 lux at full, ~0.024 at
@@ -52,7 +55,7 @@ export function estimateSceneLuminance(astro: AstroState, cameraHeight: number):
 }
 
 export function preExposureFor(luminance: number): number {
-  return Math.min(MAX_PRE, Math.max(MIN_PRE, 1 / (4 * luminance)));
+  return Math.min(MAX_PRE, Math.max(MIN_PRE, CPU_EXPOSURE_KEY / luminance));
 }
 
 /** Smooths the pre-exposure in log space so TAA/bloom history (stored pre-exposed) stays valid across frames. */

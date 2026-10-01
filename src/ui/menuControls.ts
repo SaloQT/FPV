@@ -140,5 +140,6 @@ export function buildControl(c: Control, host: ControlHost): BuiltControl {
     case 'date': return dateControl(c, host);
     case 'button': return buttonControl(c, host);
     case 'gamepad': return buildGamepadPanel(host);
+    case 'custom': return c.build(host);
   }
 }

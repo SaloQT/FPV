@@ -41,19 +41,19 @@ export class FrameGraph {
   ): void {
     timer.mark(enc, MARK.FrameBegin);
     host.encodePre(enc, rc, f);
+    timer.mark(enc, MARK.PreEnd);
 
     const gp = enc.beginRenderPass(this.gbufferPass);
     this.bindShared(gp, rc);
     host.encodeGBuffer(gp, rc, f);
     gp.end();
+    timer.mark(enc, MARK.GBufferEnd);
 
-    if (host.tracesRays) {
-      timer.mark(enc, MARK.RtBegin);
-      host.encodeRT(enc, rc, f);
-      timer.mark(enc, MARK.RtEnd);
-    }
+    if (host.tracesRays) host.encodeRT(enc, rc, f);
+    timer.mark(enc, MARK.RtEnd);
 
     lighting.encode(enc);
+    timer.mark(enc, MARK.LightingEnd);
 
     if (host.drawsSky) {
       const sp = enc.beginRenderPass(this.skyPass);
@@ -67,6 +67,7 @@ export class FrameGraph {
       host.encodeForward(fp, rc, f);
       fp.end();
     }
+    timer.mark(enc, MARK.OverlayEnd);
 
     post.encode(enc, rc, f, target, o);
   }

@@ -81,8 +81,9 @@
 .fpv-hint { margin: 2px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--fpv-muted); }
 .fpv-spacer { flex: 1; }
 
-.fpv-start { width: min(780px, 100%); padding: 36px 36px 24px; align-items: center; text-align: center; overflow-y: auto; }
-.fpv-start-head { margin-bottom: 22px; }
+.fpv-start { width: min(1040px, 100%); padding: 28px 30px 20px; align-items: stretch; overflow-y: auto; }
+.fpv-start-head { display: flex; align-items: center; justify-content: space-between; gap: 20px 32px; margin-bottom: 20px; }
+.fpv-start-go { display: flex; flex-direction: column; align-items: center; }
 .fpv-brand { margin: 0; font-size: 46px; font-weight: 750; letter-spacing: 0.02em; line-height: 1.1; }
 .fpv-tagline { margin: 6px 0 0; font-size: 12.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--fpv-muted); }
 .fpv-hero {
@@ -99,14 +100,13 @@
   transition: background 0.12s, transform 0.12s;
 }
 .fpv-hero:hover { background: #7ac8ff; transform: translateY(-1px); }
-.fpv-hero-note { margin: 10px 0 24px; font-size: 12.5px; color: var(--fpv-muted); }
-.fpv-start-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; text-align: left; }
+.fpv-hero-note { margin: 8px 0 0; font-size: 12.5px; color: var(--fpv-muted); }
+.fpv-start-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; width: 100%; }
+.fpv-start-side { display: grid; gap: 16px; align-content: start; }
 .fpv-card { padding: 16px 18px; background: var(--fpv-card); border: 1px solid var(--fpv-line); border-radius: 12px; }
 .fpv-keylist { display: grid; gap: 7px; margin: 10px 0 0; }
 .fpv-keyrow { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 10px; }
 .fpv-keyrow dt, .fpv-keyrow dd { margin: 0; }
-.fpv-start-world .fpv-row { grid-template-columns: 1fr; padding: 8px 0; }
-.fpv-start-world .fpv-row--action { padding-top: 12px; }
 .fpv-start-foot { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--fpv-line); }
 
 .fpv-settings { width: min(840px, 100%); height: min(700px, 100%); }
@@ -254,9 +254,9 @@
 @media (max-height: 700px) {
   .fpv-menu { padding: 12px; }
   .fpv-start { padding: 22px 30px 16px; }
-  .fpv-start-head { margin-bottom: 14px; }
-  .fpv-brand { font-size: 38px; }
-  .fpv-hero-note { margin-bottom: 16px; }
+  .fpv-start-head { margin-bottom: 12px; }
+  .fpv-brand { font-size: 34px; }
+  .fpv-hero { padding: 12px 40px; font-size: 18px; }
   .fpv-start-foot { margin-top: 14px; padding-top: 12px; }
 }
 
@@ -266,6 +266,7 @@
   .fpv-brand { font-size: 36px; }
   .fpv-hero { padding: 14px 40px; }
   .fpv-start-cols { grid-template-columns: 1fr; }
+  .fpv-start-head { flex-direction: column; align-items: flex-start; }
   .fpv-settings { height: 100%; }
   .fpv-panel-head { padding: 16px 16px 4px; }
   .fpv-tabs { padding: 8px 10px 0; }

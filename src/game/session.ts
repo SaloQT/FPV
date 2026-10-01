@@ -2,6 +2,7 @@ import type { Physics, QuadState, Quat, StickInput, TrackData, Vec3 } from '../c
 import type { InputAction, InputSource } from '../input/types';
 import { createPlacement, padPlacement, respawnPlacement, type GroundHeightFn, type Placement } from './checkpoint';
 import { SimClock, TIME_STEP_MINUTES } from './clock';
+import { StartCountdown } from './countdown';
 import { GateTimer, type GateEvent } from './gateTimer';
 import { quatSlerp } from './quat';
 import {
@@ -47,12 +48,15 @@ export class GameSession {
   onGate: ((event: GateEvent, gate: number) => void) | null = null;
   /** Fired for every input action after the session handled its own (camera, help, perf and new-track are the app's). */
   onAction: ((action: InputAction) => void) | null = null;
+  /** Fired as each beep of the race start comes up: 3, 2, 1, then 0 for GO. */
+  onCountdown: ((n: number) => void) | null = null;
 
   private readonly machine = new GameStateMachine();
   private readonly now: () => number;
   private readonly cmd: StickInput = { roll: 0, pitch: 0, yaw: 0, throttle: 0, armed: false, mode: 'acro', turtle: false };
   private readonly render: QuadState;
   private readonly placement = createPlacement();
+  private readonly countdown = new StartCountdown();
   private readonly prevPos: Vec3 = [0, 0, 0];
   private readonly prevVel: Vec3 = [0, 0, 0];
   private readonly prevAngVel: Vec3 = [0, 0, 0];
@@ -70,6 +74,8 @@ export class GameSession {
   private notice = '';
   private noticeUntil = 0;
   private leftMenu = false;
+  private raceStart = false;
+  private countdownPending = false;
 
   constructor(opts: SessionOptions) {
     this.physics = opts.physics;
@@ -113,6 +119,15 @@ export class GameSession {
     if (patch.timeScale !== undefined) this.clock.timeScale = patch.timeScale;
   }
 
+  /** With a race start the pad run begins with a 3-2-1-GO that keeps the quad disarmed; without it flying is free from the first second. */
+  setRaceStart(enabled: boolean): void {
+    this.raceStart = enabled;
+    if (!enabled) {
+      this.countdown.cancel();
+      this.countdownPending = false;
+    }
+  }
+
   /** Swaps the track and puts the quad back on its start pad with a fresh race. */
   setTrack(track: TrackData | null): void {
     this.track = track;
@@ -135,7 +150,7 @@ export class GameSession {
 
   /** Back to the last cleared gate (or the pad); after a finished race, a fresh start. */
   respawn(): void {
-    if (this.timer.isFinished) this.resetTrack();
+    if (this.timer.isFinished || this.countdown.active || this.countdownPending) this.resetTrack();
     else this.place(respawnPlacement(this.track, this.timer.lastGate, this.groundHeightAt, this.placement), null);
   }
 
@@ -144,6 +159,7 @@ export class GameSession {
     this.timer.reset();
     this.armedTime = 0;
     this.place(padPlacement(this.track, this.placement), 'reset');
+    this.countdownPending = this.raceStart;
   }
 
   /** Consumes one input action. `update` calls this for everything the input source queued. */
@@ -196,6 +212,8 @@ export class GameSession {
     cmd.mode = stick.mode;
     cmd.turtle = stick.turtle;
     for (const action of this.input.takeActions()) this.handleAction(action);
+    this.tickCountdown(dt);
+    this.holdAfterFinish();
     cmd.armed = this.input.armed;
     if (this.machine.state !== 'paused') this.clock.advance(dt);
     this.stats.stepsThisFrame = 0;
@@ -243,6 +261,10 @@ export class GameSession {
     out.flightTime = this.armedTime;
     out.throttleHigh = this.realTime - this.throttleHighAt < NOTICE_S;
     out.throttle = this.cmd.throttle;
+    out.stick.roll = this.cmd.roll;
+    out.stick.pitch = this.cmd.pitch;
+    out.stick.yaw = this.cmd.yaw;
+    this.countdown.snapshot(out.countdown);
     out.turtle = this.cmd.turtle;
     out.respawnOffered = this.machine.state === 'crashed' && this.simTime - this.crashTime >= RESPAWN_OFFER_S;
     out.message = this.realTime < this.noticeUntil ? this.notice : '';
@@ -254,8 +276,12 @@ export class GameSession {
     const prev = this.machine.state;
     const next = this.machine.send(event);
     if (next === prev) return;
-    if (next !== 'menu') this.leftMenu = true;
-    this.input.setEnabled(next !== 'menu');
+    if (next !== 'menu' && !this.leftMenu) {
+      this.leftMenu = true;
+      this.countdownPending = this.raceStart;
+    }
+    // A finished race hands the mouse back so the result panel can be clicked.
+    this.input.setEnabled(next !== 'menu' && next !== 'finished');
     this.onStateChange?.(next, prev);
   }
 
@@ -266,13 +292,40 @@ export class GameSession {
 
   private toggleArm(): void {
     if (!this.machine.simulating) return;
-    if (this.input.armed) {
+    if (this.countdown.locked) {
+      this.say('WAIT FOR GO');
+    } else if (this.input.armed) {
       this.input.setArmed(false);
     } else if (this.cmd.throttle >= ARM_THROTTLE_MAX) {
       this.throttleHighAt = this.realTime;
     } else {
       this.input.setArmed(true);
     }
+  }
+
+  /** Runs the race-start sequence while the quad sits on the pad: it keeps the motors disarmed and the throttle at zero until GO. */
+  private tickCountdown(dt: number): void {
+    if (!this.machine.simulating) return;
+    if (this.countdownPending && this.machine.state === 'ready') {
+      this.countdownPending = false;
+      this.countdown.start();
+    }
+    if (!this.countdown.active) return;
+    const beep = this.countdown.advance(dt);
+    if (beep >= 0) this.onCountdown?.(beep);
+    if (!this.countdown.locked) return;
+    if (this.input.armed) this.input.setArmed(false);
+    this.cmd.throttle = 0;
+    this.input.setThrottle(0);
+  }
+
+  /** The race is over and the sticks are released: the quad levels out and hovers behind the result panel instead of drifting off. */
+  private holdAfterFinish(): void {
+    if (this.machine.state !== 'finished') return;
+    const cmd = this.cmd;
+    cmd.roll = cmd.pitch = cmd.yaw = 0;
+    cmd.mode = 'angle';
+    cmd.throttle = HOVER_THROTTLE;
   }
 
   /** Teleports the quad. A mid-air checkpoint arms it on the spot, with hover throttle once the flight controller accepted it. */
@@ -287,6 +340,7 @@ export class GameSession {
     this.wasCrashed = false;
     this.crashTime = -Infinity;
     this.idleTime = 0;
+    this.countdown.cancel();
     this.airArm = p.airborne;
     this.input.setThrottle(0);
     this.input.setArmed(p.airborne);

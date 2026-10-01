@@ -250,26 +250,88 @@ describe('OSD race', () => {
     expect(g.texts.some((t) => t.text.startsWith('GATE'))).toBe(false);
   });
 
-  it('shows the finish card with every lap and a backdrop', () => {
+  it('draws the 3-2-1-GO big and centred, fading through each number', () => {
+    const snap = flying();
+    snap.state = 'ready';
+    Object.assign(snap.countdown, { active: true, value: 2, fraction: 0 });
     const { g, osd } = setup();
-    osd.draw(model(race({ finished: true, totalTime: 125.5, lapTimes: [42, 43.4, 40.1] })), 0);
-    for (const s of ['FINISHED', '2:05.500', 'LAP 1  0:42.000', 'LAP 2  0:43.400', 'LAP 3  0:40.100']) expect(g.has(s), s).toBe(true);
-    expect(g.find('FINISHED')?.color).toBe(COLOR_GREEN);
-    expect(g.rects).toHaveLength(1);
-    const r = g.rects[0];
-    expect(r.x).toBeGreaterThan(0);
-    expect(r.x + r.w).toBeLessThan(1280);
-    expect(r.y + r.h).toBeLessThan(720);
+    osd.draw(model(snap), 0);
+    const two = g.find('2')!;
+    expect(two.align).toBe('center');
+    expect(two.color).toBe(COLOR_AMBER);
+    expect(two.alpha).toBeCloseTo(1, 6);
+    expect(g.fontPx('2')).toBeGreaterThan(g.fontPx('RACE START') * 2.5);
+    expect(g.find('RACE START')).toBeDefined();
+    expect(two.x).toBeCloseTo(640, 0);
+    const late = setup();
+    Object.assign(snap.countdown, { fraction: 1 });
+    late.osd.draw(model(snap), 0);
+    expect(late.g.find('2')!.alpha).toBeLessThan(0.6);
   });
 
-  it('caps a long lap list so the card stays on screen', () => {
+  it('colours the beats and turns green on GO', () => {
+    const snap = flying();
+    snap.state = 'ready';
+    const colors: [number, string][] = [[3, '#fff'], [1, COLOR_RED], [0, COLOR_GREEN]];
+    for (const [value, color] of colors) {
+      Object.assign(snap.countdown, { active: true, value, fraction: 0.1 });
+      const { g, osd } = setup();
+      osd.draw(model(snap), 0);
+      expect(g.find(value === 0 ? 'GO' : String(value))?.color).toBe(color);
+    }
+  });
+
+  it('draws the lead-in caption alone and still draws the countdown with the OSD off or in a chase camera', () => {
+    const snap = flying();
+    snap.state = 'ready';
+    Object.assign(snap.countdown, { active: true, value: -1, fraction: 0.3 });
     const { g, osd } = setup();
-    const lapTimes = Array.from({ length: 30 }, (_, i) => 40 + i);
-    osd.draw(model(race({ finished: true, totalTime: 999, laps: 30, lapTimes })), 0);
-    expect(g.texts.filter((t) => t.text.startsWith('LAP 1') || t.text.startsWith('LAP 2')).length).toBeGreaterThan(0);
-    expect(g.texts.filter((t) => /^LAP \d+ {2}/.test(t.text))).toHaveLength(10);
-    const r = g.rects[0];
-    expect(r.y).toBeGreaterThanOrEqual(0);
-    expect(r.y + r.h).toBeLessThanOrEqual(720);
+    osd.draw(model(snap), 0);
+    expect(g.has('GET READY')).toBe(true);
+    const hidden = setup();
+    const m = model(snap);
+    m.visible = false;
+    hidden.osd.draw(m, 0);
+    expect(hidden.g.has('GET READY')).toBe(true);
+    expect(hidden.g.has('ARMED')).toBe(false);
+    expect(hidden.g.has('DISARMED')).toBe(false);
+  });
+
+  it('draws two stick boxes with a dot each where the sticks are', () => {
+    const snap = flying();
+    snap.throttle = 1;
+    snap.stick.yaw = -1;
+    snap.stick.roll = 1;
+    snap.stick.pitch = 1;
+    const { g, osd } = setup();
+    osd.draw(model(snap), 0);
+    const surface = { width: 1280, height: 720 };
+    expect(g.rects.length).toBeGreaterThanOrEqual(6);
+    const dots = g.rects.filter((r) => Math.abs(r.w - r.h) < 1e-6 && r.w >= 4 && r.w < 20);
+    expect(dots.length).toBeGreaterThanOrEqual(2);
+    const dotL = dots.find((r) => r.x + r.w / 2 < surface.width / 2)!;
+    const dotR = dots.find((r) => r.x + r.w / 2 > surface.width / 2)!;
+    const boxes = g.rects.filter((r) => r.w >= 20 && r.h >= 20);
+    const left = boxes.find((r) => r.x < surface.width / 2)!;
+    const right = boxes.find((r) => r.x > surface.width / 2)!;
+    expect(dotL.x + dotL.w / 2).toBeLessThan(left.x + left.w / 2);
+    expect(dotL.y + dotL.h / 2).toBeLessThan(left.y + left.h / 2);
+    expect(dotR.x + dotR.w / 2).toBeGreaterThan(right.x + right.w / 2);
+    expect(dotR.y + dotR.h / 2).toBeLessThan(right.y + right.h / 2);
+    for (const [d, b] of [[dotL, left], [dotR, right]] as const) {
+      expect(d.x).toBeGreaterThanOrEqual(b.x);
+      expect(d.x + d.w).toBeLessThanOrEqual(b.x + b.w);
+      expect(d.y).toBeGreaterThanOrEqual(b.y);
+      expect(d.y + d.h).toBeLessThanOrEqual(b.y + b.h);
+    }
+  });
+
+  it('leaves the sticks out when the pilot turned them off', () => {
+    const { g, osd } = setup();
+    const m = model();
+    m.sticksEnabled = false;
+    buildHud(makeQuadState({ armed: true }), flying(), SETTINGS, 3.2, m);
+    osd.draw(m, 0);
+    expect(g.rects).toHaveLength(0);
   });
 });

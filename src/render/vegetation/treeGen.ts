@@ -112,6 +112,8 @@ function emitClusters(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading, lod
         const a = yaw + (k * Math.PI) / 2;
         card(b, cl.c, [Math.cos(a) * h, 0, Math.sin(a) * h], [0, h * 0.9, 0], o);
       }
+      // A flat card so a crown seen from above (a diving drone) is not a ring of edge-on discs with the ground showing through.
+      card(b, cl.c, [Math.cos(yaw) * h, 0, Math.sin(yaw) * h], [-Math.sin(yaw) * h, 0, Math.cos(yaw) * h], o);
     }
   }
 }

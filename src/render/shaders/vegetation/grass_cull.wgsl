@@ -61,6 +61,11 @@ fn patches(@builtin(global_invocation_id) gid : vec3u) {
   }
 }
 
+// Share of the blades that are tall meadow stems: an unmown patch fades in over several metres rather than starting at a wall.
+fn meadowAmount(xz : vec2f) -> f32 {
+  return smoothstep(0.46, 0.76, tnFbm(xz * 0.045 + vec2f(5.0, 11.0), 2)) * 0.85;
+}
+
 fn species(xz : vec2f, wetN : f32, rPick : f32, tuftDist : ptr<function, f32>) -> u32 {
   *tuftDist = 1.0;
   let cell = floor(xz / 1.4);
@@ -73,8 +78,21 @@ fn species(xz : vec2f, wetN : f32, rPick : f32, tuftDist : ptr<function, f32>) -
   let weedN = tnFbm(xz * 0.35 + vec2f(29.0, 83.0), 2);
   if (weedN > 0.6 && rPick < 0.4 * smoothstep(0.6, 0.74, weedN)) { return 4u; }
   if (wetN > 0.62 && hash21(bitcast<vec2u>(vec2i(floor(xz * 3.0)))) < 0.5 * smoothstep(0.62, 0.85, wetN)) { return 3u; }
-  let meadow = smoothstep(0.52, 0.70, tnFbm(xz * 0.045 + vec2f(5.0, 11.0), 2)) * 0.85;
-  return select(0u, 1u, rPick < meadow);
+  return select(0u, 1u, rPick < meadowAmount(xz));
+}
+
+// Share of blades that carry a flower head. Meadow flowers are rare on average and come in drifts: a broad patch field (tens of metres)
+// times a metre-scale cluster field, so most of the sward has none and a drift has a few per square metre.
+fn flowerRate(xz : vec2f) -> f32 {
+  let drift = smoothstep(0.58, 0.76, tnFbm(xz * 0.06 + vec2f(3.0, 71.0), 2));
+  let cluster = smoothstep(0.40, 0.68, tnFbm(xz * 0.8 + vec2f(53.0, 9.0), 2));
+  return 0.00025 + 0.012 * drift * cluster;
+}
+
+// Mostly the drift's own colour (whites and yellows common, violet less, poppy red rare) with the odd stray from another species.
+fn flowerCode(clump : f32, r : u32) -> u32 {
+  let c = select(clump, u01(r >> 4u), u01(r >> 12u) < 0.2);
+  return select(select(select(4u, 3u, c < 0.9), 2u, c < 0.7), 1u, c < 0.35);
 }
 
 @compute @workgroup_size(64)
@@ -105,7 +123,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   let lw = terrainLayerWeights(xz, y, nrm.y, maps, vp.grass2.z);
   let cover = (lw.lo.x + lw.lo.y) / max(dot(lw.lo, vec4f(1.0)) + dot(lw.hi, vec4f(1.0)), 1.0e-4);
   let wetN = saturate1(maps.w * 1.8);
-  let density = smoothstep(0.30, 0.65, cover) * (0.45 + 0.55 * wetN) * (1.0 - smoothstep(0.6, 0.9, maps.y));
+  let density = smoothstep(0.08, 0.62, cover) * (0.45 + 0.55 * wetN) * (1.0 - 0.65 * smoothstep(0.75, 0.98, maps.y));
   if (u01(h.z) >= density) { return; }
 
   let g = pcg3(h + vec3u(7u, 13u, 29u));
@@ -119,7 +137,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   var widthMm = 0.0;
   switch (sp) {
     case 0u: { height = 0.06 + 0.12 * rH; widthMm = 3.5 + 2.0 * rW; }
-    case 1u: { height = 0.25 + 0.35 * rH; widthMm = 4.0 + 3.0 * rW; }
+    case 1u: { height = (0.25 + 0.35 * rH) * (0.5 + 0.5 * saturate(meadowAmount(xz) / 0.5)); widthMm = 4.0 + 3.0 * rW; }
     case 2u: { height = (0.13 + 0.17 * rH) * (1.0 - 0.35 * tuftDist); widthMm = 5.0 + 3.0 * rW; }
     case 3u: { height = 0.35 + 0.25 * rH; widthMm = 7.0 + 3.0 * rW; }
     default: { height = 0.04 + 0.08 * rH; widthMm = 12.0 + 10.0 * rW; }
@@ -128,10 +146,8 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
 
   var code = 0u;
   if (sp != 3u) {
-    let flowerN = tnFbm(xz * 0.22 + vec2f(3.0, 71.0), 2);
-    if (u01(q.y) < 0.005 * (0.25 + 2.2 * smoothstep(0.52, 0.72, flowerN))) {
-      let clump = hash21(bitcast<vec2u>(vec2i(floor(xz / 9.0))));
-      code = 1u + select(u32(clump * 4.0) % 4u, q.z % 4u, u01(q.z >> 4u) < 0.25);
+    if (u01(q.y) < flowerRate(xz)) {
+      code = flowerCode(hash21(bitcast<vec2u>(vec2i(floor(xz / 9.0)))), q.z);
       height = max(height, 0.18 + 0.25 * rH);
     } else if (sp == 1u && u01(q.z) < 0.12) {
       code = 5u;
@@ -140,7 +156,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
 
   var yaw = u01(q.x);
   if (sp == 2u) { yaw = fract(atan2(xz.y - (floor(xz.y / 1.4) + 0.5) * 1.4, xz.x - (floor(xz.x / 1.4) + 0.5) * 1.4) / TAU); }
-  let dry = glDryness(xz, maps.w);
+  let dry = max(glDryness(xz, maps.w), 0.7 * (1.0 - smoothstep(0.15, 0.6, cover)));
   let thin = clamp(inverseSqrt(max(keep, 1.0e-4)), 1.0, 5.0);
   let lod = select(select(2u, 1u, d < vp.grass2.y), 0u, d < vp.grass2.x);
 

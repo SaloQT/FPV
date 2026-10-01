@@ -10,11 +10,17 @@
  *   advance(n) n deterministic frames at the fixed dt (`fixeddt`, default 1/60); only the last SETTLE_RENDERS are drawn
  *   newTrack() / newWorld()   the N key and the menu's "new world" without keys
  *   patch(p)   change settings like the menu does;  cam(mode)  pick the camera
+ *   loseDevice()  pretends the GPU device was lost, to exercise the failure panel and Recover
+ *   bench      with `?bench=1`: the result of the scripted run once it finished (see bench.ts);  benchDone  the promise of it
+ *
+ * `stats` carries the renderer's numbers too: displayHz (measured refresh), targetFps, frameCap, dynamicDriver, passMs (GPU ms per
+ * frame section, see render/gpuTimer.ts, NaN without timestamp-query) and errorCount.
  */
 import type { QuadState } from '../contracts';
 import type { CameraMode } from '../game/cameraRig';
 import type { RaceSnapshot } from '../game/gateTimer';
 import type { AppSettings } from '../ui/settingsSchema';
+import type { BenchResult } from './benchModel';
 import { present, SETTLE_RENDERS, simulate } from './frame';
 import { newTrack, newWorld } from './scene';
 import { reportError, type AppCtx } from './state';
@@ -38,6 +44,9 @@ export interface FpvHook {
   newWorld(): Promise<boolean>;
   patch(p: Partial<AppSettings>): void;
   cam(mode: CameraMode): void;
+  loseDevice(): void;
+  bench?: BenchResult;
+  benchDone?: Promise<BenchResult>;
 }
 
 /**
@@ -109,6 +118,7 @@ export function installHooks(ctx: AppCtx): FpvHook {
   hook.newTrack = () => newTrack(ctx);
   hook.newWorld = () => newWorld(ctx, true);
   hook.patch = (p) => ctx.store.patch(p);
+  hook.loseDevice = () => ctx.renderer.simulateLoss('simulated by window.__fpv.loseDevice()');
   hook.cam = (mode) => {
     ctx.camPreferred = mode;
   };

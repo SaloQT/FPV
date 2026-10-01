@@ -11,6 +11,7 @@ export const COLOR_GREEN = '#62f58a';
 const SIZE_MAIN = 28;
 const SIZE_SMALL = 19;
 const SIZE_BIG = 44;
+const SIZE_HUGE = 170;
 
 /** Shared text state of the OSD: the scaled layout, cached font strings and outlined text drawing. */
 export class Painter {
@@ -22,6 +23,7 @@ export class Painter {
   main = 0;
   small = 0;
   big = 0;
+  huge = 0;
   /** Row pitch of the main font. */
   line = 0;
   charMain = 0;
@@ -29,7 +31,9 @@ export class Painter {
   private fontMain = '';
   private fontSmall = '';
   private fontBig = '';
+  private fontHuge = '';
   private scale = NaN;
+  private baseLine = 3;
 
   constructor(private readonly g: OsdContext) {}
 
@@ -44,12 +48,14 @@ export class Painter {
     this.main = Math.max(10, Math.round(SIZE_MAIN * u));
     this.small = Math.max(8, Math.round(SIZE_SMALL * u));
     this.big = Math.max(14, Math.round(SIZE_BIG * u));
+    this.huge = Math.max(40, Math.round(SIZE_HUGE * u));
     this.line = Math.round(this.main * 1.25);
     this.marginX = Math.round(width * 0.03);
     this.marginY = Math.round(height * 0.045);
     this.fontMain = `600 ${this.main}px ${FONT_STACK}`;
     this.fontSmall = `600 ${this.small}px ${FONT_STACK}`;
     this.fontBig = `700 ${this.big}px ${FONT_STACK}`;
+    this.fontHuge = `800 ${this.huge}px ${FONT_STACK}`;
     this.g.font = this.fontMain;
     this.charMain = this.g.measureText('0').width;
     this.g.font = this.fontSmall;
@@ -62,20 +68,30 @@ export class Painter {
     g.lineJoin = 'round';
     g.lineCap = 'round';
     g.strokeStyle = 'rgba(0,0,0,0.9)';
-    g.lineWidth = Math.max(3, Math.round(this.main * 0.22));
+    this.baseLine = Math.max(3, Math.round(this.main * 0.22));
+    g.lineWidth = this.baseLine;
     g.globalAlpha = 1;
   }
 
   useMain(): void {
     this.g.font = this.fontMain;
+    this.g.lineWidth = this.baseLine;
   }
 
   useSmall(): void {
     this.g.font = this.fontSmall;
+    this.g.lineWidth = this.baseLine;
   }
 
   useBig(): void {
     this.g.font = this.fontBig;
+    this.g.lineWidth = this.baseLine;
+  }
+
+  /** The countdown digits: the outline grows with the glyph. */
+  useHuge(): void {
+    this.g.font = this.fontHuge;
+    this.g.lineWidth = Math.max(this.baseLine, Math.round(this.huge * 0.045));
   }
 
   /** White-on-black outlined text in the current font; `y` is the baseline. */

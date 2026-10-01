@@ -3,12 +3,13 @@
  * and colliders, the start pad, wind, the session's track. All entry points leave the app consistent or throw before
  * touching it, so a failed rebuild keeps the old world flying.
  */
-import type { TrackData } from '../contracts';
+import type { ProgressFn, TrackData } from '../contracts';
 import { generateTerrainAsync, createTerrainSampler } from '../world/terrain';
 import { generateTrack, trackColliders } from '../world/track';
 import type { AppSettings } from '../ui/settingsSchema';
 import { reportError, type AppCtx } from './state';
 import type { PadGround } from './padGround';
+import type { WorldSettings } from './preview';
 import { buildTrack, buildWorld, type TrackRequest, type World, type WorldDeps } from './world';
 
 export const worldDeps: WorldDeps = { generateTerrain: generateTerrainAsync, createSampler: createTerrainSampler, generateTrack };
@@ -19,7 +20,7 @@ export function sessionTrack(ground: PadGround, track: TrackData): TrackData {
   return { ...track, start: { pos: [track.start.pos[0], ground.padTop, track.start.pos[2]], yaw: track.start.yaw } };
 }
 
-export function trackRequest(s: AppSettings, seed: number = s.seed): TrackRequest {
+export function trackRequest(s: Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty'>, seed: number = s.seed): TrackRequest {
   return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: s.difficulty };
 }
 
@@ -119,6 +120,29 @@ export async function newWorld(ctx: AppCtx, fresh = false): Promise<boolean> {
   const ok = await withOverlay(ctx, 'Generating terrain', (progress) => buildWorld(req, worldDeps, progress));
   if (ok) ctx.store.patch({ seed: ctx.world.baseSeed });
   return ok;
+}
+
+/** Same terrain, a track for the settings: waits one task first so a progress bar can paint before the generator runs. */
+export async function buildTrackOnly(world: World, s: WorldSettings): Promise<World> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return { ...world, ...buildTrack(world.sampler, trackRequest(s), worldDeps) };
+}
+
+/** New terrain and track for the settings, in the background: no overlay, the frame loop keeps running on the old world. */
+export function buildWorldQuietly(s: WorldSettings, progress: ProgressFn): Promise<World> {
+  return buildWorld({ ...trackRequest(s), quality: s.quality }, worldDeps, progress);
+}
+
+/** Puts a background-built world on screen between two frames; false (nothing done) while another rebuild owns the app. */
+export function landWorld(ctx: AppCtx, world: World): boolean {
+  if (ctx.busy) return false;
+  ctx.busy = true;
+  try {
+    loadWorld(ctx, world);
+  } finally {
+    ctx.busy = false;
+  }
+  return true;
 }
 
 /** Reports a boot-time or loop failure through every channel. */

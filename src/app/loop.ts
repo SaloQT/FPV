@@ -2,7 +2,8 @@
  * The real-time loop and the browser plumbing around it: requestAnimationFrame with a clamped dt, canvas resizing
  * (ResizeObserver plus devicePixelRatio) and pausing when the tab is hidden.
  */
-import { fail } from './scene';
+import { failApp } from './failure';
+import { FrameLimiter } from './frameLimiter';
 import { present, simulate } from './frame';
 import type { AppCtx } from './state';
 
@@ -13,6 +14,8 @@ export interface Loop {
   start(): void;
   stop(): void;
   readonly running: boolean;
+  /** Called after every presented frame with the time since the previous one (ms) and the rAF timestamp. */
+  onFrame: ((frameMs: number, nowMs: number) => void) | null;
 }
 
 /** Keeps the renderer's output size and the camera aspect in step with the canvas. Returns the detach function. */
@@ -46,19 +49,28 @@ export function createLoop(ctx: AppCtx): Loop {
   let raf = 0;
   let running = false;
   let last = 0;
+  const limiter = new FrameLimiter();
 
+  // The loop wakes at every display refresh; the frame cap decides which wake-ups make a frame (the sim time of the skipped ones
+  // is not lost: dt runs from the last presented frame).
   const tick = (now: number): void => {
     if (!running) return;
     raf = requestAnimationFrame(tick);
+    if (ctx.hidden || ctx.busy) {
+      last = now;
+      limiter.reset();
+      return;
+    }
+    if (!limiter.allow(now, ctx.store.get().frameCap, ctx.renderer.displayPeriodMs)) return;
     const real = last === 0 ? 1 / 60 : Math.max(0, (now - last) / 1000);
     last = now;
-    if (ctx.hidden || ctx.busy) return;
     try {
       simulate(ctx, Math.min(real, MAX_FRAME_DT));
       present(ctx, real * 1000, now);
+      loop.onFrame?.(real * 1000, now);
     } catch (e) {
       loop.stop();
-      fail(ctx, 'The frame loop stopped', e);
+      failApp(ctx.root, 'loop-failed', e);
     }
   };
 
@@ -75,6 +87,7 @@ export function createLoop(ctx: AppCtx): Loop {
   };
 
   const loop: Loop = {
+    onFrame: null,
     get running() {
       return running;
     },
@@ -82,6 +95,7 @@ export function createLoop(ctx: AppCtx): Loop {
       if (running) return;
       running = true;
       last = 0;
+      limiter.reset();
       ctx.hidden = document.hidden;
       document.addEventListener('visibilitychange', onVisibility);
       raf = requestAnimationFrame(tick);

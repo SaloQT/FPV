@@ -1,6 +1,7 @@
 import type { Physics, TrackData } from '../contracts';
 import type { InputSource } from '../input/types';
 import type { GroundHeightFn } from './checkpoint';
+import { createCountdownSnapshot, type CountdownSnapshot } from './countdown';
 import { createRaceSnapshot, type RaceSnapshot } from './gateTimer';
 import type { GameState } from './stateMachine';
 
@@ -55,6 +56,10 @@ export interface SessionSnapshot {
   throttleHigh: boolean;
   /** Throttle stick 0..1 as the pilot last commanded it. */
   throttle: number;
+  /** Roll, pitch and yaw as the flight controller received them (after deadzone and expo), -1..1. */
+  stick: { roll: number; pitch: number; yaw: number };
+  /** The race-start sequence on the pad. */
+  countdown: CountdownSnapshot;
   /** The pilot is holding the turtle (flip-over-after-crash) control. */
   turtle: boolean;
   /** The crash cooldown is over: R (or auto-respawn) puts the quad back. */
@@ -65,5 +70,8 @@ export interface SessionSnapshot {
 }
 
 export function createSessionSnapshot(): SessionSnapshot {
-  return { state: 'menu', simTime: 0, flightTime: 0, throttleHigh: false, throttle: 0, turtle: false, respawnOffered: false, message: '', race: createRaceSnapshot() };
+  return {
+    state: 'menu', simTime: 0, flightTime: 0, throttleHigh: false, throttle: 0, stick: { roll: 0, pitch: 0, yaw: 0 }, countdown: createCountdownSnapshot(),
+    turtle: false, respawnOffered: false, message: '', race: createRaceSnapshot(),
+  };
 }

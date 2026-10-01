@@ -268,30 +268,50 @@ describe('race panel', () => {
     expect(run(makeQuadState(), snap).race.missedVisible).toBe(false);
   });
 
-  it('builds the finish card with every lap time', () => {
-    const snap = raceSnap();
-    snap.state = 'finished';
-    Object.assign(snap.race, { finished: true, started: true, totalTime: 125.5, bestLap: 40.1, gatesPassed: 12, nextGate: 0, lap: 3 });
-    snap.race.lapTimes = [42, 43.4, 40.1];
-    const m = run(makeQuadState(), snap);
-    expect(m.finish.visible).toBe(true);
-    expect(m.finish.totalText).toBe('2:05.500');
-    expect(m.finish.bestText).toBe('0:40.100');
-    expect(m.finish.lapTexts).toEqual(['LAP 1  0:42.000', 'LAP 2  0:43.400', 'LAP 3  0:40.100']);
-    expect(m.race.gateText).toBe('GATE 1/12');
+  it('counts down on the pad: lead-in caption, then 3, 2, 1 and GO', () => {
+    const snap = flying();
+    snap.state = 'ready';
+    const out = createHudModel();
+    Object.assign(snap.countdown, { active: true, locked: true, value: -1, fraction: 0.2 });
+    let m = run(makeQuadState(), snap, {}, NaN, out);
+    expect(m.countdown).toMatchObject({ visible: true, text: '', caption: 'GET READY', value: -1 });
+    for (const [value, text] of [[3, '3'], [2, '2'], [1, '1']] as const) {
+      Object.assign(snap.countdown, { value, fraction: 0.5 });
+      m = run(makeQuadState(), snap, {}, NaN, out);
+      expect(m.countdown).toMatchObject({ visible: true, text, caption: 'RACE START', value, fraction: 0.5 });
+    }
+    Object.assign(snap.countdown, { value: 0, locked: false });
+    m = run(makeQuadState(), snap, {}, NaN, out);
+    expect(m.countdown).toMatchObject({ visible: true, text: 'GO', caption: 'ARM AND FLY' });
+    snap.countdown.active = false;
+    expect(run(makeQuadState(), snap, {}, NaN, out).countdown.visible).toBe(false);
   });
 
-  it('rebuilds the finish card for a second race and hides it when the race restarts', () => {
+  it('shows the countdown even with the OSD off, but not behind a menu or a pause', () => {
+    const snap = flying();
+    snap.state = 'ready';
+    Object.assign(snap.countdown, { active: true, value: 2, fraction: 0 });
+    expect(run(makeQuadState(), snap, { showOsd: false }).countdown.visible).toBe(true);
+    snap.state = 'paused';
+    expect(run(makeQuadState(), snap).countdown.visible).toBe(false);
+    snap.state = 'menu';
+    expect(run(makeQuadState(), snap).countdown.visible).toBe(false);
+  });
+
+  it('passes the sticks through and hides the indicator when it is off or the OSD is', () => {
+    const snap = flying();
+    snap.throttle = 0.6;
+    snap.stick.roll = 0.25;
+    snap.stick.pitch = -0.5;
+    snap.stick.yaw = 1;
     const out = createHudModel();
-    const snap = raceSnap();
-    Object.assign(snap.race, { finished: true, totalTime: 60, bestLap: 30 });
-    snap.race.lapTimes = [30, 30];
-    run(makeQuadState(), snap, {}, NaN, out);
-    Object.assign(snap.race, { finished: false });
-    expect(run(makeQuadState(), snap, {}, NaN, out).finish.visible).toBe(false);
-    Object.assign(snap.race, { finished: true, totalTime: 61, bestLap: 29 });
-    snap.race.lapTimes = [32, 29];
-    expect(run(makeQuadState(), snap, {}, NaN, out).finish.lapTexts).toEqual(['LAP 1  0:32.000', 'LAP 2  0:29.000']);
+    let m = run(makeQuadState(), snap, {}, NaN, out);
+    expect(m.sticks).toEqual({ visible: true, roll: 0.25, pitch: -0.5, yaw: 1, throttle: 0.6 });
+    out.sticksEnabled = false;
+    expect(run(makeQuadState(), snap, {}, NaN, out).sticks.visible).toBe(false);
+    out.sticksEnabled = true;
+    m = run(makeQuadState(), snap, { showOsd: false }, NaN, out);
+    expect(m.sticks.visible).toBe(false);
   });
 });
 
@@ -302,11 +322,11 @@ describe('text caching', () => {
     run(makeQuadState({ vel: [10, 0, 0], batteryVoltage: 23.2, batteryMah: 100 }), snap, {}, NaN, out);
     const speed = out.speedText;
     const cell = out.cellText;
-    const objects = [out.race, out.finish, out.attitude, out.keys];
+    const objects = [out.race, out.countdown, out.sticks, out.attitude, out.keys];
     run(makeQuadState({ vel: [10.05, 0, 0], batteryVoltage: 23.2, batteryMah: 100.4 }), snap, {}, NaN, out);
     expect(out.speedText).toBe(speed);
     expect(out.cellText).toBe(cell);
-    const after = [out.race, out.finish, out.attitude, out.keys];
+    const after = [out.race, out.countdown, out.sticks, out.attitude, out.keys];
     objects.forEach((o, i) => expect(after[i]).toBe(o));
   });
 

@@ -49,8 +49,11 @@ fn fs(in : VsOut) -> FsOut {
   var albedo = bedColor * trans + WATER_DEEP * (1.0 - trans);
 
   let foamNoise = tnFbm(w.xz * 2.2 + vec2f(0.4, -0.25) * t, 2);
-  let foam = max(1.0 - smoothstep(0.0, 0.1, depth), (1.0 - smoothstep(0.02, 0.45, depth)) * smoothstep(0.35, 0.75, foamNoise));
-  albedo = mix(albedo, vec3f(0.75), foam);
+  // A calm shore has only a thin, broken wet edge where ripples lap the bank, not a bright foam line.
+  let lap = (1.0 - smoothstep(0.0, 0.04, depth)) * (0.25 + 0.5 * foamNoise);
+  let froth = (1.0 - smoothstep(0.02, 0.35, depth)) * smoothstep(0.55, 0.85, foamNoise) * 0.5;
+  let foam = max(lap, froth);
+  albedo = mix(albedo, vec3f(0.6), foam);
   let rough = mix(0.04 + 0.16 * smoothstep(0.3, 4.0, fp), 0.55, foam);
 
   var out : FsOut;

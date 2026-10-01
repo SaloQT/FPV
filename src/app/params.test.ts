@@ -119,3 +119,25 @@ describe('settingsPatch', () => {
     expect(hasPersistentOverrides(patch)).toBe(false);
   });
 });
+
+describe('world share links', () => {
+  it('reads difficulty in percent, clamped, and the countdown switch', () => {
+    expect(parseParams('?diff=35').difficulty).toBeCloseTo(0.35, 12);
+    expect(parseParams('?diff=250').difficulty).toBe(1);
+    expect(parseParams('?diff=-4').difficulty).toBe(0);
+    expect(parseParams('?diff=x').difficulty).toBeUndefined();
+    expect(parseParams('?countdown=1').countdown).toBe(true);
+    expect(parseParams('?countdown=0').countdown).toBe(false);
+    expect(parseParams('').countdown).toBeUndefined();
+  });
+
+  it('opens the same world the link was made from', async () => {
+    const { shareUrl } = await import('../ui/seedModel');
+    const s = { ...defaultAppSettings(), seed: 482913, trackStyle: 'mountain' as const, gateCount: 17, laps: 2, difficulty: 0.65 };
+    const url = new URL(shareUrl('https://sim.example/fly/', s));
+    const patch = settingsPatch(parseParams(url.search), defaultAppSettings());
+    expect(patch).toMatchObject({ seed: 482913, trackStyle: 'mountain', gateCount: 17, laps: 2 });
+    expect(patch.difficulty).toBeCloseTo(0.65, 12);
+    expect(hasPersistentOverrides(patch)).toBe(true);
+  });
+});

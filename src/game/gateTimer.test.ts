@@ -174,3 +174,38 @@ describe('GateTimer, multi-lap open track', () => {
     expect(timer.fill(snap, 9)).toMatchObject({ finished: true, bestLap: 4, lastLap: 4 });
   });
 });
+
+describe('GateTimer best-lap splits', () => {
+  it('lists the best circuit lap gate by gate with the start line last, and follows a faster lap', () => {
+    const track = makeTrack(4, { closed: true, laps: 3 });
+    const timer = new GateTimer(track);
+    const snap = createRaceSnapshot();
+    const lap = (t0: number, a: number, b: number, c: number, d: number): void => {
+      pass(timer, track, 1, t0 + a);
+      pass(timer, track, 2, t0 + b);
+      pass(timer, track, 3, t0 + c);
+      pass(timer, track, 0, t0 + d);
+    };
+    pass(timer, track, 0, 0);
+    expect(timer.fill(snap, 1).bestSplits).toEqual([]);
+    lap(0, 5, 10, 15, 20);
+    expect(timer.fill(snap, 21).bestSplits).toEqual([{ gate: 1, time: 5 }, { gate: 2, time: 10 }, { gate: 3, time: 15 }, { gate: 0, time: 20 }]);
+    lap(20, 7, 14, 21, 28);
+    expect(timer.fill(snap, 49).bestSplits.map((m) => m.time)).toEqual([5, 10, 15, 20]);
+    lap(48, 4, 9, 12, 16);
+    expect(timer.fill(snap, 65).bestSplits).toEqual([{ gate: 1, time: 4 }, { gate: 2, time: 9 }, { gate: 3, time: 12 }, { gate: 0, time: 16 }]);
+  });
+
+  it('on a point-to-point track the marks run from the second gate to the finish and a reset clears them', () => {
+    const track = makeTrack(4);
+    const timer = new GateTimer(track);
+    const snap = createRaceSnapshot();
+    pass(timer, track, 0, 0);
+    pass(timer, track, 1, 2);
+    pass(timer, track, 2, 5);
+    pass(timer, track, 3, 9);
+    expect(timer.fill(snap, 10).bestSplits).toEqual([{ gate: 1, time: 2 }, { gate: 2, time: 5 }, { gate: 3, time: 9 }]);
+    timer.reset();
+    expect(timer.fill(snap, 0).bestSplits).toEqual([]);
+  });
+});

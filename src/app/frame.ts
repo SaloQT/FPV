@@ -136,11 +136,21 @@ export function makePerfSource(get: () => AppCtx | null): PerfSource {
       out.gpuMs = st.gpuMs ?? NaN;
       out.renderWidth = st.renderWidth;
       out.renderHeight = st.renderHeight;
+      out.outWidth = st.outWidth;
       out.scale = st.dynamicScale;
       out.physicsMs = c.session.stats.physicsMs;
       out.physicsSteps = c.session.stats.stepsThisFrame;
-      out.quality = c.store.get().quality;
+      const settings = c.store.get();
+      out.quality = settings.quality;
+      out.performance240 = settings.performance240;
       out.adapter = st.adapter;
+      out.software = c.renderer.adapter.software;
+      out.refreshHz = st.displayHz;
+      out.targetFps = st.targetFps;
+      out.frameCap = st.frameCap;
+      out.driver = st.dynamicDriver;
+      out.errors = st.errorCount;
+      for (let i = 0; i < out.passMs.length; i++) out.passMs[i] = st.passMs[i];
     },
   };
 }

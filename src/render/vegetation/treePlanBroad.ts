@@ -36,9 +36,9 @@ function foliageFromTips(rng: Rng, tips: readonly Tip[], fillers: number, minFil
 }
 
 const OAK_LEVELS: readonly Level[] = [
-  { count: 4, start: 0.22, end: 0.88, angle: [0.55, 1.05], length: [0.34, 0.52], segs: 5, bend: 0.3, wobble: 0.55, radius: 0.55, tipRadius: 0.028 },
-  { count: 3, start: 0.18, end: 0.92, angle: [0.5, 1.0], length: [0.4, 0.6], segs: 4, bend: 0.1, wobble: 0.55, radius: 0.6, tipRadius: 0.016 },
-  { count: 3, start: 0.15, end: 0.95, angle: [0.4, 0.9], length: [0.45, 0.7], segs: 2, bend: -0.1, wobble: 0.4, radius: 0.65, tipRadius: 0.008 },
+  { count: 4, start: 0.22, end: 0.88, angle: [0.55, 1.05], length: [0.34, 0.52], segs: 6, bend: 0.3, wobble: 1.5, radius: 0.5, tipRadius: 0.02 },
+  { count: 3, start: 0.18, end: 0.92, angle: [0.5, 1.0], length: [0.4, 0.62], segs: 5, bend: 0.1, wobble: 1.5, radius: 0.58, tipRadius: 0.012 },
+  { count: 3, start: 0.15, end: 0.95, angle: [0.4, 0.9], length: [0.45, 0.72], segs: 3, bend: -0.1, wobble: 1.2, radius: 0.62, tipRadius: 0.006 },
 ];
 
 /** Spreading broadleaf: short trunk with a root flare forking into limbs, then secondary and tertiary branches and twigs; leaf clusters at the twig ends. */
@@ -50,7 +50,7 @@ export function oakPlan(rng: Rng, height: number): TreePlan {
     const y = -0.3 + ((fy + 0.3) * i) / n, f = Math.max(y, 0) / fy;
     return [Math.sin(az0) * 0.5 * f * f + 0.05 * Math.sin(f * 7), y, Math.cos(az0) * 0.5 * f * f + 0.05 * Math.sin(f * 5)] as Vec3;
   });
-  const r0 = 0.028 * height + 0.05;
+  const r0 = 0.022 * height + 0.04;
   const trunk: Limb = { pts: trunkPts, radii: trunkPts.map((p) => lerp(r0, r0 * 0.7, Math.max(p[1], 0) / fy) * (1 + 0.55 * Math.exp(-Math.max(p[1], 0) / 0.5))), order: 0 };
   const limbs: Limb[] = [trunk], tips: Tip[] = [];
   const nl = rng.int(5, 6);
@@ -59,21 +59,21 @@ export function oakPlan(rng: Rng, height: number): TreePlan {
     const low = i % 2 === 1;
     const length = height * (low ? rng.range(0.42, 0.52) : rng.range(0.38, 0.5));
     const from = trunkPts[n - (i % 3)];
-    const pts = growPath(rng, from, pol(az, low ? rng.range(0.45, 0.8) : rng.range(1.05, 1.35)), length, 7, (s) => (low ? 0.55 : 0.9) - 1.5 * s, 0.5);
-    const limb: Limb = { pts, radii: taperRadii(r0 * 0.5, 0.06, pts.length, 0.8), order: 1 };
+    const pts = growPath(rng, from, pol(az, low ? rng.range(0.45, 0.8) : rng.range(1.05, 1.35)), length, 8, (s) => (low ? 0.55 : 0.9) - 1.5 * s, 1.4);
+    const limb: Limb = { pts, radii: taperRadii(r0 * 0.45, 0.032, pts.length, 0.8), order: 1 };
     limbs.push(limb);
     sprout(rng, limb, { levels: OAK_LEVELS, order0: 1, tipRadius: { 3: 0.95, 4: 0.7 }, tipFrom: 3, limbs, tips });
   }
   const f = foliageFromTips(rng, tips, 30, trunkPts[n][1] + 0.2, [0.5, 1]);
   return {
     species: 'oak', height, crownC: f.c, crownR: f.r, trunkRadius: r0, bark: KIND.bark,
-    limbs, fronds: [], clusters: f.clusters, cardsPerCluster: 8, cardSize: 0.27, radial: false, foliage: KIND.leaf, trunkSides: [10, 6, 4],
+    limbs, fronds: [], clusters: f.clusters, cardsPerCluster: 11, cardSize: 0.25, radial: false, foliage: KIND.leaf, trunkSides: [10, 6, 4],
   };
 }
 
 const BIRCH_LEVELS: readonly Level[] = [
-  { count: 3, start: 0.25, end: 0.9, angle: [0.5, 0.95], length: [0.4, 0.6], segs: 4, bend: -0.9, wobble: 0.4, radius: 0.55, tipRadius: 0.012 },
-  { count: 3, start: 0.2, end: 0.95, angle: [0.45, 0.9], length: [0.4, 0.65], segs: 3, bend: -1.2, wobble: 0.4, radius: 0.6, tipRadius: 0.007 },
+  { count: 3, start: 0.25, end: 0.9, angle: [0.5, 0.95], length: [0.4, 0.6], segs: 4, bend: -0.9, wobble: 1.0, radius: 0.55, tipRadius: 0.01 },
+  { count: 3, start: 0.2, end: 0.95, angle: [0.45, 0.9], length: [0.4, 0.65], segs: 3, bend: -1.2, wobble: 1.0, radius: 0.6, tipRadius: 0.006 },
 ];
 
 /** Slim white-barked birch: thin curving trunk, ascending limbs with long drooping twigs and light, sparse leaf clusters. */
@@ -104,7 +104,7 @@ export function birchPlan(rng: Rng, height: number): TreePlan {
   const f = foliageFromTips(rng, tips, 8, height * 0.4, [0.6, 1]);
   return {
     species: 'birch', height, crownC: f.c, crownR: f.r, trunkRadius: r0, bark: KIND.birchBark,
-    limbs, fronds: [], clusters: f.clusters, cardsPerCluster: 7, cardSize: 0.22, radial: false, foliage: KIND.leaf, trunkSides: [8, 5, 4],
+    limbs, fronds: [], clusters: f.clusters, cardsPerCluster: 9, cardSize: 0.2, radial: false, foliage: KIND.leaf, trunkSides: [8, 5, 4],
   };
 }
 

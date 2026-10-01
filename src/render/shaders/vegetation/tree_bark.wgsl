@@ -41,11 +41,11 @@ fn barkAlbedo(h : f32, p : vec3f, cls : u32, height : f32, seed : f32, twig : bo
     lich = 0.25;
   } else if (cls == CLASS_PINE) {
     let grey = mix(vec3f(0.028, 0.022, 0.019), vec3f(0.095, 0.07, 0.055), h);
-    let flake = mix(vec3f(0.16, 0.07, 0.03), vec3f(0.3, 0.14, 0.055), h);
+    let flake = mix(vec3f(0.12, 0.062, 0.032), vec3f(0.21, 0.105, 0.05), h);
     col = mix(grey, flake, smoothstep(2.5, 8.0, height) * select(1.0, 0.6, twig)) * tone;
     lich = 0.5;
   } else {
-    let plate = mix(vec3f(0.03, 0.025, 0.021), vec3f(0.105, 0.085, 0.068), h);
+    let plate = mix(vec3f(0.041, 0.036, 0.031), vec3f(0.11, 0.095, 0.081), h);
     col = select(plate, vec3f(0.075, 0.06, 0.047) * (0.6 + 0.5 * h), twig) * tone;
     lich = 1.0;
   }

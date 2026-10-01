@@ -3,6 +3,12 @@ import { fillGateFrame, gateCrossing, makeGateFrame, type GateFrame } from './ga
 
 export type GateEvent = 'none' | 'gate' | 'lap' | 'finish' | 'missed';
 
+/** A gate crossing in the best lap: `time` is seconds since the lap began. */
+export interface SplitMark {
+  gate: number;
+  time: number;
+}
+
 /** Race state for the HUD. `GateTimer.fill` rewrites it in place. Times are seconds, NaN means "none yet". */
 export interface RaceSnapshot {
   /** The track has gates, so the race panel applies. */
@@ -32,13 +38,15 @@ export interface RaceSnapshot {
   totalMissed: number;
   /** Completed lap times in order (owned by the timer; do not mutate). */
   lapTimes: readonly number[];
+  /** Where the best lap crossed each gate, in course order; the last mark is the lap's end. Empty until a lap is done. */
+  bestSplits: readonly SplitMark[];
 }
 
 export function createRaceSnapshot(): RaceSnapshot {
   return {
     active: false, started: false, finished: false, gateCount: 0, nextGate: 0, gatesPassed: 0, lap: 1, laps: 1,
     lapTime: 0, totalTime: 0, lastLap: NaN, bestLap: NaN, splitDelta: NaN, splitAt: -Infinity,
-    missedGate: -1, missedAt: -Infinity, totalMissed: 0, lapTimes: [],
+    missedGate: -1, missedAt: -Infinity, totalMissed: 0, lapTimes: [], bestSplits: [],
   };
 }
 
@@ -62,6 +70,7 @@ export class GateTimer {
   private readonly curSplits: Float64Array;
   private readonly bestSplits: Float64Array;
   private lapTimes: number[] = [];
+  private bestMarks: SplitMark[] = [];
   private next = 0;
   private started = false;
   private finished = false;
@@ -106,6 +115,7 @@ export class GateTimer {
   reset(): void {
     this.lastGate = -1;
     this.lapTimes = [];
+    this.bestMarks = [];
     this.next = 0;
     this.started = false;
     this.finished = false;
@@ -160,6 +170,7 @@ export class GateTimer {
     out.missedAt = this.missedAt;
     out.totalMissed = this.totalMissed;
     out.lapTimes = this.lapTimes;
+    out.bestSplits = this.bestMarks;
     return out;
   }
 
@@ -186,19 +197,28 @@ export class GateTimer {
     return !this.loop && g === n - 1 ? this.completeLap(t) : 'gate';
   }
 
+  /** Copies the lap just flown as the best one, listed in the order the gates are met (the start line last on a circuit). */
+  private keepBest(): void {
+    const n = this.gateCount;
+    this.bestSplits.set(this.curSplits);
+    this.bestMarks = [];
+    const last = this.loop ? n : n - 1;
+    for (let k = 1; k <= last; k++) this.bestMarks.push({ gate: k % n, time: this.curSplits[k % n] });
+  }
+
   private completeLap(t: number): GateEvent {
     const n = this.gateCount;
     const lapTime = t - this.lapStart;
     this.curSplits[this.endIndex] = lapTime;
     if (Number.isNaN(this.bestLap)) {
       this.bestLap = lapTime;
-      this.bestSplits.set(this.curSplits);
+      this.keepBest();
     } else {
       this.splitDelta = lapTime - this.bestSplits[this.endIndex];
       this.splitAt = t;
       if (lapTime < this.bestLap) {
         this.bestLap = lapTime;
-        this.bestSplits.set(this.curSplits);
+        this.keepBest();
       }
     }
     this.lapTimes.push(lapTime);

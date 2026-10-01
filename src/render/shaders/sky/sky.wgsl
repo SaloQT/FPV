@@ -8,9 +8,10 @@
 // composited as  colour * a + rgb * CLOUD_STORE_SCALE. T is the LUT transmittance from the camera to the top of the atmosphere along
 // the pixel's own direction, so discs redden and dim toward the horizon. Stars are drawn afterwards by sky/stars.wgsl. The total is
 // scaled (hue kept) so no channel exceeds SUN_MAX_EXPOSED = 58976 (the fp16 value just under 59000; fp16 holds 65504).
-// The one exception to "pre-exposure exactly once" is the moon disc: when the auto exposure is opened up for a night landscape
-// (pre-exposure ~1e2) a full moon would be 5e5 and clip to a flat white disc, so its exposure is capped at MOON_EXPOSED_PEAK for a
-// MOON_REFERENCE_NITS highland patch (a local-adaptation stand-in; all ratios inside the disc, and so the maria, are preserved).
+// The one exception to "pre-exposure exactly once" is the moon disc: when the camera is opened up for a night landscape (total exposure ~50
+// per nit, see nightExposure) a quarter moon would be 1e5 and clip to a flat white disc, so its exposure is capped so that a
+// MOON_REFERENCE_NITS highland patch ends at MOON_SCENE_PEAK in scene-linear units (a local-adaptation stand-in; all ratios inside the
+// disc, and so the maria, are preserved).
 //
 // Group 2: 0 AtmosParams, 1 sky-view (sun + night), 2 sky-view (moon only), 3 Milky Way map, 4 clouds (rgb nits / CLOUD_STORE_SCALE, a transmittance).
 #include "common/world_bindings.wgsl"
@@ -30,7 +31,7 @@
 const SUN_MAX_EXPOSED : f32 = 58976.0;
 const SUN_LIMB_U : vec3f = vec3f(0.55, 0.66, 0.80);
 const MOON_REFERENCE_NITS : f32 = 5000.0;
-const MOON_EXPOSED_PEAK : f32 = 2.5;
+const MOON_SCENE_PEAK : f32 = 4.0;
 
 struct VsOut {
   @builtin(position) pos : vec4f,
@@ -101,7 +102,7 @@ fn fs(in : VsOut) -> @location(0) vec4f {
   var col = skyLuts(dir, r);
   if (aboveHorizon > 0.5) {
     let moon = moonRadiance(dir, pixelAngle);
-    let moonGain = min(1.0, MOON_EXPOSED_PEAK / (MOON_REFERENCE_NITS * frame.params.y));
+    let moonGain = min(1.0, MOON_SCENE_PEAK / (MOON_REFERENCE_NITS * nightExposure(frame.params.y)));
     let zodiacal = zodiacalNits(dir, frame.sunDir.xyz, ap.eclNorth.xyz) * (frame.sky.w * ap.flags.y);
     col += trans * ((milkyWay(dir) + zodiacal) * (1.0 - moon.a) + moon.rgb * (moon.a * moonGain));
     col += trans * sunDisc(dir, pixelAngle);

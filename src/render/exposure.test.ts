@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AstroState } from '../contracts';
-import { ExposureController, estimateSceneLuminance, preExposureFor, skyIlluminanceLux } from './exposure';
+import { CPU_EXPOSURE_KEY, ExposureController, MAX_PRE, estimateSceneLuminance, preExposureFor, skyIlluminanceLux } from './exposure';
 
 const deg = (d: number) => (d * Math.PI) / 180;
 
@@ -53,9 +53,10 @@ describe('estimateSceneLuminance', () => {
 });
 
 describe('preExposureFor', () => {
-  it('maps a mid-grey surface to 0.25 and clamps to [1e-6, 1e2]', () => {
-    expect(preExposureFor(1000) * 1000).toBeCloseTo(0.25, 6);
-    expect(preExposureFor(1e-9)).toBe(100);
+  it('maps a mid-grey surface to 0.25 and clamps to [1e-6, MAX_PRE]', () => {
+    expect(preExposureFor(1000) * 1000).toBeCloseTo(CPU_EXPOSURE_KEY, 6);
+    expect(preExposureFor(1e-9)).toBe(MAX_PRE);
+    expect(MAX_PRE).toBe(1e3);
     expect(preExposureFor(1e12)).toBe(1e-6);
   });
 });

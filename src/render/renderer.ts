@@ -1,7 +1,7 @@
 import type { AstroState, CameraState, QuadState, Settings } from '../contracts';
-import { qualityProfile, type FrameInfo, type PostProcessor, type RenderContext, type RenderModule, type SceneData } from './contracts';
-import { recordError, requestDevice, type DeviceSetup } from './deviceSetup';
-import { DynamicResolutionController } from './dynamicRes';
+import type { FrameInfo, PostProcessor, RenderContext, RenderModule, SceneData } from './contracts';
+import { recordError, requestDevice, type AdapterDetails, type DeviceSetup } from './deviceSetup';
+import { DynamicResolutionController, resolveTargetFps } from './dynamicRes';
 import { ExposureController } from './exposure';
 import { FrameGraph } from './frameGraph';
 import {
@@ -9,11 +9,12 @@ import {
   type FrameUniformInput, type TerrainUniformInfo,
 } from './frameUniforms';
 import { createGBuffer, destroyGBuffer, renderSize } from './gbuffer';
-import { GpuTimer } from './gpuTimer';
+import { GpuTimer, PASS_NAMES } from './gpuTimer';
 import { DeferredLighting } from './lighting';
 import { ModuleHost } from './moduleHost';
 import { createDefaultModules } from './modules';
 import { createPostProcessor } from './post';
+import { resolveQuality, sameProfile } from './qualityPresets';
 import { SceneRegistry } from './rtRegistry';
 import { resolveShader, type Defines } from './shaderLib';
 import { WorldResources } from './worldBindings';
@@ -34,6 +35,17 @@ export interface RenderStats {
   /** GPU time of the encodeRT section, null without timestamps or without an RT module. */
   rtMs: number | null;
   adapter: string;
+  /** GPU milliseconds per frame section, in `PASS_NAMES` order; NaN without timestamp queries. */
+  passMs: number[];
+  /** Display refresh rate measured at startup (0 until `setDisplayRefresh` was called). */
+  displayHz: number;
+  /** The frame rate dynamic resolution aims at: the setting, or the display refresh for 0, never above the frame cap. */
+  targetFps: number;
+  frameCap: number;
+  /** What the dynamic-resolution controller decides on: GPU timestamps, frame times, or nothing when it is off. */
+  dynamicDriver: 'gpu' | 'frame-time' | 'off';
+  /** Every GPU, shader and module error so far (`errors` keeps only the first 20). */
+  errorCount: number;
 }
 
 export interface FrameInput {
@@ -56,6 +68,9 @@ export class Renderer {
   readonly errors: string[] = [];
   /** Set when the device was lost for a reason other than destroy(). */
   lost: string | null = null;
+  /** Called once when the device is lost; the app offers to re-create the renderer. */
+  onLost: ((reason: string, message: string) => void) | null = null;
+  readonly adapter: AdapterDetails;
 
   private readonly rc: RenderContext;
   private readonly world: WorldResources;
@@ -78,6 +93,7 @@ export class Renderer {
   private frameIndex = -1;
   private lastStart = 0;
   private destroyed = false;
+  private errorCount = 0;
 
   static async create(canvas: HTMLCanvasElement, settings: Settings, modules?: RenderModule[], post?: PostProcessor): Promise<Renderer> {
     const setup = await requestDevice();
@@ -94,11 +110,13 @@ export class Renderer {
   private constructor(private readonly canvas: HTMLCanvasElement, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor) {
     const device = setup.device;
     this.device = device;
-    device.onuncapturederror = (e) => recordError(this.errors, `WebGPU uncaptured error: ${e.error.message}`);
+    this.adapter = setup.adapter;
+    device.onuncapturederror = (e) => this.report(`WebGPU uncaptured error: ${e.error.message}`);
     void device.lost.then((l) => {
       if (l.reason === 'destroyed') return;
       this.lost = `${l.reason}: ${l.message}`;
-      recordError(this.errors, `WebGPU device lost (${this.lost})`);
+      this.report(`WebGPU device lost (${this.lost})`);
+      this.onLost?.(l.reason, l.message);
     });
     const context = canvas.getContext('webgpu');
     if (!context) throw new Error('Could not create a WebGPU canvas context.');
@@ -110,8 +128,8 @@ export class Renderer {
     this.outH = Math.max(1, canvas.height);
     this.world = new WorldResources(device);
     this.timer = new GpuTimer(device, setup.features.has('timestamp-query'));
-    this.host = new ModuleHost(modules, (m) => recordError(this.errors, m));
-    const quality = qualityProfile(settings.quality);
+    this.host = new ModuleHost(modules, (m) => this.report(m));
+    const quality = resolveQuality(settings);
     const size = renderSize(this.outW, this.outH, this.clampScale(settings.renderScale), 1);
     const frameBuffer = device.createBuffer({ label: 'frame uniforms', size: FRAME_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const stages = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE;
@@ -132,7 +150,8 @@ export class Renderer {
     this.graph.bind(this.rc.gbuf);
     this.stats = {
       frameIndex: 0, cpuMs: 0, gpuMs: null, fps: 0, renderWidth: size.width, renderHeight: size.height, outWidth: this.outW, outHeight: this.outH,
-      dynamicScale: 1, preExposure: 1, rtMs: null, adapter: setup.adapterName,
+      dynamicScale: 1, preExposure: 1, rtMs: null, adapter: setup.adapterName, passMs: PASS_NAMES.map(() => NaN), displayHz: 0,
+      targetFps: resolveTargetFps(settings.targetFps, 0, settings.frameCap), frameCap: settings.frameCap, dynamicDriver: 'off', errorCount: 0,
     };
   }
 
@@ -151,14 +170,35 @@ export class Renderer {
     this.host.setScene(this.rc, scene);
   }
 
-  /** Quality tier, render scale, dynamic resolution and target fps can all change at runtime. */
+  /** Quality tier or preset, render scale, dynamic resolution, target fps and frame cap can all change at runtime. */
   setSettings(s: Settings): void {
     const prev = this.rc.settings;
-    const tierChanged = s.quality !== this.rc.quality.tier;
+    const profile = resolveQuality(s);
+    const profileChanged = !sameProfile(profile, this.rc.quality);
     this.rc.settings = s;
-    if (tierChanged) this.rc.quality = qualityProfile(s.quality);
-    if (tierChanged || s.targetFps !== prev.targetFps || s.dynamicResolution !== prev.dynamicResolution) this.dyn.reset();
-    this.retarget(tierChanged);
+    if (profileChanged) this.rc.quality = profile;
+    if (profileChanged || s.targetFps !== prev.targetFps || s.frameCap !== prev.frameCap || s.dynamicResolution !== prev.dynamicResolution) this.dyn.reset();
+    this.retarget(profileChanged);
+  }
+
+  /** The display refresh rate measured at startup (Hz). It is the default frame-rate target and what the dynamic-resolution controller trusts. */
+  setDisplayRefresh(hz: number): void {
+    this.stats.displayHz = hz;
+    this.dyn.setMeasuredRefreshHz(hz);
+    this.dyn.reset();
+  }
+
+  /** Test hook: reports the device as lost exactly the way a driver reset would, without actually losing it. */
+  simulateLoss(message: string): void {
+    if (this.lost || this.destroyed) return;
+    this.lost = `unknown: ${message}`;
+    this.report(`WebGPU device lost (${this.lost})`);
+    this.onLost?.('unknown', message);
+  }
+
+  /** Best known display refresh period in ms (0 when nothing was measured or observed yet). */
+  get displayPeriodMs(): number {
+    return this.dyn.displayPeriodMs;
   }
 
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
@@ -237,7 +277,7 @@ export class Renderer {
     if (!readback) {
       this.frameIndex++;
       this.exposure.update(f.dt, f.astro, f.camera.pos[1] + s.observer.altitudeM);
-      this.dyn.update(this.timer.gpuMs, frameMs, s.targetFps, s.dynamicResolution);
+      this.dyn.update(this.timer.gpuMs, frameMs, resolveTargetFps(s.targetFps, this.stats.displayHz, s.frameCap), s.dynamicResolution);
       this.retarget(false);
       this.updateStats(frameMs);
     }
@@ -292,6 +332,12 @@ export class Renderer {
     st.outWidth = this.outW; st.outHeight = this.outH;
     st.dynamicScale = this.dyn.scale;
     st.preExposure = this.exposure.preExposure;
+    const s = this.rc.settings;
+    st.targetFps = resolveTargetFps(s.targetFps, st.displayHz, s.frameCap);
+    st.frameCap = s.frameCap;
+    st.dynamicDriver = !s.dynamicResolution ? 'off' : this.dyn.gpuDriven ? 'gpu' : 'frame-time';
+    st.errorCount = this.errorCount;
+    for (let i = 0; i < st.passMs.length; i++) st.passMs[i] = this.timer.passMs[i];
   }
 
   private clampScale(scale: number): number {
@@ -305,7 +351,7 @@ export class Renderer {
       const lines = code.split('\n');
       for (const m of info.messages) {
         const text = `WGSL ${path}:${m.lineNum}:${m.linePos} ${m.message}\n    ${lines[m.lineNum - 1] ?? ''}`;
-        if (m.type === 'error') recordError(this.errors, text);
+        if (m.type === 'error') this.report(text);
         else if (m.type === 'warning') console.warn(text);
       }
     });
@@ -315,6 +361,11 @@ export class Renderer {
   private reportOnce(key: string, e: unknown): void {
     if (this.reported.has(key)) return;
     this.reported.add(key);
-    recordError(this.errors, `renderer ${key} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    this.report(`renderer ${key} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+  }
+
+  private report(message: string): void {
+    this.errorCount++;
+    recordError(this.errors, message);
   }
 }

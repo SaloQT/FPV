@@ -1,18 +1,27 @@
-const MARKS = 4;
+/** Frame sections timed individually; section i runs from mark i to mark i + 1. */
+export const PASS_NAMES = ['pre', 'gbuffer', 'rt', 'lighting', 'sky+fwd', 'post'] as const;
+export type PassName = (typeof PASS_NAMES)[number];
+
+const MARKS = PASS_NAMES.length + 1;
 const RING = 3;
 const BYTES = MARKS * 8;
 
-export const MARK = { FrameBegin: 0, RtBegin: 1, RtEnd: 2, FrameEnd: 3 } as const;
+/** Mark indices: FrameBegin, then the end of each section in PASS_NAMES order. */
+export const MARK = { FrameBegin: 0, PreEnd: 1, GBufferEnd: 2, RtEnd: 3, LightingEnd: 4, OverlayEnd: 5, FrameEnd: 6 } as const;
 export type Mark = (typeof MARK)[keyof typeof MARK];
 
 /**
- * GPU frame timing with timestamp queries. Marks are empty compute passes (the portable way to stamp between passes); results are
- * resolved into a ring of 3 mappable buffers and read asynchronously, so a value is typically 2-3 frames old and the CPU never stalls.
- * Every method is a no-op and both results stay null when the device lacks `timestamp-query`.
+ * GPU frame timing with timestamp queries. Marks are empty compute passes (the portable way to stamp between passes of any kind); the
+ * results are resolved into a ring of 3 mappable buffers and read asynchronously, so a value is typically 2-3 frames old and the CPU
+ * never stalls. Every method is a no-op and all results stay null/NaN when the device lacks `timestamp-query`. Browsers coarsen
+ * timestamps (about 100 us) unless developer features are on, and a GPU may overlap neighbouring passes, so a section's time is a
+ * close estimate, not an exact figure.
  */
 export class GpuTimer {
   gpuMs: number | null = null;
   rtMs: number | null = null;
+  /** Milliseconds per section (PASS_NAMES order), NaN until the first readback. */
+  readonly passMs: number[] = PASS_NAMES.map(() => NaN);
   private readonly querySet: GPUQuerySet | null = null;
   private readonly resolveBuffer: GPUBuffer | null = null;
   private readonly readback: GPUBuffer[] = [];
@@ -71,8 +80,13 @@ export class GpuTimer {
   }
 
   private store(t: BigUint64Array): void {
-    const ms = (a: number, b: number): number | null => (t[b] > t[a] ? Number(t[b] - t[a]) / 1e6 : null);
-    this.gpuMs = ms(MARK.FrameBegin, MARK.FrameEnd);
-    this.rtMs = ms(MARK.RtBegin, MARK.RtEnd);
+    this.gpuMs = sectionMs(t, MARK.FrameBegin, MARK.FrameEnd);
+    this.rtMs = sectionMs(t, MARK.GBufferEnd, MARK.RtEnd);
+    for (let i = 0; i < PASS_NAMES.length; i++) this.passMs[i] = sectionMs(t, i, i + 1) ?? NaN;
   }
+}
+
+/** Time between two timestamps in ms; null when the clock went backwards (a timestamp that was not written reads as 0). */
+export function sectionMs(t: ArrayLike<bigint>, a: number, b: number): number | null {
+  return t[b] > t[a] && t[a] > 0n ? Number(t[b] - t[a]) / 1e6 : null;
 }
