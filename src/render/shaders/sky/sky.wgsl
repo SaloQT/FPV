@@ -4,10 +4,10 @@
 // UNIT CHAIN: everything below is radiance in nits (cd/m2) until the very last line, where it is multiplied by frame.params.y
 // (pre-exposure) exactly once. Sky = sky-view LUT (sun + moon scattering + airglow, lux -> nits, see sky/skyview.wgsl); sun disc =
 // E_sun[lux] / (pi R^2 [sr]) * limb darkening * T; moon = albedo * E_sun / pi * Lommel-Seeliger * T (sky/moon.wgsl); Milky Way = baked
-// map [nits] * T; clouds = (inscatter [nits] / CLOUD_STORE_SCALE, transmittance) composited as  colour * a + rgb * CLOUD_STORE_SCALE. T is
-// the LUT transmittance from the camera to the top of the atmosphere along the pixel's own direction, so discs redden and dim toward
-// the horizon. Stars are drawn afterwards by sky/stars.wgsl. The total is scaled (hue kept) so no channel exceeds SUN_MAX_EXPOSED =
-// 58976 (the fp16 value just under 59000; fp16 holds 65504).
+// map [nits] * T; zodiacal light = S10 model (sky/night_light.wgsl) * T; clouds = (inscatter [nits] / CLOUD_STORE_SCALE, transmittance)
+// composited as  colour * a + rgb * CLOUD_STORE_SCALE. T is the LUT transmittance from the camera to the top of the atmosphere along
+// the pixel's own direction, so discs redden and dim toward the horizon. Stars are drawn afterwards by sky/stars.wgsl. The total is
+// scaled (hue kept) so no channel exceeds SUN_MAX_EXPOSED = 58976 (the fp16 value just under 59000; fp16 holds 65504).
 // The one exception to "pre-exposure exactly once" is the moon disc: when the auto exposure is opened up for a night landscape
 // (pre-exposure ~1e2) a full moon would be 5e5 and clip to a flat white disc, so its exposure is capped at MOON_EXPOSED_PEAK for a
 // MOON_REFERENCE_NITS highland patch (a local-adaptation stand-in; all ratios inside the disc, and so the maria, are preserved).
@@ -17,6 +17,7 @@
 #include "common/atmosphere_sample.wgsl"
 #include "sky/atmos_params.wgsl"
 #include "sky/atmos_uniforms.wgsl"
+#include "sky/night_light.wgsl"
 
 @group(2) @binding(0) var<uniform> ap : AtmosParams;
 @group(2) @binding(1) var skySunTex : texture_2d<f32>;
@@ -101,7 +102,8 @@ fn fs(in : VsOut) -> @location(0) vec4f {
   if (aboveHorizon > 0.5) {
     let moon = moonRadiance(dir, pixelAngle);
     let moonGain = min(1.0, MOON_EXPOSED_PEAK / (MOON_REFERENCE_NITS * frame.params.y));
-    col += trans * (milkyWay(dir) * (1.0 - moon.a) + moon.rgb * (moon.a * moonGain));
+    let zodiacal = zodiacalNits(dir, frame.sunDir.xyz, ap.eclNorth.xyz) * (frame.sky.w * ap.flags.y);
+    col += trans * ((milkyWay(dir) + zodiacal) * (1.0 - moon.a) + moon.rgb * (moon.a * moonGain));
     col += trans * sunDisc(dir, pixelAngle);
   }
 

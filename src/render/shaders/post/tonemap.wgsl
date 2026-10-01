@@ -1,5 +1,9 @@
-// Display transform: Stephen Hill's fit of the ACES RRT+ODT (sRGB/D65 in and out), highlight desaturation, soft gamut clamp, FPV-camera grade, sRGB OETF.
+// Display transform: a hue-preserving filmic curve on luminance (Narkowicz's ACES fit), sensor-style highlight desaturation, a
+// path-to-white gamut compression, a mild FPV-camera grade and the sRGB OETF.
 // Input is scene-linear light already multiplied by the exposure ratio (0.22 ~ mid grey); output of `tonemap` is display-linear in [0, 1].
+// The curve acts on luminance only and the colour keeps its chromaticity, so hue does not skew with brightness the way a per-channel curve
+// does (blue sky drifting to cyan, foliage to neon yellow-green). A colour that leaves the gamut slides along the line to the grey of
+// the same luminance instead of clipping one channel.
 
 struct Grade {
   preScale : f32,
@@ -9,48 +13,28 @@ struct Grade {
   desatEnd : f32,
 };
 
-// preScale 1/0.6 is the fit's own exposure convention; saturation and contrast mimic an FPV camera's punchy ISP tuning.
-const GRADE : Grade = Grade(1.6666667, 1.15, 0.2, 3.0, 30.0);
-
-// WGSL matrices are column-major: these are the transposes of the published row-major matrices.
-const ACES_IN : mat3x3f = mat3x3f(
-  vec3f(0.59719, 0.07600, 0.02840),
-  vec3f(0.35458, 0.90834, 0.13383),
-  vec3f(0.04823, 0.01566, 0.83777));
-const ACES_OUT : mat3x3f = mat3x3f(
-  vec3f(1.60475, -0.10208, -0.00327),
-  vec3f(-0.53108, 1.10813, -0.07276),
-  vec3f(-0.07367, -0.00605, 1.07602));
-
-fn rrtOdtFit(v : vec3f) -> vec3f {
-  let a = v * (v + 0.0245786) - 0.000090537;
-  let b = v * (0.983729 * v + 0.4329510) + 0.238081;
-  return a / b;
-}
+// preScale 0.64 puts the 0.22 key at about 0.2 display-linear (sRGB 0.48); saturation is the camera's colour matrix strength;
+// desat: a scene luminance range over which the sensor saturates all three channels and the colour burns out to white.
+const GRADE : Grade = Grade(0.64, 1.05, 0.15, 4.0, 40.0);
 
 fn lumaOf(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 
-// Pull an out-of-gamut colour towards its own luminance until no channel is negative, then clip the top.
-fn gamutClamp(c : vec3f) -> vec3f {
-  let l = max(lumaOf(c), 0.0);
-  let m = min(c.r, min(c.g, c.b));
-  var o = c;
-  if (m < 0.0) { o = vec3f(l) + (c - vec3f(l)) * (l / max(l - m, 1e-5)); }
-  return clamp(o, vec3f(0.0), vec3f(1.0));
-}
-
-// Very bright light burns to white (the sensor saturates all three channels), not to a saturated colour.
-fn highlightDesaturate(c : vec3f) -> vec3f {
-  let l = lumaOf(c);
-  let w = smoothstep(GRADE.desatStart, GRADE.desatEnd, l);
-  return mix(c, vec3f(l), w);
+// Odd around zero, so sensor noise on a black pixel averages to black instead of rectifying into a lifted floor. Slope at 0 is 0.03 / 0.14.
+fn filmicLuma(x : f32) -> f32 {
+  let a = abs(x) * GRADE.preScale;
+  return sign(x) * a * (2.51 * a + 0.03) / (a * (2.43 * a + 0.59) + 0.14);
 }
 
 fn tonemap(sceneLinear : vec3f) -> vec3f {
-  let c = highlightDesaturate(max(sceneLinear, vec3f(0.0)) * GRADE.preScale);
-  let t = gamutClamp(ACES_OUT * rrtOdtFit(ACES_IN * c));
-  let l = lumaOf(t);
-  return clamp(vec3f(l) + (t - vec3f(l)) * GRADE.saturation, vec3f(0.0), vec3f(1.0));
+  let l = lumaOf(sceneLinear);
+  let y = min(filmicLuma(l), 1.0);
+  let k = select(GRADE.preScale * 0.03 / 0.14, y / l, abs(l) > 1e-6);
+  var o = sceneLinear * k;
+  o = mix(o, vec3f(y), smoothstep(GRADE.desatStart, GRADE.desatEnd, l));
+  o = vec3f(y) + (o - vec3f(y)) * GRADE.saturation;
+  let m = max(o.r, max(o.g, o.b));
+  if (m > 1.0) { o = vec3f(y) + (o - vec3f(y)) * ((1.0 - y) / (m - y)); }
+  return clamp(o, vec3f(0.0), vec3f(1.0));
 }
 
 fn srgbEncode(x : vec3f) -> vec3f {

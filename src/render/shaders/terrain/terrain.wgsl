@@ -102,8 +102,8 @@ fn fs(in : VsOut) -> FsOut {
   for (var k = 0; k < 3; k++) {
     if (lwt[k] > cutoff) {
       let d = dsLayerDetail(lid[k], ctx);
-      let p = lwt[k] * (0.55 + 0.9 * d.height);
-      let b = p * p;
+      let p = lwt[k] * (0.45 + 1.1 * d.height);
+      let b = p * p * p;
       albedo += b * layerMacroColor(lid[k], w.xz, w.y, maps) * d.tone;
       rough += b * d.rough;
       cavity += b * d.ao;
@@ -130,7 +130,11 @@ fn fs(in : VsOut) -> FsOut {
 
   var wet = smoothstep(0.35, 0.9, maps.w);
   if (tp.waterLevel > -1.0e8) { wet = max(wet, 1.0 - smoothstep(0.0, 1.2, w.y - tp.waterLevel)); }
-  wet *= 1.0 - lw.hi.z / max(total, 1e-4);
+  let turfShare = (lw.lo.x + lw.lo.y) / max(total, 1e-4);
+  // A wet sward is not a glossy film; blades shed water, so only bare soil, gravel and loam take the full wet response.
+  wet *= (1.0 - lw.hi.z / max(total, 1e-4)) * (1.0 - 0.8 * turfShare);
+  // Ground under a canopy sees less sky: the same darkening the blade roots get, so turf and ground share one AO response.
+  cavity *= 1.0 - 0.3 * turfShare;
 
   var out : FsOut;
   var emissive = 0.0;

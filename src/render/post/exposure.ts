@@ -4,7 +4,9 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
 /**
  * Auto exposure on the resolved image. The CPU pre-exposure (render/exposure.ts) meters a 0.18-albedo ground plane from the astronomy
  * only, so this stage corrects the residual (bright dusk sky, shade, tunnels). The metered value is the 5%-trimmed mean of a
- * log2-luminance histogram whose highlights are soft-clipped, so neither the sun disc nor a small hot spot can drive it.
+ * log2-luminance histogram whose highlights are soft-clipped, so neither the sun disc nor a small hot spot can drive it. The metering
+ * favours the centre and the ground; the exposure is then lowered (a camera's highlight protection) when the brightest decile of the
+ * frame would land far above the key, and the key itself falls with the metered scene luminance so a dark scene stays dark.
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
  */
@@ -14,6 +16,9 @@ export const EXPOSURE_TUNING = {
   evMax: 8,
   /** Trimmed-mean luminance the exposure aims for after the ratio (FPV cameras run a touch brighter than 0.18). */
   key: 0.22,
+  /** Metered scene luminance (nits) under which the key falls, and by how much per EV of scene luminance (0: constant key). */
+  keyKneeNits: 100,
+  keySlope: 0.3,
   trimLow: 0.05,
   trimHigh: 0.05,
   /** Highlights above key * 2^knee are compressed with a tanh whose asymptote is kneeWidth EV higher. */
@@ -21,6 +26,12 @@ export const EXPOSURE_TUNING = {
   kneeWidth: 1.5,
   /** Corner weight is 1 - centerBias relative to the centre. */
   centerBias: 0.6,
+  /** The bottom row weighs 1 + vertBias and the top row 1 - vertBias: the ground, not the sky, sets the exposure. */
+  vertBias: 0.5,
+  /** The brightest clipFrac of the (weighted) frame may sit at most clipEv above the key; the exposure gives up to protectMaxEv to get there. */
+  clipFrac: 0.1,
+  clipEv: 2.5,
+  protectMaxEv: 2,
   stride: 2,
   weightScale: 64,
   /** Seconds. Exposure increasing (scene got darker) is slower than decreasing (scene got brighter): AGC protects highlights first. */
@@ -30,16 +41,17 @@ export const EXPOSURE_TUNING = {
   maxDt: 0.25,
   /** Luminance of a 0.18 grey card at noon: the CPU pre-exposure there is 1 / (4 * dayReferenceNits). */
   dayReferenceNits: 5000,
-  /** Sensor gain (total exposure over the daylight reference) that is fully compensated; beyond it only overGainSlope of the deficit is. */
-  maxGainEv: 12,
-  overGainSlope: 0.85,
+  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV): a moonless night is a dark picture, not a grey one. */
+  maxGainEv: 10,
   minGainEv: -6,
-  maxRatioEv: 10,
+  /** Numeric guard only: a starlit pre-exposure is +13 EV, so a dark picture legitimately needs a ratio of 2^-17. */
+  maxRatioEv: 20,
 } as const;
 
 const T = EXPOSURE_TUNING;
 export const DAY_TOTAL_EV = -Math.log2(4 * T.dayReferenceNits);
 const LOG2_KEY = Math.log2(T.key);
+const KEY_KNEE_EV = Math.log2(T.keyKneeNits);
 const LUMA = [0.2126, 0.7152, 0.0722] as const;
 
 /** Soft-clips an absolute log2 luminance (pre-exposed units): identity below key * 2^knee, tanh compression above. */
@@ -52,18 +64,18 @@ export function binCenterEv(i: number): number {
   return T.evMin + ((i + 0.5) / T.bins) * (T.evMax - T.evMin);
 }
 
-/** Bin pair and upper-bin fraction that a luminance (pre-exposed, linear) is split between. */
+/** Bin pair and upper-bin fraction that a luminance (pre-exposed, linear) is split between; the highlights stay uncompressed here. */
 export function binCoords(luminance: number): { lo: number; hi: number; frac: number } {
-  const ev = softClipEv(Math.log2(Math.max(luminance, 1e-9)));
+  const ev = Math.log2(Math.max(luminance, 1e-9));
   const pos = Math.min(Math.max(((ev - T.evMin) / (T.evMax - T.evMin)) * T.bins - 0.5, 0), T.bins - 1);
   const lo = Math.floor(pos);
   return { lo, hi: Math.min(lo + 1, T.bins - 1), frac: pos - lo };
 }
 
-/** Metering weight for a pixel at UV (0..1): 1 in the centre, 1 - centerBias in the corners. */
+/** Metering weight for a pixel at UV (0..1, v down): 1 in the centre, 1 - centerBias in the corners, times 1 +- vertBias from the bottom to the top edge. */
 export function centerWeight(u: number, v: number): number {
   const x = u * 2 - 1, y = v * 2 - 1;
-  return 1 - T.centerBias * Math.min(Math.max((x * x + y * y) * 0.5, 0), 1);
+  return (1 - T.centerBias * Math.min(Math.max((x * x + y * y) * 0.5, 0), 1)) * (1 + T.vertBias * Math.min(Math.max(y, -1), 1));
 }
 
 /** CPU mirror of one histogram sample (integer weights exactly as the shader splits them). */
@@ -75,7 +87,7 @@ export function accumulate(hist: Float64Array | number[], luminance: number, u: 
   hist[hi] += upper;
 }
 
-/** Trimmed mean of bin-centre EVs; null when the histogram is empty. */
+/** Trimmed mean of the soft-clipped bin-centre EVs; null when the histogram is empty. */
 export function trimmedMeanEv(hist: ArrayLike<number>): number | null {
   let total = 0;
   for (let i = 0; i < T.bins; i++) total += hist[i];
@@ -84,19 +96,36 @@ export function trimmedMeanEv(hist: ArrayLike<number>): number | null {
   let cum = 0, sum = 0, kept = 0;
   for (let i = 0; i < T.bins; i++) {
     const w = Math.max(Math.min(cum + hist[i], hi) - Math.max(cum, lo), 0);
-    sum += w * binCenterEv(i);
+    sum += w * softClipEv(binCenterEv(i));
     kept += w;
     cum += hist[i];
   }
   return sum / Math.max(kept, 1e-6);
 }
 
-/** Total exposure (EV, log2 of pre-exposure * ratio) the metered mean asks for, after the sensor-gain and ratio limits. */
-export function targetTotalEv(meanEv: number, preExposure: number): number {
+/** Bin-centre EV (uncompressed) above which the brightest `fraction` of the weight lies; null when the histogram is empty. */
+export function topQuantileEv(hist: ArrayLike<number>, fraction: number = T.clipFrac): number | null {
+  let total = 0;
+  for (let i = 0; i < T.bins; i++) total += hist[i];
+  if (total <= 1) return null;
+  let cum = 0;
+  for (let i = T.bins - 1; i > 0; i--) {
+    cum += hist[i];
+    if (cum >= fraction * total) return binCenterEv(i);
+  }
+  return binCenterEv(0);
+}
+
+/**
+ * Total exposure (EV, log2 of pre-exposure * ratio) the metered mean asks for. The mean goes to a key that falls below keyKneeNits, the
+ * bright decile (`highEv`, uncompressed) may not end up more than clipEv over the key, and the sensor-gain and ratio limits apply last.
+ */
+export function targetTotalEv(meanEv: number, preExposure: number, highEv: number = -Infinity): number {
   const preEv = Math.log2(Math.max(preExposure, 1e-12));
-  let gain = LOG2_KEY - meanEv + preEv - DAY_TOTAL_EV;
-  if (gain > T.maxGainEv) gain = T.maxGainEv + T.overGainSlope * (gain - T.maxGainEv);
-  gain = Math.max(gain, T.minGainEv);
+  const keyEv = LOG2_KEY + T.keySlope * Math.min(meanEv - preEv - KEY_KNEE_EV, 0);
+  const shift = keyEv - meanEv;
+  const protectedShift = Math.max(Math.min(shift, LOG2_KEY + T.clipEv - highEv), shift - T.protectMaxEv);
+  const gain = Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV, T.minGainEv), T.maxGainEv);
   return preEv + Math.min(Math.max(DAY_TOTAL_EV + gain - preEv, -T.maxRatioEv), T.maxRatioEv);
 }
 
@@ -121,9 +150,10 @@ export function luminanceOf(r: number, g: number, b: number): number {
 
 export function exposureDefines(): Record<string, number> {
   return {
-    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth, CENTER_BIAS: T.centerBias, STRIDE: T.stride,
-    WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_HIGH: T.trimHigh, TAU_BRIGHTEN: T.tauBrighten, TAU_DARKEN: T.tauDarken,
-    DEADBAND: T.deadbandEv, MAX_DT: T.maxDt, DAY_TOTAL_EV, MAX_GAIN_EV: T.maxGainEv, OVER_GAIN_SLOPE: T.overGainSlope,
+    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
+    CENTER_BIAS: T.centerBias, VERT_BIAS: T.vertBias, CLIP_FRAC: T.clipFrac, CLIP_EV: T.clipEv, PROTECT_MAX_EV: T.protectMaxEv,
+    STRIDE: T.stride, WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_HIGH: T.trimHigh, TAU_BRIGHTEN: T.tauBrighten,
+    TAU_DARKEN: T.tauDarken, DEADBAND: T.deadbandEv, MAX_DT: T.maxDt, DAY_TOTAL_EV, MAX_GAIN_EV: T.maxGainEv,
     MIN_GAIN_EV: T.minGainEv, MAX_RATIO_EV: T.maxRatioEv,
   };
 }

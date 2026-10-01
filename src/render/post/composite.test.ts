@@ -18,24 +18,22 @@ type V3 = [number, number, number];
 const luma = (c: V3): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 const clamp = (x: number, a: number, b: number): number => Math.min(b, Math.max(a, x));
 const smooth = (a: number, b: number, x: number): number => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-const mul3 = (m: number[][], v: V3): V3 => [0, 1, 2].map((i) => m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2]) as V3;
 
-const ACES_IN = [[0.59719, 0.35458, 0.04823], [0.076, 0.90834, 0.01566], [0.0284, 0.13383, 0.83777]];
-const ACES_OUT = [[1.60475, -0.53108, -0.07367], [-0.10208, 1.10813, -0.00605], [-0.00327, -0.07276, 1.07602]];
+const filmicLuma = (x: number): number => {
+  const a = Math.abs(x) * PRE_SCALE;
+  return (Math.sign(x) * a * (2.51 * a + 0.03)) / (a * (2.43 * a + 0.59) + 0.14);
+};
 
 function tonemap(scene: V3, saturation = SATURATION): V3 {
-  const l0 = luma(scene.map((x) => Math.max(x, 0) * PRE_SCALE) as V3);
-  const w = smooth(DESAT_START, DESAT_END, l0);
-  const c = scene.map((x) => (1 - w) * Math.max(x, 0) * PRE_SCALE + w * l0) as V3;
-  const v = mul3(ACES_IN, c);
-  const fit = v.map((x) => (x * (x + 0.0245786) - 0.000090537) / (x * (0.983729 * x + 0.432951) + 0.238081)) as V3;
-  let t = mul3(ACES_OUT, fit);
-  const l = Math.max(luma(t), 0);
-  const m = Math.min(...t);
-  if (m < 0) t = t.map((x) => l + (x - l) * (l / Math.max(l - m, 1e-5))) as V3;
-  t = t.map((x) => clamp(x, 0, 1)) as V3;
-  const lt = luma(t);
-  return t.map((x) => clamp(lt + (x - lt) * saturation, 0, 1)) as V3;
+  const l = luma(scene);
+  const y = Math.min(filmicLuma(l), 1);
+  const k = Math.abs(l) > 1e-6 ? y / l : (PRE_SCALE * 0.03) / 0.14;
+  const w = smooth(DESAT_START, DESAT_END, l);
+  let o = scene.map((x) => (1 - w) * x * k + w * y) as V3;
+  o = o.map((x) => y + (x - y) * saturation) as V3;
+  const m = Math.max(...o);
+  if (m > 1) o = o.map((x) => y + (x - y) * ((1 - y) / (m - y))) as V3;
+  return o.map((x) => clamp(x, 0, 1)) as V3;
 }
 
 const encode = (x: number): number => { const c = clamp(x, 0, 1); return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; };
@@ -99,9 +97,15 @@ function gauss4(px: number, py: number, frame: number): number[] {
 }
 
 function sensorSigma(c: number, gainEv: number, amp: number): number {
-  const [shot, read, maxEv, , , shutterEv] = SENSOR;
+  const [shot, read, maxEv, , shutterEv] = SENSOR;
   const gain = 2 ** clamp(gainEv - shutterEv, 0, maxEv - shutterEv);
   return amp * Math.sqrt(shot * Math.max(c, 0) * gain + read * read * gain);
+}
+
+function sensorNoise(c: V3, px: number, py: number, frame: number, gainEv: number, amp: number): V3 {
+  const g = gauss4(px, py, frame);
+  const chroma = SENSOR[3];
+  return c.map((v, i) => sensorSigma(v, gainEv, amp) * (Math.sqrt(1 - chroma) * g[3] + Math.sqrt(chroma) * g[i])) as V3;
 }
 
 const yawQuat = (a: number): Quat => [0, Math.sin(a / 2), 0, Math.cos(a / 2)];
@@ -187,12 +191,19 @@ describe('tonemap', () => {
   it('keeps neutrals neutral and puts mid grey near the middle of the encoded range', () => {
     for (const v of [0.002, 0.05, 0.22, 1, 50]) {
       const o = tonemap([v, v, v]);
-      expect(Math.abs(o[0] - o[1])).toBeLessThan(0.01);
-      expect(Math.abs(o[1] - o[2])).toBeLessThan(0.01);
+      expect(Math.abs(o[0] - o[1])).toBeLessThan(1e-6);
+      expect(Math.abs(o[1] - o[2])).toBeLessThan(1e-6);
     }
     const mid = encode(tonemap([0.22, 0.22, 0.22])[1]);
     expect(mid).toBeGreaterThan(0.4);
     expect(mid).toBeLessThan(0.65);
+  });
+
+  it('is odd around black with a finite slope, so a noisy black pixel does not lift', () => {
+    expect(filmicLuma(-0.02)).toBeCloseTo(-filmicLuma(0.02), 12);
+    const slope = (PRE_SCALE * 0.03) / 0.14;
+    expect(filmicLuma(1e-6) / 1e-6).toBeCloseTo(slope, 3);
+    expect(tonemap([1e-4, 1e-4, 1e-4])[0] / 1e-4).toBeCloseTo(slope, 2);
   });
 
   it('burns a very bright saturated light to white and always stays in gamut', () => {
@@ -206,8 +217,33 @@ describe('tonemap', () => {
     }
   });
 
-  it('boosts saturation by the grade constant on a mid-tone colour', () => {
-    expect(SATURATION).toBeGreaterThan(1);
+  it('keeps the chromaticity of a colour whatever its brightness: no hue skew towards cyan or yellow', () => {
+    const sky: V3 = [0.1, 0.25, 0.9];
+    const dir = (o: V3): number => (o[2] - luma(o)) / (o[0] - luma(o));
+    const ref = dir(tonemap(sky));
+    for (const s of [0.01, 0.05, 0.2, 1, 1.5]) {
+      const o = tonemap(sky.map((x) => x * s) as V3);
+      expect(dir(o)).toBeCloseTo(ref, 6);
+      expect(o[2]).toBeGreaterThan(o[1]);
+      expect(o[1]).toBeGreaterThan(o[0]);
+    }
+    for (let ev = -8; ev <= 8; ev += 0.5) {
+      const o = tonemap([1, 0.5, 0.1].map((x) => x * 2 ** ev) as V3);
+      expect(o[0]).toBeGreaterThanOrEqual(o[1] - 1e-9);
+      expect(o[1]).toBeGreaterThanOrEqual(o[2] - 1e-9);
+    }
+  });
+
+  it('desaturates towards white as a colour approaches clipping, like a sensor saturating', () => {
+    const sat = (o: V3): number => (Math.max(...o) - Math.min(...o)) / Math.max(...o);
+    const c: V3 = [1, 0.6, 0.3];
+    expect(sat(tonemap(c.map((x) => x * 0.1) as V3))).toBeGreaterThan(sat(tonemap(c.map((x) => x * 6) as V3)));
+    expect(sat(tonemap(c.map((x) => x * 6) as V3))).toBeGreaterThan(sat(tonemap(c.map((x) => x * 60) as V3)));
+  });
+
+  it('applies the grade saturation to a mid-tone colour and keeps it a camera-like 1.0 to 1.08', () => {
+    expect(SATURATION).toBeGreaterThanOrEqual(1);
+    expect(SATURATION).toBeLessThanOrEqual(1.08);
     expect(CONTRAST).toBeGreaterThan(0);
     const c: V3 = [0.2, 0.15, 0.12];
     const flat = tonemap(c, 1);
@@ -351,33 +387,61 @@ describe('sensor noise model', () => {
     expect(gauss4(5, 5, 1)).not.toEqual(gauss4(5, 5, 2));
   });
 
-  it('follows videoNoise and grows with the sensor gain the auto exposure applied', () => {
+  it('follows videoNoise and grows with the sensor gain the auto exposure applied, up to the cap', () => {
+    const maxEv = SENSOR[2];
     expect(sensorSigma(0.3, 6, 0)).toBe(0);
     expect(sensorSigma(0.3, 6, 1)).toBeCloseTo(0.5 * sensorSigma(0.3, 6, 2), 12);
-    expect(sensorSigma(0.2, 12, 1)).toBeGreaterThan(4 * sensorSigma(0.2, 0, 1));
+    expect(sensorSigma(0.2, maxEv, 1)).toBeGreaterThan(4 * sensorSigma(0.2, 0, 1));
     expect(sensorSigma(0.2, -6, 1)).toBeCloseTo(sensorSigma(0.2, 0, 1), 12);
-    expect(sensorSigma(0.2, 30, 1)).toBeCloseTo(sensorSigma(0.2, 12, 1), 12);
+    expect(sensorSigma(0.2, 30, 1)).toBeCloseTo(sensorSigma(0.2, maxEv, 1), 12);
+    expect(maxEv).toBeLessThanOrEqual(10);
   });
 
   it('charges the first shutterEv of exposure gain to shutter and aperture, not to the ISO', () => {
-    const shutterEv = SENSOR[5];
+    const shutterEv = SENSOR[4];
     expect(sensorSigma(0.2, shutterEv, 1)).toBeCloseTo(sensorSigma(0.2, 0, 1), 12);
     expect(sensorSigma(0.2, shutterEv + 2, 1)).toBeGreaterThan(sensorSigma(0.2, shutterEv, 1));
   });
 
   it('has Poisson shot statistics: variance linear in the signal on top of the read-noise floor', () => {
-    const v = (c: number): number => sensorSigma(c, 4, 1) ** 2;
+    const v = (c: number): number => sensorSigma(c, 8, 1) ** 2;
     expect((v(0.4) - v(0)) / (v(0.1) - v(0))).toBeCloseTo(4, 9);
     expect(v(0)).toBeGreaterThan(0);
   });
 
-  it('keeps the daytime default grain small and the dark 12 EV grain heavy relative to signal', () => {
+  it('keeps the relative grain falling as the signal rises, small by day and visible but bounded at the darkest night', () => {
     const amp = COMPOSITE_TUNING.noiseGain * 0.15;
+    const maxEv = SENSOR[2];
     expect(sensorSigma(0.22, 0, amp)).toBeLessThan(0.004);
-    const dark = sensorSigma(0.05, 12, amp) / 0.05;
-    expect(dark).toBeGreaterThan(0.3);
-    expect(dark).toBeLessThan(1);
-    expect(sensorSigma(0.18, 12, amp) / 0.18).toBeLessThan(0.3);
+    let prev = Infinity;
+    for (const c of [0.005, 0.02, 0.05, 0.1, 0.2, 0.5, 1]) {
+      const rel = sensorSigma(c, maxEv, amp) / c;
+      expect(rel).toBeLessThan(prev);
+      prev = rel;
+    }
+    const dark = sensorSigma(0.05, maxEv, amp) / 0.05;
+    expect(dark).toBeGreaterThan(0.12);
+    expect(dark).toBeLessThan(0.45);
+    expect(sensorSigma(0.18, maxEv, amp) / 0.18).toBeLessThan(0.15);
+  });
+
+  it('makes the colour noise weaker than the luma noise, at any gain, with no channel bias', () => {
+    const N = 6000;
+    for (const gainEv of [0, 10]) {
+      let luma2 = 0, chroma2 = 0;
+      const mean = [0, 0, 0];
+      for (let i = 0; i < N; i++) {
+        const n = sensorNoise([0.1, 0.1, 0.1], i % 100, (i / 100) | 0, 3, gainEv, 1);
+        const m = (n[0] + n[1] + n[2]) / 3;
+        luma2 += m * m;
+        chroma2 += ((n[0] - m) ** 2 + (n[1] - m) ** 2 + (n[2] - m) ** 2) / 3;
+        for (let k = 0; k < 3; k++) mean[k] += n[k];
+      }
+      const sigma2 = sensorSigma(0.1, gainEv, 1) ** 2;
+      expect(chroma2 / N).toBeLessThan(0.25 * (luma2 / N));
+      expect(luma2 / N / sigma2).toBeCloseTo(1 - (SENSOR[3] * 2) / 3, 1);
+      for (let k = 0; k < 3; k++) expect(Math.abs(mean[k] / N)).toBeLessThan(0.05 * Math.sqrt(sigma2) + 1e-9);
+    }
   });
 });
 

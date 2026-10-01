@@ -6,6 +6,7 @@
 #include "terrain/ground_palette.wgsl"
 
 const DS_SIZE : f32 = 512.0;
+const DS_MEAN_LEVEL : f32 = 9.0;
 const DS_MACRO : f32 = 7.13;
 const DS_HEX_MAX_TPP : f32 = 12.0;
 const DS_NORMAL_STRENGTH : f32 = 0.8;
@@ -41,8 +42,8 @@ struct DsHex {
 
 fn dsLayerTile(layer : i32) -> f32 {
   switch (layer) {
-    case 0: { return 1.7; }
-    case 1: { return 1.9; }
+    case 0: { return 1.2; }
+    case 1: { return 1.5; }
     case 2: { return 2.3; }
     case 3: { return 1.4; }
     case 4: { return 4.5; }
@@ -89,7 +90,8 @@ fn dsAddTap(acc : ptr<function, DsTex>, layer : i32, uv : vec2f, gx : vec2f, gy 
   if (w > 0.0) { dsAccumulate(acc, dsPlain(layer, uv + dsHexOffset(v), gx, gy), w); }
 }
 
-// Three offset lookups blended by squared barycentric weights; offsets only, so the gradients pass through unchanged.
+// Three offset lookups blended by squared barycentric weights; offsets only, so the gradients pass through unchanged. Blending averages
+// the taps toward the layer mean and flattens the blade structure, so the contrast around the mean is restored (Heitz and Neyret).
 fn dsHex(layer : i32, uv : vec2f, gx : vec2f, gy : vec2f) -> DsTex {
   let g = dsHexGrid(uv);
   var w = max(g.w * g.w - vec3f(0.03), vec3f(0.0));
@@ -100,6 +102,12 @@ fn dsHex(layer : i32, uv : vec2f, gx : vec2f, gy : vec2f) -> DsTex {
   dsAddTap(&t, layer, uv, gx, gy, g.v0, w.x);
   dsAddTap(&t, layer, uv, gx, gy, g.v1, w.y);
   dsAddTap(&t, layer, uv, gx, gy, g.v2, w.z);
+  let k = inverseSqrt(dot(w, w));
+  let ma = textureSampleLevel(detailA, detailSampler, vec2f(0.5), layer, DS_MEAN_LEVEL);
+  let mb = textureSampleLevel(detailB, detailSampler, vec2f(0.5), layer, DS_MEAN_LEVEL);
+  let mbs = vec4f(mb.xy * 2.0 - 1.0, mb.zw);
+  t.a = max(ma + (t.a - ma) * k, vec4f(0.0));
+  t.b = mbs + (t.b - mbs) * k;
   return t;
 }
 

@@ -6,6 +6,7 @@
 //                       symmetrised over the two possible view sides (accurate for the low-frequency consumers: ambient and reflections).
 #include "sky/lut_common.wgsl"
 #include "sky/atmos_uniforms.wgsl"
+#include "sky/night_light.wgsl"
 
 @group(1) @binding(3) var outTex : texture_storage_2d<rgba16float, write>;
 @group(1) @binding(5) var<uniform> ap : AtmosParams;
@@ -15,9 +16,6 @@
 #endif
 
 const STEPS : u32 = 32u;
-const AIRGLOW_ZENITH : vec3f = vec3f(1.2e-3, 1.8e-3, 1.4e-3);
-const STARLIGHT_FLOOR : vec3f = vec3f(0.9e-4, 1.0e-4, 1.15e-4);
-const AIRGLOW_HEIGHT_KM : f32 = 90.0;
 
 // Radiance seen along dir from the camera at radius r, lit by one collimated light (single scattering + LUT multiple scattering + ground).
 fn marchSky(dir : vec3f, r : f32, lightDir : vec3f, lightE : vec3f) -> vec3f {
@@ -41,13 +39,11 @@ fn marchSky(dir : vec3f, r : f32, lightDir : vec3f, lightE : vec3f) -> vec3f {
   return lum;
 }
 
-// Airglow (thin shell at 90 km, Van Rhijn slant enhancement) and the flat starlight/zodiacal floor, attenuated by the atmosphere above.
+// Airglow and the starlight floor (sky/night_light.wgsl), attenuated by the atmosphere above.
 fn nightSky(cosZ : f32, r : f32) -> vec3f {
   if (cosZ <= 0.0) { return vec3f(0.0); }
-  let s = (frame.sky.x / (frame.sky.x + AIRGLOW_HEIGHT_KM)) * sqrt(max(1.0 - cosZ * cosZ, 0.0));
-  let vanRhijn = 1.0 / sqrt(1.0 - s * s);
   let horizon = smoothstep(0.0, 0.04, cosZ);
-  return (AIRGLOW_ZENITH * vanRhijn + STARLIGHT_FLOOR) * sampleTransmittance(r, cosZ) * (frame.sky.w * ap.flags.y * horizon);
+  return nightSkyNits(cosZ, frame.sky.x) * sampleTransmittance(r, cosZ) * (frame.sky.w * ap.flags.y * horizon);
 }
 
 @compute @workgroup_size(8, 8)

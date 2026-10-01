@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
 import {
   DAY_TOTAL_EV, EXPOSURE_TUNING as T, accumulate, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines, exposureOutput,
-  luminanceOf, softClipEv, targetTotalEv, trimmedMeanEv,
+  luminanceOf, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
 } from './exposure';
 
 const KEY_EV = Math.log2(T.key);
@@ -46,21 +46,22 @@ describe('binCoords', () => {
     expect(mid.frac).toBeCloseTo(0.25, 6);
   });
 
-  it('clamps black to the first bin and compresses any highlight below the last bin', () => {
+  it('clamps black to the first bin and any highlight to the last, leaving the compression to the mean', () => {
     expect(binCoords(0)).toEqual({ lo: 0, hi: 1, frac: 0 });
-    const sun = binCoords(6e4);
-    const absurd = binCoords(1e9);
-    expect(sun.hi).toBeLessThan(T.bins - 1);
-    expect(absurd.hi).toBeLessThan(T.bins - 1);
-    expect(absurd.lo + absurd.frac - (sun.lo + sun.frac)).toBeLessThan(T.kneeWidth / binWidthEv);
+    expect(binCoords(6e4)).toEqual({ lo: T.bins - 1, hi: T.bins - 1, frac: 0 });
+    expect(binCoords(1e9)).toEqual(binCoords(6e4));
+    const bright = binCoords(2 ** (KEY_EV + T.knee + 1));
+    expect(bright.lo + bright.frac).toBeCloseTo(((KEY_EV + T.knee + 1 - T.evMin) / binWidthEv) - 0.5, 6);
   });
 });
 
 describe('metering weights', () => {
-  it('is 1 in the centre and 1 - centerBias in the corners', () => {
+  it('is 1 in the centre, falls by centerBias towards the corners and by vertBias from the bottom row to the top one', () => {
+    const radial = 1 - T.centerBias;
     expect(centerWeight(0.5, 0.5)).toBeCloseTo(1, 10);
-    expect(centerWeight(0, 0)).toBeCloseTo(1 - T.centerBias, 10);
-    expect(centerWeight(1, 0)).toBeCloseTo(1 - T.centerBias, 10);
+    expect(centerWeight(0, 1)).toBeCloseTo(radial * (1 + T.vertBias), 10);
+    expect(centerWeight(1, 0)).toBeCloseTo(radial * (1 - T.vertBias), 10);
+    expect(centerWeight(0.5, 0.9)).toBeGreaterThan(2 * centerWeight(0.5, 0.1));
   });
 
   it('accumulates the full integer weight of a sample across the two bins', () => {
@@ -69,7 +70,7 @@ describe('metering weights', () => {
     expect(h.reduce((a, b) => a + b, 0)).toBe(T.weightScale);
     expect(h[30]).toBeGreaterThan(h[31]);
     accumulate(h, 0.1, 0, 0);
-    expect(h.reduce((a, b) => a + b, 0)).toBe(T.weightScale + Math.round(T.weightScale * (1 - T.centerBias)));
+    expect(h.reduce((a, b) => a + b, 0)).toBe(T.weightScale + Math.round(T.weightScale * centerWeight(0, 0)));
   });
 
   it('uses Rec.709 luminance', () => {
@@ -122,28 +123,63 @@ describe('targetTotalEv', () => {
     expect(bright).toBeCloseTo(0.5, 6);
   });
 
-  it('compensates the gain fully up to maxGainEv and only overGainSlope of the excess beyond it', () => {
-    const pre = 2 ** (DAY_TOTAL_EV + T.maxGainEv + 3);
-    const preEv = Math.log2(pre);
-    const atCap = targetTotalEv(KEY_EV + preEv - (DAY_TOTAL_EV + T.maxGainEv), pre);
-    expect(atCap).toBeCloseTo(DAY_TOTAL_EV + T.maxGainEv, 9);
-    const over = targetTotalEv(KEY_EV + preEv - (DAY_TOTAL_EV + T.maxGainEv + 4), pre);
-    expect(over).toBeCloseTo(DAY_TOTAL_EV + T.maxGainEv + 4 * T.overGainSlope, 9);
+  // A ground of `nits` metered at 0.25 after its own CPU pre-exposure 0.25 / nits; the scene-linear value the composite then sees is nits * 2^total.
+  const groundEv = Math.log2(0.25);
+  const displayed = (nits: number): number => nits * 2 ** targetTotalEv(groundEv, 0.25 / nits);
+
+  it('lets the key fall with the metered scene luminance below keyKneeNits and not above it', () => {
+    expect(displayed(4 * T.keyKneeNits)).toBeCloseTo(T.key, 6);
+    expect(displayed(T.keyKneeNits)).toBeCloseTo(T.key, 6);
+    expect(displayed(T.keyKneeNits / 16)).toBeCloseTo(T.key * 16 ** -T.keySlope, 6);
   });
 
-  it('keeps a moonless night visibly brighter than a proportional mapping would', () => {
-    const nightPre = 1 / (4 * 0.01);
-    const total = targetTotalEv(-2, nightPre);
-    const [, gainEv] = exposureOutput(total, nightPre, -2);
-    expect(gainEv).toBeGreaterThan(T.maxGainEv);
-    expect(gainEv).toBeLessThan(Math.log2(nightPre) - DAY_TOTAL_EV);
+  it('never lifts the gain above maxGainEv, so a night is a dark picture, also under starlight', () => {
+    for (const nits of [0.5, 0.2, 0.015, 3e-5]) {
+      const pre = 0.25 / nits;
+      const [ratio, gainEv, , totalEv] = exposureOutput(targetTotalEv(groundEv, pre), pre, groundEv);
+      expect(gainEv).toBeCloseTo(T.maxGainEv, 9);
+      expect(totalEv).toBeCloseTo(DAY_TOTAL_EV + T.maxGainEv, 9);
+      expect(ratio * pre).toBeCloseTo(2 ** totalEv, 12);
+    }
   });
 
-  it('limits the ratio to +-maxRatioEv and the darkening to minGainEv', () => {
+  it('shows a moonlit ground far below mid grey and a dusk ground below the key but above black', () => {
+    expect(displayed(0.015)).toBeLessThan(0.002);
+    expect(displayed(5)).toBeGreaterThan(0.02);
+    expect(displayed(5)).toBeLessThan(T.key);
+  });
+
+  it('limits the gain to maxGainEv and the darkening to minGainEv, whatever the metered value', () => {
     const [up] = exposureOutput(targetTotalEv(-30, DAY_PRE), DAY_PRE, -30);
-    expect(up).toBeCloseTo(2 ** T.maxRatioEv, 6);
+    expect(up).toBeCloseTo(2 ** T.maxGainEv, 6);
     const [down] = exposureOutput(targetTotalEv(20, DAY_PRE), DAY_PRE, 20);
     expect(down).toBeCloseTo(2 ** T.minGainEv, 6);
+  });
+
+  it('gives up to protectMaxEv of exposure when the brightest decile would land beyond clipEv over the key', () => {
+    const noHigh = targetTotalEv(KEY_EV, DAY_PRE);
+    expect(targetTotalEv(KEY_EV, DAY_PRE, KEY_EV + T.clipEv)).toBeCloseTo(noHigh, 9);
+    expect(targetTotalEv(KEY_EV, DAY_PRE, KEY_EV + T.clipEv + 1)).toBeCloseTo(noHigh - 1, 9);
+    expect(targetTotalEv(KEY_EV, DAY_PRE, KEY_EV + T.clipEv + 10)).toBeCloseTo(noHigh - T.protectMaxEv, 9);
+  });
+
+  it('takes at most protectMaxEv from a lift, so a dark scene with a bright decile is still brightened', () => {
+    const [ratio] = exposureOutput(targetTotalEv(KEY_EV - 3, DAY_PRE, KEY_EV + 3), DAY_PRE, KEY_EV - 3);
+    expect(ratio).toBeCloseTo(2 ** (3 - T.protectMaxEv), 9);
+  });
+});
+
+describe('topQuantileEv', () => {
+  it('is null for an empty histogram and finds the bin the brightest decile starts in', () => {
+    expect(topQuantileEv(new Float64Array(T.bins))).toBeNull();
+    const h = histogramOf([{ l: 0.22, count: 850 }, { l: 2, count: 150 }]);
+    expect(Math.abs((topQuantileEv(h) as number) - 1)).toBeLessThan(binWidthEv / 2);
+  });
+
+  it('ignores a hot spot smaller than the fraction', () => {
+    const h = histogramOf([{ l: 0.22, count: 970 }, { l: 6e4, count: 30 }]);
+    expect(Math.abs((topQuantileEv(h) as number) - KEY_EV)).toBeLessThan(binWidthEv);
+    expect(topQuantileEv(h, 0.01)).toBeCloseTo(binCenterEv(T.bins - 1), 9);
   });
 });
 

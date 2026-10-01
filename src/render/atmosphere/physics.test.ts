@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AIRGLOW_HEIGHT_KM, AP_MAX_DISTANCE_M, ATMOSPHERE_TOP_KM, MIE_EXTINCTION, MIE_SCALE_HEIGHT_KM, OZONE_ABSORPTION, OZONE_CENTER_KM,
+  AIRGLOW_HEIGHT_KM, AP_MAX_DISTANCE_M, ATMOSPHERE_TOP_KM, MIE_EXTINCTION, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, OZONE_ABSORPTION, OZONE_CENTER_KM,
   OZONE_HALF_WIDTH_KM, PLANET_RADIUS_KM, RAYLEIGH_SCALE_HEIGHT_KM, RAYLEIGH_SCATTER, SKYVIEW_SIZE, apDistanceToSlice, apSliceToDistance,
   distanceToTop, hgPhase, mediumAt, miePhase, opticalDepthToTop, rayleighPhase, skyViewParams, skyViewUv, subUvToUnit, transmittanceParams,
   transmittanceToTop, transmittanceUv, unitToSubUv, vanRhijn,
@@ -81,22 +81,22 @@ describe('geometry', () => {
 });
 
 describe('medium', () => {
-  it('has the Hillaire 2020 coefficients at the ground', () => {
+  it('has the Hillaire 2020 Rayleigh coefficients and a clear-day aerosol at the ground', () => {
     const m = mediumAt(0);
     expect(m.scatterRayleigh).toEqual([...RAYLEIGH_SCATTER]);
-    expect(m.scatterMie).toBeCloseTo(3.996e-3, 9);
+    expect(m.scatterMie).toBeCloseTo(MIE_SCATTER, 9);
     expect(m.extinction[1]).toBeCloseTo(RAYLEIGH_SCATTER[1] + MIE_EXTINCTION, 9);
   });
 
   it('decays with the scale heights and peaks the ozone at 25 km', () => {
     const a = mediumAt(RAYLEIGH_SCALE_HEIGHT_KM);
     expect(a.scatterRayleigh[2]).toBeCloseTo(RAYLEIGH_SCATTER[2] / Math.E, 9);
-    expect(mediumAt(MIE_SCALE_HEIGHT_KM).scatterMie).toBeCloseTo(3.996e-3 / Math.E, 9);
+    expect(mediumAt(MIE_SCALE_HEIGHT_KM).scatterMie).toBeCloseTo(MIE_SCATTER / Math.E, 9);
     const o = mediumAt(OZONE_CENTER_KM);
     const dR = Math.exp(-OZONE_CENTER_KM / RAYLEIGH_SCALE_HEIGHT_KM), dM = Math.exp(-OZONE_CENTER_KM / MIE_SCALE_HEIGHT_KM);
     expect(o.extinction[1]).toBeCloseTo(RAYLEIGH_SCATTER[1] * dR + MIE_EXTINCTION * dM + OZONE_ABSORPTION[1], 12);
     const edge = mediumAt(OZONE_CENTER_KM + OZONE_HALF_WIDTH_KM);
-    expect(edge.extinction[1]).toBeCloseTo(RAYLEIGH_SCATTER[1] * Math.exp(-40 / 8) + MIE_EXTINCTION * Math.exp(-40 / 1.2), 12);
+    expect(edge.extinction[1]).toBeCloseTo(RAYLEIGH_SCATTER[1] * Math.exp(-40 / 8) + MIE_EXTINCTION * Math.exp(-40 / MIE_SCALE_HEIGHT_KM), 12);
   });
 });
 
@@ -110,24 +110,24 @@ describe('optical depth and transmittance', () => {
       const ozone = OZONE_ABSORPTION[c] * OZONE_HALF_WIDTH_KM;
       expect(t[c]).toBeCloseTo(rayleigh + mie + ozone, 4);
     }
-    expect(t[0]).toBeCloseTo(0.0615, 3);
-    expect(t[1]).toBeCloseTo(0.142, 3);
-    expect(t[2]).toBeCloseTo(0.2714, 3);
+    expect(t[0]).toBeCloseTo(0.1962, 3);
+    expect(t[1]).toBeCloseTo(0.2767, 3);
+    expect(t[2]).toBeCloseTo(0.4061, 3);
   });
 
   it('gives a clear zenith sky the familiar blue-shifted transmittance', () => {
     const t = transmittanceToTop(PLANET_RADIUS_KM, 1, 2048);
     expect(t[0]).toBeGreaterThan(t[1]);
     expect(t[1]).toBeGreaterThan(t[2]);
-    expect(t[0]).toBeCloseTo(Math.exp(-0.0615), 3);
-    expect(t[2]).toBeGreaterThan(0.75);
+    expect(t[0]).toBeCloseTo(Math.exp(-0.1962), 3);
+    expect(t[2]).toBeGreaterThan(0.6);
   });
 
-  it('is about 38 air masses along the horizon for the Rayleigh-dominated blue channel', () => {
+  it('is 40 to 60 air masses along the horizon for the blue channel (the shallow aerosol layer adds air mass)', () => {
     const zenith = opticalDepthToTop(PLANET_RADIUS_KM, 1, 2048)[2];
     const horizon = opticalDepthToTop(PLANET_RADIUS_KM, 0, 2048)[2];
-    expect(horizon / zenith).toBeGreaterThan(30);
-    expect(horizon / zenith).toBeLessThan(45);
+    expect(horizon / zenith).toBeGreaterThan(40);
+    expect(horizon / zenith).toBeLessThan(60);
   });
 
   it('grows monotonically toward the horizon and shrinks with altitude', () => {
@@ -146,6 +146,38 @@ describe('optical depth and transmittance', () => {
       const coarse = opticalDepthToTop(PLANET_RADIUS_KM, mu)[1], fine = opticalDepthToTop(PLANET_RADIUS_KM, mu, 4096)[1];
       expect(Math.abs(coarse - fine) / fine).toBeLessThan(0.03);
     }
+  });
+});
+
+describe('aerosol', () => {
+  it('is a clear-day continental aerosol: optical depth 0.1-0.2, albedo 0.9-0.95', () => {
+    const aod = MIE_EXTINCTION * MIE_SCALE_HEIGHT_KM;
+    expect(aod).toBeGreaterThan(0.1);
+    expect(aod).toBeLessThan(0.2);
+    expect(MIE_SCATTER / MIE_EXTINCTION).toBeGreaterThan(0.9);
+    expect(MIE_SCATTER / MIE_EXTINCTION).toBeLessThan(0.95);
+  });
+
+  it('gives a Koschmieder visibility of 40 to 100 km at 1.2 km altitude', () => {
+    const m = mediumAt(1.2);
+    const sigma = m.extinction[1];
+    const visibilityKm = 3.912 / sigma;
+    expect(visibilityKm).toBeGreaterThan(40);
+    expect(visibilityKm).toBeLessThan(100);
+  });
+
+  it('makes distant terrain hazy but visible: 5 km keeps 70-85 percent, 12 km keeps 40-60 percent of the green light', () => {
+    const sigma = mediumAt(1.2).extinction[1];
+    expect(Math.exp(-5 * sigma)).toBeGreaterThan(0.7);
+    expect(Math.exp(-5 * sigma)).toBeLessThan(0.85);
+    expect(Math.exp(-12 * sigma)).toBeGreaterThan(0.4);
+    expect(Math.exp(-12 * sigma)).toBeLessThan(0.6);
+  });
+
+  it('scatters more in the back than at 90 degrees (back lobe) and far more forward', () => {
+    expect(miePhase(-1)).toBeGreaterThan(miePhase(0));
+    expect(miePhase(1)).toBeGreaterThan(miePhase(0) * 60);
+    expect(miePhase(0)).toBeGreaterThan(0.015);
   });
 });
 

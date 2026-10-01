@@ -14,20 +14,33 @@ export const ATMOSPHERE_TOP_KM = 6460;
 
 export const RAYLEIGH_SCATTER: Vec3 = [5.802e-3, 13.558e-3, 33.1e-3];
 export const RAYLEIGH_SCALE_HEIGHT_KM = 8;
-export const MIE_SCATTER = 3.996e-3;
-export const MIE_EXTINCTION = 4.44e-3;
-export const MIE_SCALE_HEIGHT_KM = 1.2;
-export const MIE_G = 0.8;
+/** Continental aerosol of a clear day: sea-level vertical optical depth 0.14 (scale height 1.4 km), single-scatter albedo 0.92. */
+export const MIE_EXTINCTION = 0.1;
+export const MIE_SCATTER = 0.092;
+export const MIE_SCALE_HEIGHT_KM = 1.4;
+export const MIE_G = 0.76;
+export const MIE_BACK_G = -0.3;
+export const MIE_BACK_WEIGHT = 0.2;
 export const OZONE_ABSORPTION: Vec3 = [0.65e-3, 1.881e-3, 0.085e-3];
 export const OZONE_CENTER_KM = 25;
 export const OZONE_HALF_WIDTH_KM = 15;
 export const GROUND_ALBEDO = 0.3;
 
-/** Van Rhijn airglow layer height above the ground and its zenith radiance (nits) for a night-scale of 1. */
+/**
+ * Night light that is not scattered sunlight (nits at a night-scale of 1, before extinction; shaders/sky/night_light.wgsl mirrors it).
+ * Airglow is a thin shell at 90 km: about 21.5 mag/arcsec2 (Y 3.2e-4) at the zenith, near neutral, with the [OI] green line adding
+ * to the slant path only. Starlight is the unresolved part of the flat floor; zodiacal light is separate (1 S10 = 8.3e-7 nits).
+ */
 export const AIRGLOW_HEIGHT_KM = 90;
-export const AIRGLOW_ZENITH_NITS: Vec3 = [0.6 * 2e-3, 0.9 * 2e-3, 0.7 * 2e-3];
-/** Zodiacal light plus integrated unresolved starlight, a flat floor (nits) for a night-scale of 1. */
-export const STARLIGHT_SKY_NITS: Vec3 = [0.9e-4, 1.0e-4, 1.15e-4];
+export const AIRGLOW_ZENITH_NITS: Vec3 = [3.1e-4, 3.2e-4, 3.4e-4];
+export const AIRGLOW_SLANT_TINT_NITS: Vec3 = [-1.5e-5, 4e-5, -1e-5];
+export const STARLIGHT_SKY_NITS: Vec3 = [3.5e-5, 3.5e-5, 3.8e-5];
+export const NITS_PER_S10 = 8.3e-7;
+export const ZODIACAL_COLOR: Vec3 = [1, 0.98, 0.93];
+export const ZODIACAL_POLE_S10 = 77;
+export const ZODIACAL_FAR_S10 = 140;
+export const ZODIACAL_NEAR_S10 = 1360;
+export const GEGENSCHEIN_S10 = 45;
 
 export const TRANSMITTANCE_SIZE = { width: 256, height: 64 } as const;
 export const MULTISCATTER_SIZE = 32;
@@ -86,9 +99,14 @@ export function rayleighPhase(cosTheta: number): number {
 }
 
 /** Cornette-Shanks phase (per sr). */
-export function miePhase(cosTheta: number, g = MIE_G): number {
+export function cornetteShanksPhase(cosTheta: number, g: number): number {
   const g2 = g * g;
   return ((3 / (8 * Math.PI)) * ((1 - g2) * (1 + cosTheta * cosTheta))) / ((2 + g2) * Math.pow(1 + g2 - 2 * g * cosTheta, 1.5));
+}
+
+/** Aerosol phase (per sr): the forward aureole lobe plus the weak back lobe that keeps side and back scattering (haze) realistic. */
+export function miePhase(cosTheta: number): number {
+  return (1 - MIE_BACK_WEIGHT) * cornetteShanksPhase(cosTheta, MIE_G) + MIE_BACK_WEIGHT * hgPhase(cosTheta, MIE_BACK_G);
 }
 
 /** Henyey-Greenstein phase (per sr). */
@@ -159,4 +177,28 @@ export const apDistanceToSlice = (d: number): number => Math.log(1 + (d * (Math.
 export function vanRhijn(cosZenith: number, groundRadiusKm = PLANET_RADIUS_KM): number {
   const s = (groundRadiusKm / (groundRadiusKm + AIRGLOW_HEIGHT_KM)) * Math.sqrt(Math.max(0, 1 - cosZenith * cosZenith));
   return 1 / Math.sqrt(1 - s * s);
+}
+
+/** Airglow plus starlight floor toward a zenith cosine (nits, before extinction). */
+export function nightSkyNits(cosZenith: number, groundRadiusKm = PLANET_RADIUS_KM): Vec3 {
+  const vr = vanRhijn(cosZenith, groundRadiusKm);
+  return [0, 1, 2].map((c) => AIRGLOW_ZENITH_NITS[c] * vr + AIRGLOW_SLANT_TINT_NITS[c] * (vr - 1) + STARLIGHT_SKY_NITS[c]) as Vec3;
+}
+
+/**
+ * Zodiacal light in S10 (solar-type stars of magnitude 10 per square degree) from the sun elongation and the ecliptic latitude of the
+ * view direction: about 1500 on the ecliptic at 30 deg, 230 at 90 deg, 77 at the ecliptic pole, with a gegenschein bump at 180 deg.
+ */
+export function zodiacalS10(cosElongation: number, sinEclipticLat: number): number {
+  const eps = Math.max(Math.acos(Math.min(Math.max(cosElongation, -1), 1)) * (180 / Math.PI), 15);
+  const gegen = GEGENSCHEIN_S10 * Math.exp(-(((180 - eps) / 8) ** 2));
+  const onEcliptic = ZODIACAL_FAR_S10 + ZODIACAL_NEAR_S10 * Math.pow(30 / eps, 2.5) + gegen;
+  const cosLat = Math.sqrt(Math.max(1 - sinEclipticLat * sinEclipticLat, 0));
+  const steepness = 5 + 25 * Math.exp(-eps / 35);
+  return ZODIACAL_POLE_S10 + (onEcliptic - ZODIACAL_POLE_S10) * Math.pow(cosLat, steepness);
+}
+
+export function zodiacalNits(cosElongation: number, sinEclipticLat: number): Vec3 {
+  const nits = zodiacalS10(cosElongation, sinEclipticLat) * NITS_PER_S10;
+  return [nits * ZODIACAL_COLOR[0], nits * ZODIACAL_COLOR[1], nits * ZODIACAL_COLOR[2]];
 }

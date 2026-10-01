@@ -15,8 +15,8 @@ export const MILKY_WAY_WIDTH = 1024;
 export const MILKY_WAY_HEIGHT = 512;
 export const FAINT_STAR_MAG = 6.5;
 
-const DISK_PEAK_NITS = 2.6e-3;
-const BULGE_PEAK_NITS = 3.0e-3;
+const DISK_PEAK_NITS = 0.9e-3;
+const BULGE_PEAK_NITS = 1.1e-3;
 const DENSITY_MIX = 0.35;
 const TWO_PI = Math.PI * 2;
 

@@ -46,7 +46,7 @@ export function createChecks(h: Harness) {
   }
 
   return {
-    /** Scenes 4 stops apart must land on the same output brightness (within 10%) and the exposure ratio must differ by about 4 EV. */
+    /** Day look: scenes 4 stops apart must land on the same output brightness (within 10%) and the exposure ratio must differ by about 4 EV. (Under about 100 nits the key falls and the gain caps, by design.) */
     async exposure(scales: number[] = [1, 1 / 16, 1], frames = 14) {
       return isolated({}, async () => {
         const base = { radiance: h.state.radiance, sunNits: h.state.sunNits, lampNits: h.state.lampNits };

@@ -102,30 +102,110 @@ fn relief(layer : i32) -> f32 {
   }
 }
 
+// A blade lying on the ground seen from above: a tapered, bent lens from its root along `dir`.
+struct Stroke {
+  z : f32,       // depth order; -1 when no blade covers the texel
+  t : f32,       // 0 at the root, 1 at the tip
+  id : f32,      // random 0..1 per blade (colour pick)
+  across : f32,  // 0 on the midrib, 1 at the edge
+};
+
+// The topmost of `per` jittered blades per cell of an n x n grid that covers uv. The 3x3 cells around the texel are searched, so blades
+// must stay shorter than one cell. `field` leans the whole pass toward a coherent direction, `spread` (radians) scatters it.
+fn strokeAt(uv : vec2f, n : i32, per : i32, seed : u32, len : vec2f, wid : vec2f, curve : f32, spread : f32) -> Stroke {
+  let p = uv * f32(n);
+  let c0 = vec2i(floor(p));
+  let field = pNoise(uv, vec2i(3), seed + 77u) * 1.6;
+  var best = Stroke(-1.0, 0.0, 0.0, 0.0);
+  for (var j = -1; j <= 1; j++) {
+    for (var i = -1; i <= 1; i++) {
+      let c = c0 + vec2i(i, j);
+      let hc = hash2(wrapLattice(c, vec2i(n)), seed);
+      for (var k = 0; k < per; k++) {
+        let h1 = pcgh(hc + u32(k) * 2654435769u);
+        let h2 = pcgh(h1);
+        let d = p - (vec2f(c) + vec2f(f01(h1), f01(h2)));
+        if (dot(d, d) > len.y * len.y) { continue; }
+        let h3 = pcgh(h2);
+        let h4 = pcgh(h3);
+        let h5 = pcgh(h4);
+        let a = field + (f01(h3) * 2.0 - 1.0) * spread;
+        let dir = vec2f(cos(a), sin(a));
+        let l = mix(len.x, len.y, f32(h4 & 255u) / 255.0);
+        let t = dot(d, dir) / l;
+        if (t < 0.0 || t > 1.0) { continue; }
+        let bend = curve * (f32((h4 >> 16u) & 255u) / 127.5 - 1.0) * l * t * t;
+        let across = dot(d, vec2f(-dir.y, dir.x)) - bend;
+        let hw = mix(wid.x, wid.y, f32((h4 >> 8u) & 255u) / 255.0) * pow(1.0 - t, 0.7);
+        let z = f01(h5);
+        if (abs(across) < hw && z > best.z) { best = Stroke(z, t, f32(h5 & 255u) / 255.0, abs(across) / hw); }
+      }
+    }
+  }
+  return best;
+}
+
+// Blade colour relative to the layer mean: dark, mid, yellow-green, blue-green and the odd dry blade; dark root to light tip.
+fn bladeTone(id : f32, t : f32) -> vec3f {
+  var c = vec3f(1.0);
+  if (id < 0.16) { c = vec3f(0.62, 0.74, 0.62); }
+  else if (id < 0.36) { c = vec3f(1.42, 1.14, 0.80); }
+  else if (id < 0.42) { c = vec3f(1.85, 1.30, 1.55); }
+  else if (id < 0.58) { c = vec3f(0.85, 1.05, 1.10); }
+  return c * mix(0.6, 1.5, t);
+}
+
+fn strawTone(id : f32, t : f32) -> vec3f {
+  var c = vec3f(1.0);
+  if (id < 0.2) { c = vec3f(0.70, 0.66, 0.60); }
+  else if (id < 0.55) { c = vec3f(1.0); }
+  else if (id < 0.8) { c = vec3f(1.20, 1.12, 1.00); }
+  else { c = vec3f(1.45, 1.40, 1.30); }
+  return c * mix(0.7, 1.3, t);
+}
+
+// Two passes of blades over a dark thatch. z (a height for the blend with the other layers) rises with each pass and toward the tips.
 fn surfGrass(uv : vec2f) -> Surf {
   var s : Surf;
-  let w = pWorley(uv, 40, 1u);
-  let clump = 1.0 - smoothstep(0.0, 0.62, w.x);
-  let n = pFbm(uv, 10, 3, 2u);
-  let fine = pNoise(uv, vec2i(110), 3u) * 0.5 + 0.5;
-  s.h = saturate(0.45 * clump + 0.35 * contrast(n, 1.6) + 0.2 * fine);
-  let hue = pFbm(uv, 5, 2, 4u);
-  s.tone = mix(vec3f(0.62, 0.78, 0.60), vec3f(1.35, 1.20, 0.85), s.h) * vec3f(0.92 + 0.16 * hue, 1.0, 0.95);
-  s.rough = 0.02 * (fine - 0.5);
-  s.ao = cavity(s.h);
+  s.h = 0.08;
+  s.tone = vec3f(0.55, 0.50, 0.60);
+  s.ao = 0.30;
+  let rip = pNoise(uv, vec2i(140), 3u) * 0.5 + 0.5;
+  let a = strokeAt(uv, 18, 8, 31u, vec2f(0.55, 0.95), vec2f(0.035, 0.06), 0.35, 3.1);
+  if (a.z >= 0.0) {
+    s.h = 0.25 + 0.2 * a.z + 0.12 * a.t;
+    s.tone = bladeTone(a.id, a.t) * 0.85;
+    s.ao = mix(0.30, 0.85, a.t);
+  }
+  let b = strokeAt(uv, 30, 8, 47u, vec2f(0.5, 0.92), vec2f(0.04, 0.07), 0.45, 3.1);
+  if (b.z >= 0.0) {
+    s.h = 0.5 + 0.22 * b.z + 0.14 * b.t;
+    s.tone = bladeTone(b.id, b.t) * (1.0 - 0.25 * b.across * b.across);
+    s.ao = mix(0.4, 1.0, b.t);
+  }
+  s.rough = 0.05 * (b.t - 0.5) * step(0.0, b.z) + 0.02 * (rip - 0.5);
   return s;
 }
 
+// Matted dry grass: longer, thinner, more aligned and more bent blades.
 fn surfHay(uv : vec2f) -> Surf {
   var s : Surf;
-  let a = pNoise(uv, vec2i(120, 9), 5u) * 0.5 + 0.5;
-  let b = pNoise(uv, vec2i(9, 100), 6u) * 0.5 + 0.5;
-  let strands = mix(a, b, smoothstep(0.35, 0.65, pFbm(uv, 3, 2, 7u)));
-  let clump = pFbm(uv, 14, 3, 8u);
-  s.h = saturate(0.55 * contrast(strands, 1.5) + 0.45 * contrast(clump, 1.5));
-  s.tone = mix(vec3f(0.62, 0.58, 0.50), vec3f(1.30, 1.22, 1.05), s.h);
-  s.rough = 0.03 * (strands - 0.5);
-  s.ao = cavity(s.h);
+  s.h = 0.10;
+  s.tone = vec3f(0.48, 0.44, 0.40);
+  s.ao = 0.32;
+  let a = strokeAt(uv, 14, 9, 51u, vec2f(0.7, 0.98), vec2f(0.022, 0.04), 0.6, 1.1);
+  if (a.z >= 0.0) {
+    s.h = 0.28 + 0.2 * a.z + 0.1 * a.t;
+    s.tone = strawTone(a.id, a.t) * 0.9;
+    s.ao = mix(0.35, 0.85, a.t);
+  }
+  let b = strokeAt(uv, 24, 9, 67u, vec2f(0.65, 0.95), vec2f(0.028, 0.048), 0.7, 1.3);
+  if (b.z >= 0.0) {
+    s.h = 0.5 + 0.22 * b.z + 0.14 * b.t;
+    s.tone = strawTone(b.id, b.t) * (1.0 - 0.2 * b.across * b.across);
+    s.ao = mix(0.4, 1.0, b.t);
+  }
+  s.rough = 0.05 * (b.id - 0.5) * step(0.0, b.z);
   return s;
 }
 

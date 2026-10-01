@@ -70,8 +70,8 @@ describe('galactic coordinates', () => {
 describe('surface brightness model', () => {
   it('peaks toward the galactic centre at a few millinits and fades away from the plane and the bulge', () => {
     const centre = milkyWayRadiance(0, 0).nits;
-    expect(centre).toBeGreaterThan(2e-3);
-    expect(centre).toBeLessThan(9e-3);
+    expect(centre).toBeGreaterThan(1.2e-3);
+    expect(centre).toBeLessThan(4e-3);
     expect(milkyWayRadiance(0, 10).nits).toBeLessThan(0.5 * centre);
     expect(milkyWayRadiance(0, 60).nits).toBeLessThan(0.05 * centre);
     expect(milkyWayRadiance(180, 0).nits).toBeLessThan(0.4 * centre);
@@ -130,8 +130,8 @@ describe('baked map', () => {
       const l = luminance([fromHalf(map[o]), fromHalf(map[o + 1]), fromHalf(map[o + 2])]);
       if (l > peak) { peak = l; peakX = x; peakY = y; }
     }
-    expect(peak).toBeGreaterThan(2e-3);
-    expect(peak).toBeLessThan(9e-3);
+    expect(peak).toBeGreaterThan(1.2e-3);
+    expect(peak).toBeLessThan(4e-3);
     expect(Math.abs((peakX / W - 0.5) * 360)).toBeLessThan(40);
     expect(Math.abs((0.5 - peakY / H) * 180)).toBeLessThan(15);
   });
@@ -140,7 +140,7 @@ describe('baked map', () => {
     const plane = windowMean(map, 20, 0, 3), pole = windowMean(map, 20, 70, 3);
     expect(plane).toBeGreaterThan(20 * pole);
     expect(windowMean(map, 0, 0, 8)).toBeGreaterThan(1.5 * windowMean(map, 180, 0, 8));
-    expect(windowMean(map, 0, 0, 8)).toBeGreaterThan(1e-3);
+    expect(windowMean(map, 0, 0, 8)).toBeGreaterThan(3.5e-4);
   });
 
   it('shows the Coalsack as a hole in the plane and a redder centre than anticentre', () => {

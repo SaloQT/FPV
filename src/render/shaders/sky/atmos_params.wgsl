@@ -7,10 +7,12 @@
 
 const RAYLEIGH_SCATTER : vec3f = vec3f(5.802e-3, 13.558e-3, 33.1e-3);
 const RAYLEIGH_H : f32 = 8.0;
-const MIE_SCATTER : f32 = 3.996e-3;
-const MIE_EXTINCTION : f32 = 4.44e-3;
-const MIE_H : f32 = 1.2;
-const MIE_G : f32 = 0.8;
+const MIE_SCATTER : f32 = 0.092;
+const MIE_EXTINCTION : f32 = 0.1;
+const MIE_H : f32 = 1.4;
+const MIE_G : f32 = 0.76;
+const MIE_BACK_G : f32 = -0.3;
+const MIE_BACK_WEIGHT : f32 = 0.2;
 const OZONE_ABSORB : vec3f = vec3f(0.65e-3, 1.881e-3, 0.085e-3);
 const OZONE_CENTER : f32 = 25.0;
 const OZONE_HALF : f32 = 15.0;
@@ -36,14 +38,19 @@ fn mediumAt(heightKm : f32) -> Medium {
 
 fn rayleighPhase(c : f32) -> f32 { return (3.0 / (16.0 * PI)) * (1.0 + c * c); }
 
-fn miePhase(c : f32) -> f32 {
-  let g2 = MIE_G * MIE_G;
-  return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + c * c)) / ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * MIE_G * c, 1e-4), 1.5));
+fn cornetteShanksPhase(c : f32, g : f32) -> f32 {
+  let g2 = g * g;
+  return (3.0 / (8.0 * PI)) * ((1.0 - g2) * (1.0 + c * c)) / ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
 }
 
 fn hgPhase(c : f32, g : f32) -> f32 {
   let g2 = g * g;
   return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+}
+
+// Forward aureole lobe plus a weak back lobe; mirrors miePhase() in physics.ts.
+fn miePhase(c : f32) -> f32 {
+  return (1.0 - MIE_BACK_WEIGHT) * cornetteShanksPhase(c, MIE_G) + MIE_BACK_WEIGHT * hgPhase(c, MIE_BACK_G);
 }
 
 // Near and far distances of the ray o + t d against a sphere of radius R centred at the origin; x > y means no hit.

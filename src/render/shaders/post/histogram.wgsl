@@ -1,14 +1,20 @@
 // Auto-exposure metering on the resolved (pre-exposed) image.
-//  hist   : 64-bin log2-luminance histogram, soft-clipped highlights, centre weighted, linear split between neighbouring bins.
-//  reduce : trimmed mean -> scene-referred target exposure -> smoothed persistent state -> `ratioOut` for the composite.
+//  hist   : 64-bin log2-luminance histogram, weighted towards the centre and the ground, linear split between neighbouring bins.
+//  reduce : soft-clipped trimmed mean and bright-decile EV -> scene-referred target exposure -> smoothed persistent state -> `ratioOut`.
 // State is the TOTAL exposure in EV (pre-exposure * ratio), so CPU pre-exposure changes never look like a scene change.
 const BINS : u32 = 64u;
 const EV_MIN : f32 = ${EV_MIN};
 const EV_MAX : f32 = ${EV_MAX};
 const KEY : f32 = ${KEY};
+const KEY_KNEE_EV : f32 = ${KEY_KNEE_EV};
+const KEY_SLOPE : f32 = ${KEY_SLOPE};
 const KNEE : f32 = ${KNEE};
 const KNEE_W : f32 = ${KNEE_WIDTH};
 const CENTER_BIAS : f32 = ${CENTER_BIAS};
+const VERT_BIAS : f32 = ${VERT_BIAS};
+const CLIP_FRAC : f32 = ${CLIP_FRAC};
+const CLIP_EV : f32 = ${CLIP_EV};
+const PROTECT_MAX_EV : f32 = ${PROTECT_MAX_EV};
 const STRIDE : u32 = ${STRIDE}u;
 const WEIGHT_SCALE : f32 = ${WEIGHT_SCALE};
 const TRIM_LOW : f32 = ${TRIM_LOW};
@@ -19,7 +25,6 @@ const DEADBAND : f32 = ${DEADBAND};
 const MAX_DT : f32 = ${MAX_DT};
 const DAY_TOTAL_EV : f32 = ${DAY_TOTAL_EV};
 const MAX_GAIN_EV : f32 = ${MAX_GAIN_EV};
-const OVER_GAIN_SLOPE : f32 = ${OVER_GAIN_SLOPE};
 const MIN_GAIN_EV : f32 = ${MIN_GAIN_EV};
 const MAX_RATIO_EV : f32 = ${MAX_RATIO_EV};
 const LOG2_KEY : f32 = log2(KEY);
@@ -53,8 +58,9 @@ fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_in
     // Skip NaN/Inf (exponent bits all set) instead of letting them poison a bin.
     if ((bitcast<u32>(l) & 0x7f800000u) != 0x7f800000u) {
       let q = (vec2f(p) + 0.5) / vec2f(dims) * 2.0 - 1.0;
-      let wTotal = u32(round(WEIGHT_SCALE * (1.0 - CENTER_BIAS * saturate(dot(q, q) * 0.5))));
-      let ev = softClipEv(log2(max(l, 1e-9)));
+      let radial = 1.0 - CENTER_BIAS * saturate(dot(q, q) * 0.5);
+      let wTotal = u32(round(WEIGHT_SCALE * radial * (1.0 + VERT_BIAS * clamp(q.y, -1.0, 1.0))));
+      let ev = log2(max(l, 1e-9));
       let pos = clamp((ev - EV_MIN) / (EV_MAX - EV_MIN) * f32(BINS) - 0.5, 0.0, f32(BINS - 1u));
       let i0 = u32(floor(pos));
       let w1 = u32(round(f32(wTotal) * (pos - floor(pos))));
@@ -71,12 +77,22 @@ fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_in
 
 fn binCenterEv(i : u32) -> f32 { return EV_MIN + (f32(i) + 0.5) / f32(BINS) * (EV_MAX - EV_MIN); }
 
-fn targetTotalEv(meanEv : f32, preEv : f32) -> f32 {
-  let wanted = LOG2_KEY - meanEv + preEv;
-  var gain = wanted - DAY_TOTAL_EV;
-  // Beyond the sensor's gain range the image is allowed to fall below key, but only at a fraction of the deficit, so nights stay visible.
-  gain = select(MAX_GAIN_EV + OVER_GAIN_SLOPE * (gain - MAX_GAIN_EV), gain, gain <= MAX_GAIN_EV);
-  gain = max(gain, MIN_GAIN_EV);
+// Bin-centre EV above which the brightest CLIP_FRAC of the weight lies.
+fn topQuantileEv(total : f32) -> f32 {
+  var cum = 0.0;
+  for (var k = BINS - 1u; k > 0u; k--) {
+    cum += wgBins[k];
+    if (cum >= CLIP_FRAC * total) { return binCenterEv(k); }
+  }
+  return binCenterEv(0u);
+}
+
+// The key falls with the metered scene luminance, the bright decile may not sit far over the key, and the sensor gain is limited both ways.
+fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
+  let keyEv = LOG2_KEY + KEY_SLOPE * min(meanEv - preEv - KEY_KNEE_EV, 0.0);
+  let shift = keyEv - meanEv;
+  let protectedShift = max(min(shift, LOG2_KEY + CLIP_EV - highEv), shift - PROTECT_MAX_EV);
+  let gain = clamp(preEv + protectedShift - DAY_TOTAL_EV, MIN_GAIN_EV, MAX_GAIN_EV);
   return preEv + clamp(DAY_TOTAL_EV + gain - preEv, -MAX_RATIO_EV, MAX_RATIO_EV);
 }
 
@@ -100,12 +116,12 @@ fn reduce(@builtin(local_invocation_index) i : u32) {
     for (var k = 0u; k < BINS; k++) {
       let h = wgBins[k];
       let w = max(min(cum + h, hi) - max(cum, lo), 0.0);
-      sum += w * binCenterEv(k);
+      sum += w * softClipEv(binCenterEv(k));
       kept += w;
       cum += h;
     }
     meanEv = sum / max(kept, 1e-6);
-    let want = targetTotalEv(meanEv, preEv);
+    let want = targetTotalEv(meanEv, topQuantileEv(total), preEv);
     if (adapt[1] < 0.5 || params.reset != 0u) {
       total_ev = want;
     } else {

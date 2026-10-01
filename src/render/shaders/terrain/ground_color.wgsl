@@ -17,14 +17,18 @@ struct LayerWeights {
 
 fn glDryness(xz : vec2f, wet : f32) -> f32 {
   let n = tnFbm(xz * 0.012 + vec2f(3.1, 7.7), 3);
-  return saturate1(smoothstep(0.40, 0.62, n) - 0.6 * smoothstep(0.35, 0.8, wet));
+  return saturate1(smoothstep(0.48, 0.68, n) - 0.6 * smoothstep(0.35, 0.8, wet));
 }
 
+// Living turf: lush green with yellow-green and clover patches at 10 m and 1-2 m scale, bleached toward straw where it is dry.
 fn grassTintFromMaps(xz : vec2f, maps : vec4f) -> vec3f {
   let dry = glDryness(xz, maps.w);
   let tuft = tnFbm(xz * 0.31 + vec2f(41.0, 5.0), 2);
   let hue = tnFbm(xz * 0.09 + vec2f(7.0, 63.0), 2);
-  return mix(GL_GRASS_LUSH, GL_GRASS_DRY, dry) * (0.78 + 0.5 * tuft) * vec3f(0.85 + 0.35 * hue, 1.0, 0.9);
+  let clover = smoothstep(0.55, 0.72, tnFbm(xz * 0.9 + vec2f(19.0, 3.0), 2));
+  var c = mix(GL_GRASS_LUSH, GL_GRASS_YELLOW, smoothstep(0.42, 0.66, hue));
+  c = mix(c, GL_GRASS_CLOVER, 0.7 * clover);
+  return mix(c, GL_GRASS_DRY, dry) * (0.82 + 0.4 * tuft);
 }
 
 fn grassTint(xz : vec2f) -> vec3f {
@@ -48,21 +52,35 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   let alpine = smoothstep(0.62, 0.92, hRel + 0.08 * jitter);
   let rock = saturate1(steep + 0.9 * bare + 0.5 * alpine);
 
-  let cover = smoothstep(0.22, 0.65, soilJ) * gentle;
+  // Erosion features: gullies follow the drainage map, rills are thin winding scars on slopes, fans are deposited gravel.
+  let gully = smoothstep(0.35, 0.70, flow) * smoothstep(0.01, 0.05, slope);
+  let ridged = 1.0 - abs(2.0 * tnFbm(q * 0.24 + vec2f(5.0, 77.0), 2) - 1.0);
+  let rill = smoothstep(0.955, 0.99, ridged) * smoothstep(0.04, 0.10, slope) * (1.0 - steep);
+  let fan = smoothstep(0.30, 0.65, dep) * (1.0 - smoothstep(0.05, 0.14, slope));
+  let scree = smoothstep(0.10, 0.20, slope) * (1.0 - steep) * smoothstep(0.40, 0.70, tnFbm(q * 0.35 + vec2f(2.0, 19.0), 2));
+
+  // The sward thins in metre-scale patches, more on slopes, dry ground and thin soil; soil shows through the gaps.
   let dry = glDryness(xz, wet);
-  let grass = cover * (1.0 - dry);
-  let hay = cover * dry;
+  let patchN = tnFbm(q * 0.55 + vec2f(23.0, 51.0), 3);
+  let thinSoil = 1.0 - smoothstep(0.30, 0.70, soilJ);
+  let sparse = smoothstep(0.52, 0.80, patchN + 0.30 * smoothstep(0.03, 0.15, slope) + 0.18 * dry + 0.25 * thinSoil);
+  let cover = smoothstep(0.22, 0.65, soilJ) * gentle * (1.0 - 0.85 * gully) * (1.0 - 0.8 * rill);
+  let sward = cover * (1.0 - 0.9 * sparse);
+  let grass = sward * (1.0 - dry);
+  let hay = sward * dry;
 
   let channel = smoothstep(0.5, 0.9, flow);
-  let dirt = 0.10 + 0.9 * smoothstep(0.05, 0.35, soilJ) * (1.0 - smoothstep(0.35, 0.7, soilJ)) + 0.7 * channel;
-  let gravel = 0.55 * smoothstep(0.10, 0.22, slope) * (1.0 - steep) + 0.7 * smoothstep(0.5, 0.85, flow) * (0.4 + 0.6 * dep);
+  let dirt = 0.10 + 0.9 * smoothstep(0.05, 0.35, soilJ) * (1.0 - smoothstep(0.35, 0.7, soilJ)) + 0.7 * channel
+    + 0.9 * cover * sparse + 0.9 * gully + 0.8 * rill;
+  let gravel = 0.7 * scree + 0.7 * channel * (0.4 + 0.6 * dep) + 0.6 * fan * (0.3 + 0.7 * smoothstep(0.3, 0.7, flow)) + 0.4 * gully * dep;
 
   var shore = 0.0;
   if (waterLevel > -1.0e8) { shore = 1.0 - smoothstep(-8.0, 3.5, y - waterLevel); }
-  let sand = max(shore, 0.5 * smoothstep(0.5, 0.85, dep) * gentle);
+  let sand = max(shore, 0.3 * smoothstep(0.5, 0.85, dep) * gentle);
 
   let pat = smoothstep(0.42, 0.70, tnFbm(q * 0.08 + vec2f(31.0, 17.0), 2));
-  let loam = 0.6 * wet * smoothstep(0.35, 0.8, soilJ) * (1.0 - smoothstep(0.06, 0.16, slope)) * pat;
+  let bank = smoothstep(0.5, 0.85, wet) * (1.0 - smoothstep(0.05, 0.14, slope));
+  let loam = (0.6 * wet * smoothstep(0.35, 0.8, soilJ) * pat + 0.8 * bank * (0.4 + 0.6 * pat)) * (1.0 - smoothstep(0.06, 0.16, slope));
 
   let snow = smoothstep(0.78, 0.86, hRel + 0.05 * jitter) * gentle;
   let keep = 1.0 - snow;
@@ -79,7 +97,7 @@ fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
     case 2: {
       let t = tnFbm(xz * 0.05 + vec2f(13.0, 1.0), 3);
       let tone = mix(vec3f(1.15, 0.95, 0.75), vec3f(0.85, 0.9, 1.0), t);
-      return glBaseColor(GL_DIRT) * tone * (1.0 - 0.25 * smoothstep(0.5, 0.9, maps.y));
+      return glBaseColor(GL_DIRT) * tone * (1.0 - 0.3 * smoothstep(0.5, 0.9, maps.y));
     }
     case 3: { return glBaseColor(GL_GRAVEL) * (0.85 + 0.3 * tnFbm(xz * 0.11 + vec2f(5.0, 27.0), 2)); }
     case 4: {
