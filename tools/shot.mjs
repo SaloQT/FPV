@@ -62,7 +62,7 @@ try {
   }
   await page.waitForTimeout(settleMs);
   mkdirSync(dirname(out), { recursive: true });
-  await page.screenshot({ path: out });
+  await page.screenshot({ path: out, timeout: 300000 });
   const stats = await page.evaluate(async (expr) => { try { return expr ? await eval(expr) : (window.__fpv?.stats ?? null); } catch (e) { return 'eval error: ' + e; } }, args.eval ?? null);
   console.log(JSON.stringify({ url, screenshot: out, stats, warnings: logs.slice(0, 40), errors: errors.slice(0, 40) }, null, 2));
   if (errors.length) code = 1;
