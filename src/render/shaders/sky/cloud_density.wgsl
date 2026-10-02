@@ -22,12 +22,20 @@
 @group(1) @binding(8) var noiseSampler : sampler;
 
 const CUMULUS_SIGMA_KM : f32 = 40.0;
+const NIGHT_CUMULUS_SCALE : f32 = 0.35;
+const NIGHT_CUMULUS_SIN_LO : f32 = -0.2;
+const NIGHT_CUMULUS_SIN_HI : f32 = 0.05;
 const CIRRUS_SIGMA_KM : f32 = 0.9;
 const SHAPE_TILE_KM : f32 = 7.0;
 const DETAIL_TILE_KM : f32 = 1.2;
 const CIRRUS_STREAK_KM : vec3f = vec3f(24.0, 4.0, 4.0);
 
 fn datumRadius() -> f32 { return frame.sky.x + frame.sky.z - frame.camPos.y * 0.001; }
+
+// Fair-weather cumulus is convective and dissipates after sunset (nightCumulusScale() in cloudModel.ts): the night keeps a fraction of the day's cover.
+fn cumulusCoverage() -> f32 {
+  return ap.cloudA.x * mix(NIGHT_CUMULUS_SCALE, 1.0, smoothstep(NIGHT_CUMULUS_SIN_LO, NIGHT_CUMULUS_SIN_HI, frame.sunDir.y));
+}
 
 fn seedOffset() -> vec2f { return vec2f(ap.cloudA.w * 13.37, ap.cloudA.w * 7.13 + 100.0); }
 
@@ -70,7 +78,7 @@ fn cumulusGradient(hs : f32) -> f32 {
 fn cumulusDensity(xz : vec2f, hKm : f32, detail : f32) -> f32 {
   let hf = (hKm - ap.cloudB.x) / (ap.cloudB.y - ap.cloudB.x);
   if (hf <= 0.0 || hf >= 1.0) { return 0.0; }
-  let l = presence(cumulusWeather(xz), ap.cloudA.x);
+  let l = presence(cumulusWeather(xz), cumulusCoverage());
   if (l <= 0.0) { return 0.0; }
   let grad = cumulusGradient(hf / mix(0.3, 1.0, l));
   if (grad <= 0.0) { return 0.0; }

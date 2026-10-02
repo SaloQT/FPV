@@ -13,79 +13,102 @@ function needleDist(n: Needle, u: number, v: number): number {
   return Math.hypot(u - (n.ax + dx * t), v - (n.ay + dy * t));
 }
 
-/** Painter over capsules, later ones on top, with a grid so each sample tests a handful. */
+/** Texels per tile side of the splat raster: the leaf atlas tile size, so each texel centre the atlas samples reads exactly one needle. */
+export const NEEDLE_RES = 512;
+
+/** Painter over capsules, later ones on top: each capsule is splatted once into an id raster, so a spray of 100000 needles costs about as much as one of 1000. */
 function needlePainter(needles: readonly Needle[], extra: Painter | null): Painter {
-  const grid = new Grid<Needle>(16);
-  for (const n of needles) {
-    grid.add(n, Math.min(n.ax, n.bx) - n.r, Math.min(n.ay, n.by) - n.r, Math.max(n.ax, n.bx) + n.r, Math.max(n.ay, n.by) + n.r);
-  }
+  const ids = new Int32Array(NEEDLE_RES * NEEDLE_RES).fill(-1);
+  needles.forEach((n, id) => {
+    const x0 = Math.max(Math.floor((Math.min(n.ax, n.bx) - n.r) * NEEDLE_RES), 0), x1 = Math.min(Math.ceil((Math.max(n.ax, n.bx) + n.r) * NEEDLE_RES), NEEDLE_RES - 1);
+    const y0 = Math.max(Math.floor((Math.min(n.ay, n.by) - n.r) * NEEDLE_RES), 0), y1 = Math.min(Math.ceil((Math.max(n.ay, n.by) + n.r) * NEEDLE_RES), NEEDLE_RES - 1);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (needleDist(n, (x + 0.5) / NEEDLE_RES, (y + 0.5) / NEEDLE_RES) < n.r) ids[y * NEEDLE_RES + x] = id;
+  });
   return (u, v, o) => {
-    const list = grid.at(u, v);
-    for (let i = list.length - 1; i >= 0; i--) {
-      const n = list[i];
-      if (needleDist(n, u, v) >= n.r) continue;
-      o.shade = n.shade; o.hue = n.hue; o.thin = 0.55; o.tu = n.tu; o.tv = n.tv; o.open = n.open;
-      return true;
-    }
-    return extra ? extra(u, v, o) : false;
+    const id = ids[Math.min(Math.max(Math.floor(v * NEEDLE_RES), 0), NEEDLE_RES - 1) * NEEDLE_RES + Math.min(Math.max(Math.floor(u * NEEDLE_RES), 0), NEEDLE_RES - 1)];
+    if (id < 0) return extra ? extra(u, v, o) : false;
+    const n = needles[id];
+    o.shade = n.shade; o.hue = n.hue; o.thin = 0.55; o.tu = n.tu; o.tv = n.tv; o.open = n.open;
+    return true;
   };
 }
 
 const WOOD_SHADE = 0.32;
-const NEEDLE_R = 0.0024;
+/** Needle radius in tile units: about 1.3 texels across at 512 texels per tile, so a needle on a 1.5 m spray is about 4 mm wide where a real one is 1.5. */
+export const NEEDLE_R = 0.0013;
+/** Spacing of needles along a shoot: a real spruce shoot carries one every 1.5-2 mm all round, about 1 mm per side on a 1.5 m card. */
+const NEEDLE_STEP = 0.0013;
+/** Distance between secondary branchlets along a side shoot: about 3 cm on a 1.5 m spray. */
+const SUB_STEP = 0.02;
 
-/** Bottle-brush shoot from (sx, sy) along `ang` (clockwise from up): a thin stem with forward-swept needles all round, paler at the new-growth tip. */
-function shoot(rng: Rng, out: Needle[], sx: number, sy: number, ang: number, reach: number, needle: number, open: number): [number, number] {
-  const dx = Math.sin(ang), dy = -Math.cos(ang) * 0.9;
-  const ex = sx + dx * reach, ey = sy + dy * reach;
-  out.push({ ax: sx, ay: sy, bx: ex, by: ey, r: 0.004, shade: WOOD_SHADE, hue: 0, open, tu: 0, tv: 0 });
-  const count = Math.max(8, Math.round(reach / 0.0042));
-  for (let k = 0; k < count; k++) {
-    const f = 0.06 + 0.94 * (k / (count - 1));
-    const px = sx + dx * reach * f, py = sy + dy * reach * f;
+/**
+ * Bottle-brush shoot from (sx, sy) along `ang` (clockwise from up), drooping by `sag` and turning its tip up again: a thin stem with
+ * forward-swept needles on both flanks and along the top, paler at the new-growth tip. Returns the tip position.
+ */
+function shoot(rng: Rng, out: Needle[], sx: number, sy: number, ang: number, reach: number, needle: number, open: number, sag: number): [number, number] {
+  const side = ang < 0 ? -1 : 1;
+  const steps = Math.max(8, Math.round(reach / NEEDLE_STEP));
+  let x = sx, y = sy;
+  let prevX = x, prevY = y;
+  for (let k = 1; k <= steps; k++) {
+    const f = k / steps;
+    const a = ang + side * sag * (f - 1.6 * f * f);
+    x += Math.sin(a) * reach / steps;
+    y -= Math.cos(a) * 0.9 * reach / steps;
+    if (k % 6 === 0 || k === steps) {
+      out.push({ ax: prevX, ay: prevY, bx: x, by: y, r: 0.0011, shade: 0.42, hue: 0, open, tu: 0, tv: 0 });
+      prevX = x; prevY = y;
+    }
+    if (f < 0.04) continue;
     const len = needle * (0.65 + 0.35 * Math.sin(Math.PI * Math.min(f * 0.9 + 0.1, 1))) * rng.range(0.8, 1.2);
     const fresh = sat((f - 0.72) / 0.28);
-    for (const flank of [-1, 1]) {
-      const a = ang + flank * rng.range(0.45, 1.05);
+    const count = rng.next() < 0.5 ? 4 : 3;
+    for (let j = 0; j < count; j++) {
+      const flank = j % 2 === 0 ? -1 : 1;
+      const spread = j >= 2 ? rng.range(-0.45, 0.45) : flank * rng.range(0.4, 1.2);
+      const na = a + spread;
       out.push({
-        ax: px, ay: py, bx: px + Math.sin(a) * len, by: py - Math.cos(a) * len * 0.9, r: NEEDLE_R,
-        shade: (0.5 + 0.45 * rng.next()) * (0.85 + 0.25 * fresh), hue: fresh > 0.4 ? 0.3 + 0.12 * rng.next() : 0.05 * rng.next(),
+        ax: x, ay: y, bx: x + Math.sin(na) * len, by: y - Math.cos(na) * len * 0.9, r: NEEDLE_R,
+        shade: (0.5 + 0.45 * rng.next()) * (0.85 + 0.25 * fresh), hue: fresh > 0.4 && rng.next() < 0.5 ? 0.3 + 0.12 * rng.next() : 0.05 * rng.next(),
         open: open * (0.75 + 0.25 * f), tu: flank * 0.4 + rng.range(-0.15, 0.15), tv: rng.range(-0.3, 0.3),
       });
     }
   }
-  return [ex, ey];
+  return [x, y];
 }
 
 /**
- * A spruce or fir spray: a curved leader with alternating side shoots that shorten toward the tip and carry short secondary shoots, every
- * one a fine bottle-brush of forward-swept needles. Older needles near the base are darker; the new growth at the tips is a paler yellow-green.
+ * A spruce or fir spray: a gently curved leader with irregular, drooping side shoots that shorten toward the tip and carry short secondary
+ * shoots, every one a fine bottle-brush of forward-swept needles. Older needles near the base are darker; the new growth at the tips is a
+ * paler yellow-green.
  */
 export function sprayPainter(rng: Rng): Painter {
   const needles: Needle[] = [];
   const leader = (t: number): [number, number] => [0.5 + 0.03 * Math.sin(t * 2.6), 0.97 - 0.85 * t];
   for (let i = 0; i < 14; i++) {
     const [ax, ay] = leader(i / 14), [bx, by] = leader((i + 1) / 14);
-    needles.push({ ax, ay, bx, by, r: 0.005, shade: WOOD_SHADE, hue: 0, open: 0.8, tu: 0, tv: 0 });
+    needles.push({ ax, ay, bx, by, r: 0.0026, shade: WOOD_SHADE, hue: 0, open: 0.8, tu: 0, tv: 0 });
   }
-  const shoots = 15;
+  const shoots = 17;
   for (let s = 0; s < shoots; s++) {
-    const t = 0.04 + 0.9 * (s / (shoots - 1));
+    const t = Math.min(0.03 + 0.9 * ((s + rng.range(-0.3, 0.3)) / (shoots - 1)), 0.93);
     const [sx, sy] = leader(t);
     for (const side of [-1, 1]) {
-      const reach = 0.4 * (1 - 0.6 * t) * rng.range(0.85, 1.1);
-      const ang = side * (1.1 - 0.35 * t + rng.range(-0.08, 0.08));
-      const [ex, ey] = shoot(rng, needles, sx, sy, ang, reach, 0.026, 0.8);
-      const subs = Math.round(reach * 12);
+      if (rng.next() < 0.1) continue;
+      const reach = 0.4 * (1 - 0.6 * t) * rng.range(0.65, 1.12);
+      const ang = side * (1.1 - 0.35 * t + rng.range(-0.18, 0.18));
+      const [ex, ey] = shoot(rng, needles, sx, sy, ang, reach, 0.0135, 0.8, rng.range(0.15, 0.5));
+      const subs = Math.round(reach / SUB_STEP);
       for (let k = 0; k < subs; k++) {
-        const f = 0.2 + 0.7 * (k / Math.max(subs - 1, 1));
+        if (rng.next() < 0.12) continue;
+        const f = 0.12 + 0.82 * ((k + rng.range(-0.3, 0.3)) / Math.max(subs - 1, 1));
         const side2 = k % 2 === 0 ? 1 : -1;
-        shoot(rng, needles, sx + (ex - sx) * f, sy + (ey - sy) * f, ang + side2 * rng.range(0.7, 1.1), reach * 0.3 * (1 - 0.5 * f), 0.02, 0.6);
+        shoot(rng, needles, sx + (ex - sx) * f, sy + (ey - sy) * f, ang + side2 * rng.range(0.7, 1.1), 0.2 * reach * (1 - 0.65 * f) * rng.range(0.7, 1.25), 0.0105, 0.6, rng.range(0.1, 0.4));
       }
     }
   }
   const [tx, ty] = leader(1);
-  shoot(rng, needles, tx, ty + 0.02, 0, 0.07, 0.022, 1);
+  shoot(rng, needles, tx, ty + 0.02, 0, 0.07, 0.011, 1, 0);
   return needlePainter(needles, null);
 }
 

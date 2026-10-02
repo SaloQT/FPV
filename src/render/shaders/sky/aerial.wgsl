@@ -29,7 +29,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let p = p0 + dir * t;
       let sun = scatterStep(p, dir, dt, frame.sunDir.xyz, frame.sunIrradiance.rgb);
       var dL = sun.dL;
-      if (moonOn) { dL += scatterStep(p, dir, dt, frame.moonDir.xyz, frame.moonIrradiance.rgb).dL; }
+      if (moonOn) { dL += scatterStep(p, dir, dt, frame.moonDir.xyz, frame.moonIrradiance.rgb * MOON_SCATTER_TINT).dL; }
       lum += thr * dL;
       thr *= sun.trans;
     }

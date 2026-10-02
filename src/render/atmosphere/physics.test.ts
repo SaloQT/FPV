@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AIRGLOW_HEIGHT_KM, AP_MAX_DISTANCE_M, ATMOSPHERE_TOP_KM, MIE_EXTINCTION, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, OZONE_ABSORPTION, OZONE_CENTER_KM,
   OZONE_HALF_WIDTH_KM, PLANET_RADIUS_KM, RAYLEIGH_SCALE_HEIGHT_KM, RAYLEIGH_SCATTER, SKYVIEW_SIZE, apDistanceToSlice, apSliceToDistance,
-  distanceToTop, hgPhase, mediumAt, miePhase, opticalDepthToTop, rayleighPhase, skyViewParams, skyViewUv, subUvToUnit, transmittanceParams,
+  MS_DIPOLE, MS_DIPOLE_MU_HI, MS_DIPOLE_MU_LO, distanceToTop, hgPhase, mediumAt, miePhase, multiScatterDipole, opticalDepthToTop, rayleighPhase, skyViewParams, skyViewUv, subUvToUnit, transmittanceParams,
   transmittanceToTop, transmittanceUv, unitToSubUv, vanRhijn,
 } from './physics';
 
@@ -110,8 +110,8 @@ describe('optical depth and transmittance', () => {
       const ozone = OZONE_ABSORPTION[c] * OZONE_HALF_WIDTH_KM;
       expect(t[c]).toBeCloseTo(rayleigh + mie + ozone, 4);
     }
-    expect(t[0]).toBeCloseTo(0.2029, 3);
-    expect(t[1]).toBeCloseTo(0.2740, 3);
+    expect(t[0]).toBeCloseTo(0.2089, 3);
+    expect(t[1]).toBeCloseTo(0.2732, 3);
     expect(t[2]).toBeCloseTo(0.4061, 3);
   });
 
@@ -119,7 +119,7 @@ describe('optical depth and transmittance', () => {
     const t = transmittanceToTop(PLANET_RADIUS_KM, 1, 2048);
     expect(t[0]).toBeGreaterThan(t[1]);
     expect(t[1]).toBeGreaterThan(t[2]);
-    expect(t[0]).toBeCloseTo(Math.exp(-0.2029), 3);
+    expect(t[0]).toBeCloseTo(Math.exp(-0.2089), 3);
     expect(t[2]).toBeGreaterThan(0.6);
   });
 
@@ -180,12 +180,13 @@ describe('aerosol', () => {
     expect(miePhase(0)).toBeGreaterThan(0.015);
   });
 
-  it('has a narrow glare peak: most of the peak is gone by 6 degrees and 20 degrees is down by more than 15x', () => {
+  it('has a narrow glare peak: seven eighths of the peak is gone by 6 degrees and 20 degrees is down by more than 30x', () => {
     const at = (deg: number): number => miePhase(Math.cos((deg * Math.PI) / 180));
-    expect(at(0)).toBeGreaterThan(5);
-    expect(at(0.8) / at(0)).toBeGreaterThan(0.9);
-    expect(at(5.6) / at(0)).toBeLessThan(0.35);
-    expect(at(20) / at(0)).toBeLessThan(1 / 15);
+    expect(at(0)).toBeGreaterThan(10);
+    expect(at(0.8) / at(0)).toBeGreaterThan(0.8);
+    expect(at(5.6) / at(0)).toBeLessThan(0.12);
+    expect(at(5.6) / at(0.8)).toBeLessThan(0.13);
+    expect(at(20) / at(0)).toBeLessThan(1 / 30);
     expect(at(90)).toBeGreaterThan(0.02);
     expect(at(90)).toBeLessThan(0.06);
   });
@@ -216,5 +217,41 @@ describe('airglow geometry', () => {
     expect(vanRhijn(0)).toBeGreaterThan(5.5);
     expect(vanRhijn(0)).toBeLessThan(6.5);
     expect(vanRhijn(0.5)).toBeGreaterThan(vanRhijn(0.9));
+  });
+});
+
+describe('ozone absorption', () => {
+  it('is a Chappuis band: red and green absorbed ~20x more than blue, red a little weaker than green (a stronger red tilts twilight yellow-green, a weaker one magenta)', () => {
+    const [r, g, b] = OZONE_ABSORPTION;
+    expect(r).toBeLessThan(g);
+    expect(r / g).toBeGreaterThan(0.8);
+    expect(g / b).toBeGreaterThan(15);
+  });
+});
+
+describe('twilight multiple-scattering dipole', () => {
+  it('is exactly 1 for a light above the horizon and at the zenith view, whatever the azimuth', () => {
+    for (const c of [-1, -0.3, 0, 0.7, 1]) expect(multiScatterDipole(MS_DIPOLE_MU_HI + 0.2, c)).toBe(1);
+    for (const mu of [-0.3, -0.05, 0.4]) expect(multiScatterDipole(mu, 0)).toBe(1);
+  });
+
+  it('after sunset puts 1 + MS_DIPOLE on the glow side and 1 - MS_DIPOLE on the shadow side, with a unit mean over azimuth', () => {
+    const mu = MS_DIPOLE_MU_LO - 0.05;
+    expect(multiScatterDipole(mu, 1)).toBeCloseTo(1 + MS_DIPOLE, 12);
+    expect(multiScatterDipole(mu, -1)).toBeCloseTo(1 - MS_DIPOLE, 12);
+    let mean = 0;
+    const n = 360;
+    for (let i = 0; i < n; i++) mean += multiScatterDipole(mu, Math.cos(((i + 0.5) / n) * 2 * Math.PI)) / n;
+    expect(mean).toBeCloseTo(1, 9);
+  });
+
+  it('never goes negative and fades monotonically between its two light elevations', () => {
+    expect(1 - MS_DIPOLE).toBeGreaterThan(0);
+    let prev = multiScatterDipole(MS_DIPOLE_MU_LO, -1);
+    for (let mu = MS_DIPOLE_MU_LO; mu <= MS_DIPOLE_MU_HI; mu += 0.005) {
+      const g = multiScatterDipole(mu, -1);
+      expect(g).toBeGreaterThanOrEqual(prev - 1e-12);
+      prev = g;
+    }
   });
 });

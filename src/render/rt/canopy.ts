@@ -10,6 +10,12 @@ export const CANOPY_EXTINCTION = 0.24;
 /** Radius fraction (of the crown sphere) inside which the leaf density is full; it falls off to zero at the proxy surface (fluffy rim). */
 export const CANOPY_CORE = 0.6;
 export const CANOPY_SAMPLES = 4;
+/**
+ * The rim radius is perturbed so the shadow is not the ellipse a sphere casts: rho' = rho * (1 - CANOPY_RIM_NOISE * (2 noise - 1) + CANOPY_LOBE * lobe),
+ * a clump-scale bump plus a crown-scale lobe pattern (both zero-mean, so the mean crown size is kept).
+ */
+export const CANOPY_RIM_NOISE = 0.3;
+export const CANOPY_LOBE = 0.15;
 /** The density multiplier is CANOPY_GAP_BASE + CANOPY_GAP_SPAN * noise, noise in [0, 1]: mean 1 for a mean noise of 0.5. */
 export const CANOPY_GAP_BASE = 0.4;
 export const CANOPY_GAP_SPAN = 1.2;
@@ -41,28 +47,40 @@ export function sphereChord(c: readonly number[], r: number, o: readonly number[
   return t1 > t0 ? [t0, t1] : null;
 }
 
-/** Optical depth along the chord: CANOPY_SAMPLES midpoint samples of extinction x (rim falloff) x (clump noise multiplier). */
+/** Crown-scale lobe pattern in [-1, 1] at the unit offset u = (p - c) / r from the crown centre c; the phase differs per crown. */
+export function canopyLobe(u: readonly number[], c: readonly number[]): number {
+  const ph = c[0] * 0.73 + c[2] * 1.31;
+  return Math.sin(3.3 * u[0] + ph) * Math.sin(2.6 * u[2] + 1.7 * u[1] + ph * 1.3);
+}
+
+/**
+ * Optical depth along the chord: CANOPY_SAMPLES samples of extinction x (rim falloff) x (clump noise multiplier), the sample inside each of the
+ * equal chord segments at fraction `jitter` of it (the shader uses a per-ray random value so the temporal / a-trous passes average the dither;
+ * 0.5 is the deterministic midpoint rule).
+ */
 export function canopyOpticalDepth(
   c: readonly number[], r: number, o: readonly number[], d: readonly number[], tMax: number,
-  noise: (x: number, y: number, z: number) => number = () => 0.5,
+  noise: (x: number, y: number, z: number) => number = () => 0.5, jitter = 0.5,
 ): number {
   const chord = sphereChord(c, r, o, d, tMax);
   if (!chord) return 0;
   const ds = (chord[1] - chord[0]) / CANOPY_SAMPLES;
   let tau = 0;
   for (let i = 0; i < CANOPY_SAMPLES; i++) {
-    const t = chord[0] + ds * (i + 0.5);
+    const t = chord[0] + ds * (i + jitter);
     const x = o[0] + d[0] * t, y = o[1] + d[1] * t, z = o[2] + d[2] * t;
-    const rho = Math.hypot(x - c[0], y - c[1], z - c[2]) / r;
+    const n = noise(x / CANOPY_CLUMP_M, y / CANOPY_CLUMP_M, z / CANOPY_CLUMP_M);
+    const u = [(x - c[0]) / r, (y - c[1]) / r, (z - c[2]) / r];
+    const rho = Math.hypot(u[0], u[1], u[2]) * (1 - CANOPY_RIM_NOISE * (2 * n - 1) + CANOPY_LOBE * canopyLobe(u, c));
     const leaf = 1 - smoothstep(CANOPY_CORE, 1, rho);
-    tau += CANOPY_EXTINCTION * leaf * (CANOPY_GAP_BASE + CANOPY_GAP_SPAN * noise(x / CANOPY_CLUMP_M, y / CANOPY_CLUMP_M, z / CANOPY_CLUMP_M)) * ds;
+    tau += CANOPY_EXTINCTION * leaf * (CANOPY_GAP_BASE + CANOPY_GAP_SPAN * n) * ds;
   }
   return tau;
 }
 
 export function canopyTransmittance(
   c: readonly number[], r: number, o: readonly number[], d: readonly number[], tMax: number,
-  noise?: (x: number, y: number, z: number) => number,
+  noise?: (x: number, y: number, z: number) => number, jitter?: number,
 ): number {
-  return Math.exp(-canopyOpticalDepth(c, r, o, d, tMax, noise));
+  return Math.exp(-canopyOpticalDepth(c, r, o, d, tMax, noise, jitter));
 }

@@ -7,7 +7,7 @@ export const PATCH_SIZE = 4;
 export const CHUNK_SLOTS = 64;
 export const BLADE_BYTES = 32;
 export const CHUNK_BYTES = 16;
-export const VEG_PARAM_BYTES = 144;
+export const VEG_PARAM_BYTES = 160;
 /** Blade instance buffers never exceed this, whatever the tier asks for (further clamped to the device limits). */
 export const MAX_GRASS_BYTES = 192 * 1024 * 1024;
 /** Share of the full-circle instance count each LOD region can hold. A wide FPV lens sees about 0.4 of the circle, but a tilted-down view
@@ -111,6 +111,16 @@ export const TREE_TIER: Readonly<Record<RenderQuality, Pick<TreeParams, 'lodScal
   ultra: { lodScale: 1.25, maxDistance: 2400, minPixels: 1.5 },
 };
 
+/** Canopy cards standing in for trees beyond the real-tree draw distance (treePlanFar.ts): the most cards a tier holds. */
+export const FAR_TIER: Readonly<Record<RenderQuality, { cards: number }>> = {
+  low: { cards: 14000 },
+  medium: { cards: 30000 },
+  high: { cards: 50000 },
+  ultra: { cards: 70000 },
+};
+/** Cards for ground with no real trees show from this camera distance (m); a card in front of real trees shows from the tree draw distance. */
+export const FAR_UNCOVERED_NEAR = 150;
+
 export interface VegParamInput {
   windDir: readonly [number, number];
   windSpeed: number;
@@ -121,6 +131,8 @@ export interface VegParamInput {
   seed: number;
   cameraXZ: readonly [number, number];
   tree: TreeParams;
+  /** Cards fade out towards this camera distance (m); 0 draws none. */
+  farDistance: number;
 }
 
 export interface VegParamViews {
@@ -134,7 +146,7 @@ export function createParamViews(): VegParamViews {
   return { f32: new Float32Array(buf), i32: new Int32Array(buf), u32: new Uint32Array(buf) };
 }
 
-/** Writes the VegParams uniform (layout in shaders/vegetation/veg_params.wgsl, 9 blocks of 16 bytes). */
+/** Writes the VegParams uniform (layout in shaders/vegetation/veg_params.wgsl, 10 blocks of 16 bytes). */
 export function packVegParams(v: VegParamViews, p: VegParamInput): void {
   const { f32, i32, u32 } = v;
   const b = p.budget;
@@ -163,4 +175,5 @@ export function packVegParams(v: VegParamViews, p: VegParamInput): void {
   u32[24] = b.caps[0]; u32[25] = b.caps[1]; u32[26] = b.caps[2]; u32[27] = b.chunkCap;
   f32[28] = p.tree.lodScale; f32[29] = p.tree.maxDistance; f32[30] = p.tree.minPixels; f32[31] = 0;
   u32[32] = p.tree.slots; u32[33] = p.tree.draws; u32[34] = 0; u32[35] = 0;
+  f32[36] = p.farDistance; f32[37] = 0; f32[38] = 0; f32[39] = 0;
 }

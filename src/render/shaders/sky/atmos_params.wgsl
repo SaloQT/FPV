@@ -11,16 +11,20 @@ const MIE_SCATTER : f32 = 0.092;
 const MIE_EXTINCTION : f32 = 0.1;
 const MIE_H : f32 = 1.4;
 const MIE_G : f32 = 0.6;
-const MIE_NARROW_G : f32 = 0.93;
-const MIE_NARROW_WEIGHT : f32 = 0.22;
+const MIE_NARROW_G : f32 = 0.96;
+const MIE_NARROW_WEIGHT : f32 = 0.12;
 const MIE_SIDE_G : f32 = 0.3;
 const MIE_SIDE_WEIGHT : f32 = 0.22;
 const MIE_BACK_G : f32 = -0.3;
 const MIE_BACK_WEIGHT : f32 = 0.16;
-const OZONE_ABSORB : vec3f = vec3f(1.1e-3, 1.7e-3, 0.09e-3);
+const OZONE_ABSORB : vec3f = vec3f(1.5e-3, 1.65e-3, 0.09e-3);
 const OZONE_CENTER : f32 = 25.0;
 const OZONE_HALF : f32 = 15.0;
 const GROUND_ALBEDO : f32 = 0.3;
+const MOON_SCATTER_TINT : vec3f = vec3f(0.92, 1.0, 1.1);
+const MS_DIPOLE : f32 = 0.8;
+const MS_DIPOLE_MU_LO : f32 = -0.1;
+const MS_DIPOLE_MU_HI : f32 = 0.03;
 
 struct Medium {
   scatterR : vec3f,
@@ -76,6 +80,13 @@ fn planetVisibility(p : vec3f, lightDir : vec3f) -> f32 {
   return select(1.0, 0.0, b < 0.0 && b * b - c > 0.0);
 }
 
+// Twilight anisotropy of the multiple-scattering term (see multiScatterDipole() in physics.ts); dir . horizontal light direction at the zenith is 0.
+fn multiScatterDipole(muL : f32, lightDir : vec3f, dir : vec3f) -> f32 {
+  let hl = length(lightDir.xz);
+  if (hl < 1e-4) { return 1.0; }
+  return 1.0 + MS_DIPOLE * (1.0 - smoothstep(MS_DIPOLE_MU_LO, MS_DIPOLE_MU_HI, muL)) * (dot(dir.xz, lightDir.xz) / hl);
+}
+
 fn sampleMultiScatter(r : f32, muLight : f32) -> vec3f {
   let uv = vec2f(unitToSubUv(muLight * 0.5 + 0.5, 32.0), unitToSubUv(saturate1((r - frame.sky.x) / (frame.sky.y - frame.sky.x)), 32.0));
   return textureSampleLevel(multiScatterLUT, linearClamp, uv, 0.0).rgb;
@@ -95,7 +106,7 @@ fn scatterStep(p : vec3f, dir : vec3f, dt : f32, lightDir : vec3f, lightE : vec3
   let muL = dot(up, lightDir);
   let c = dot(dir, lightDir);
   let direct = sampleTransmittance(r, muL) * planetVisibility(p, lightDir) * (med.scatterR * rayleighPhase(c) + vec3f(med.scatterM * miePhase(c)));
-  let multi = sampleMultiScatter(r, muL) * (med.scatterR + vec3f(med.scatterM));
+  let multi = sampleMultiScatter(r, muL) * (med.scatterR + vec3f(med.scatterM)) * multiScatterDipole(muL, lightDir, dir);
   let s = lightE * (direct + multi);
   let stepT = exp(-med.extinction * dt);
   var res : StepResult;

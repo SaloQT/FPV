@@ -30,8 +30,14 @@ const COLOUR_RANGE : f32 = 3.0;
 // How far the painted per-leaf tilt bends the crown normal, and the height (m) of the bark fissures for the bump normal.
 const LEAF_TILT : f32 = 0.7;
 const BARK_BUMP : f32 = 0.014;
-// A leaf passes about as much light as it reflects (transmittance 0.05-0.1 against reflectance 0.1-0.15 in green), so the variant's translucency is scaled up.
-const LEAF_TRANSMIT : f32 = 1.9;
+// A thin leaf lamina passes about 0.8 of what it reflects, and common/pbr.wgsl already applies that 0.8 to the translucency written here, so a lamina
+// texel (atlas translucency 1) of a broadleaf variant ends up at 1.
+const LEAF_TRANSMIT : f32 = 2.2;
+// Light a leaf passes is shifted yellow-green: chlorophyll takes out blue and more red than green, so the transmitted spectrum is narrower than the reflected one.
+const TRANSMIT_TINT : vec3f = vec3f(1.1, 1.03, 0.78);
+// The lowest ambient factor of a leaf deep in a crown: sky light scattered and transmitted by the neighbouring leaves keeps shade foliage coloured, never black.
+const LEAF_AO_FLOOR : f32 = 0.6;
+const BARK_AO_FLOOR : f32 = 0.4;
 // Far-LOD canopy cards only show their sunlit faces, so they are painted a little darker to match the average of the full-detail crown.
 const BLOB_DARKEN : f32 = 0.78;
 
@@ -188,8 +194,9 @@ fn fs(in : VsOut) -> FsOut {
     n = normalize(n - 2.0 * min(dot(n, eye), 0.0) * eye);
     rough = select(LEAF_ROUGHNESS, NEEDLE_ROUGHNESS, cls == CLASS_NEEDLE);
     translucency = min(v.leafTone.a * d.b * LEAF_TRANSMIT, 1.0);
-    ao = saturate1(in.shade.x * (0.4 + 0.6 * d.a));
-    col *= (0.3 + 0.7 * ao) * select(1.0, BLOB_DARKEN, cls >= CLASS_BLOB);
+    let occ = saturate1(in.shade.x * (0.55 + 0.45 * d.a));
+    ao = mix(LEAF_AO_FLOOR, 1.0, occ);
+    col *= mix(vec3f(1.0), TRANSMIT_TINT, translucency * 0.5) * mix(0.8, 1.0, occ) * select(1.0, BLOB_DARKEN, cls >= CLASS_BLOB);
   } else {
     let twig = in.shade.z > 0.004;
     let tan = uvTangents(dlx, dly, dux, duy);
@@ -207,7 +214,7 @@ fn fs(in : VsOut) -> FsOut {
       let grad = (hx * r1 + hy * r2) / det;
       n = normalize(n - BARK_BUMP * (grad - n * dot(n, grad)));
     }
-    ao = in.shade.x * (0.55 + 0.45 * smoothstep(0.0, 0.5, h));
+    ao = mix(BARK_AO_FLOOR, 1.0, in.shade.x) * (0.6 + 0.4 * smoothstep(0.0, 0.5, h));
   }
 
   var o : FsOut;

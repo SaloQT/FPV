@@ -1,8 +1,8 @@
 /**
  * Ray-tracing dev page: `?dev=rt` draws a small test scene (heightfield + registered proxies) so the compute ray tracer's shadows, GI,
  * probes and denoisers can be inspected. WebGPU has no hardware RT; everything here is compute shaders.
- *   ?scene=gate|bleed|canyon|hills|gen   gate: hard shadow of a gate/pole/sphere on flat ground (default); bleed: red box on white ground;
- *                                        canyon: sky occlusion between walls; hills: terrain self-shadowing at dusk; gen: generateTerrain
+ *   ?scene=gate|bleed|canyon|hills|gen|plain   gate: hard shadow of a gate/pole/sphere on flat ground (default); bleed: red box on white ground;
+ *                                        canyon: sky occlusion between walls; hills: terrain self-shadowing at dusk; plain: an 8 km plain for cloud shadows; gen: generateTerrain
  *                                        with every proxy kind (default when test=1)
  *   ?dbg=0..6        0 lit, 1 sun shadow, 2 diffuse GI, 3 ambient occlusion, 4 specular, 5 probe SH, 6 variance (r) / history length (g)
  *   ?t=noon|dusk|night  (default: the scene's own)   ?sunel=deg&sunaz=deg  overrides the sun placement (azimuth clockwise from north)
@@ -11,6 +11,8 @@
  *   ?quality=low|medium|high|ultra (default high)   ?tex=1 checker on the ground   ?osd=0
  *   ?mover=orbit|jump&speed=m/s&jump=frame   a dynamic sphere that circles the scene / hops once (dynamic BVH + motion vectors)
  *   ?pan=deg/frame   yaw the camera each frame   ?cx=&cy=&cz=&tx=&ty=&tz=&fov=   camera overrides   ?atmo=real  the real atmosphere module
+ *   ?cloud=x&tsec=s  with atmo=real: cumulus coverage 0..1 (0 = clouds off, default the module's own) and the simulated time in seconds the clouds are
+ *                    drawn for (they drift with the wind); dbg=1 with a high sun shows the cloud shadow patches on the ground
  *   ?canopy=1        three invisible leaf-crown proxies (sphere + trunk) to inspect the soft canopy shadows on the ground
  *   ?flat=x0,y0,x1,y1   screen-fraction rectangle used by noise() instead of the scene's own flat region
  *   ?test=1          runs the GPU-vs-CPU self test (heightfield DDA vs sampler.raycast, BVH vs brute force) into window.__fpv.rtTest
@@ -56,6 +58,8 @@ function readParams() {
     checker: q.get('tex') === '1' ? TEX_AMPLITUDE : 0,
     osd: q.get('osd') !== '0',
     realSky: q.get('atmo') === 'real',
+    cloud: opt('cloud'),
+    tsec: num('tsec', 0),
     mover: (mover === 'orbit' || mover === 'jump' ? mover : 'none') as MoverMode,
     speed: num('speed', 4),
     jump: Math.round(num('jump', 6)),
@@ -122,8 +126,9 @@ function createCanopyModule(sampler: TerrainSampler): RenderModule {
   };
 }
 
-async function buildModules(realSky: boolean, scene: RenderModule, rt: RenderModule, extra: RenderModule[]): Promise<RenderModule[]> {
-  const sky = realSky ? (await import('../render/atmosphere')).createAtmosphereModule() : createDevAtmosphere();
+async function buildModules(realSky: boolean, cloud: number | null, scene: RenderModule, rt: RenderModule, extra: RenderModule[]): Promise<RenderModule[]> {
+  const clouds = cloud === null ? {} : { cloudsEnabled: cloud > 0, cloudCoverage: cloud };
+  const sky = realSky ? (await import('../render/atmosphere')).createAtmosphereModule(clouds) : createDevAtmosphere();
   return [sky, scene, ...extra, rt];
 }
 
@@ -134,7 +139,7 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
   const settings: Settings = { ...DEFAULT_SETTINGS, quality: params.quality, dynamicResolution: false, observer: { latitudeDeg: 46, longitudeDeg: 8, altitudeM: 300 } };
   const rt = createRTModule();
   const sceneModule = createDevSceneModule(dev, { mode: params.mover, speed: params.speed, jumpFrame: params.jump }, params.checker);
-  const renderer = await Renderer.create(canvas, settings, await buildModules(params.realSky, sceneModule, rt, params.canopy ? [createCanopyModule(dev.sampler)] : []), createPostProcessor());
+  const renderer = await Renderer.create(canvas, settings, await buildModules(params.realSky, params.cloud, sceneModule, rt, params.canopy ? [createCanopyModule(dev.sampler)] : []), createPostProcessor());
   const scene: SceneData = { terrain: dev.terrain, sampler: dev.sampler, track: null };
   renderer.setScene(scene);
   rt.setDebugView(params.dbg);
@@ -154,7 +159,7 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
 
   const step = (): void => {
     lookAt(pos, target, params.pan * frameCount, camera.quat);
-    input.time = frameCount * FIXED_DT;
+    input.time = params.tsec + frameCount * FIXED_DT;
     renderer.render(input);
     frameCount++;
   };

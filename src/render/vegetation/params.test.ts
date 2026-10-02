@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderQuality } from '../../contracts';
 import { qualityProfile } from '../contracts';
-import { BLADE_BYTES, CHUNK_SLOTS, MAX_GRASS_BYTES, PATCH_SIZE, TREE_TIER, VEG_PARAM_BYTES, annulusSlots, createParamViews, grassBudget, nearDensity, packVegParams, type VegParamInput } from './params';
+import { BLADE_BYTES, FAR_TIER, FAR_UNCOVERED_NEAR, CHUNK_SLOTS, MAX_GRASS_BYTES, PATCH_SIZE, TREE_TIER, VEG_PARAM_BYTES, annulusSlots, createParamViews, grassBudget, nearDensity, packVegParams, type VegParamInput } from './params';
 import { TIER_LIMITS } from './placement';
 
 const TIERS: RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
@@ -128,11 +128,23 @@ describe('TREE_TIER', () => {
   });
 });
 
+describe('FAR_TIER', () => {
+  it('holds more canopy cards in each higher tier, and uncovered ground shows its cards before the lowest tier draws real trees', () => {
+    for (let i = 1; i < TIERS.length; i++) expect(FAR_TIER[TIERS[i]].cards).toBeGreaterThan(FAR_TIER[TIERS[i - 1]].cards);
+    expect(FAR_UNCOVERED_NEAR).toBeLessThan(TREE_TIER.low.maxDistance);
+  });
+
+  it('keeps the card triangles of every tier (two per card) under the 160k that three instanced draws of them stay cheap at', () => {
+    for (const t of TIERS) expect(2 * FAR_TIER[t].cards).toBeLessThan(160_000);
+  });
+});
+
 describe('packVegParams', () => {
   const budget = grassBudget(qualityProfile('high'));
   const base: VegParamInput = {
     windDir: [3, 4], windSpeed: 6, quad: null, budget, waterLevel: 12.5, seed: 77, cameraXZ: [100.3, -250.9],
     tree: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, slots: 4096, draws: 36 },
+    farDistance: 3500,
   };
   const pack = (over: Partial<VegParamInput> = {}) => {
     const v = createParamViews();
@@ -140,10 +152,11 @@ describe('packVegParams', () => {
     return v;
   };
 
-  it('fills exactly the 144-byte uniform of nine vec4 blocks', () => {
+  it('fills exactly the 160-byte uniform of ten vec4 blocks', () => {
     const v = createParamViews();
     expect(v.f32.byteLength).toBe(VEG_PARAM_BYTES);
-    expect(v.f32.length).toBe(36);
+    expect(v.f32.length).toBe(40);
+    expect(pack().f32[36]).toBe(3500);
   });
 
   it('normalises the wind direction, keeps the speed and survives a zero vector', () => {

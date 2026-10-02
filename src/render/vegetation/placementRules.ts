@@ -27,6 +27,14 @@ const pack = (r: number, g: number, b: number, a: number): number => {
   return (q(r) | (q(g) << 8) | (q(b) << 16) | (q(a) << 24)) >>> 0;
 };
 
+/** One far-field canopy sample: expected trees per 3 m placement cell, the species and size of a typical tree there. */
+export interface Canopy {
+  density: number;
+  variant: number;
+  scale: number;
+  tint: number;
+}
+
 /** Scene-independent density fields and species rules for trees, bushes and rocks; every draw is a hash of the cell, so results do not depend on visit order. */
 export class PlacementRules {
   private readonly sStand: number;
@@ -113,6 +121,44 @@ export class PlacementRules {
       return 2;
     }
     return 0;
+  }
+
+  /**
+   * The expected tree density at (x, z) by the same stand, ground and altitude rules as `plant`, without the per-cell draw, so far hills
+   * can be dressed with canopy where the fields say forest. (cx, cz) keys the species draws; `out.density` is the tree probability of one 3 m cell.
+   */
+  canopy(cx: number, cz: number, x: number, z: number, out: Canopy): void {
+    const f = this.f;
+    out.density = 0;
+    const stand = smoothstep(0.42, 0.57, fbm2(x / 380, z / 380, this.sStand, 3));
+    const glade = smoothstep(0.62, 0.76, fbm2(x / 85, z / 85, this.sGlade, 2));
+    const treeMax = (0.03 + 0.97 * stand) * (1 - 0.88 * glade);
+    const soil = f.soil(x, z);
+    if (soil <= MIN_SOIL || treeMax < 0.01) return;
+    const tan = f.gradient(x, z);
+    const h = f.height(x, z);
+    const flow = f.flow(x, z);
+    if (tan >= MAX_TAN || h < this.water + 0.8 || flow >= RIVER_FLOW) return;
+    const hRel = (h - this.lo) / this.range;
+    const line = 0.66 + 0.2 * (valueNoise2(x / 140, z / 140, this.sLine) - 0.5);
+    if (hRel >= line) return;
+    const wet = f.wetness(x, z);
+    const base = smoothstep(0.3, 0.55, soil) * (1 - smoothstep(0.3, MAX_TAN, tan)) * (1 - smoothstep(line - 0.14, line, hRel)) * (1 - smoothstep(0.6, RIVER_FLOW, flow));
+    out.density = Math.min(0.85, treeMax * (0.55 + 0.9 * wet)) * base;
+    const r2 = this.draw(cx, cz, 1), r3 = this.draw(cx, cz, 2), r4 = this.draw(cx, cz, 3), r5 = this.draw(cx, cz, 4);
+    const conifer = this.conifer(x, z, hRel, wet);
+    const b = 0.85 + 0.3 * r5, hue = (this.draw(cx, cz, 6) - 0.5) * 0.16;
+    if (r2 < conifer) {
+      const pine = 0.15 + 0.7 * (1 - smoothstep(0.3, 0.7, soil)) * (1 - wet);
+      out.variant = r3 < pine ? VARIANTS_OF.pine[0] : VARIANTS_OF.spruce[(r3 - pine) / (1 - pine) < 0.5 ? 0 : 1];
+      out.tint = pack(b * (1 + 0.4 * hue), b, b * (1 - 0.4 * hue), 1);
+    } else {
+      const birch = 0.08 + 0.4 * wet;
+      out.variant = r3 < birch ? VARIANTS_OF.birch[0] : VARIANTS_OF.oak[(r3 - birch) / (1 - birch) < 0.5 ? 0 : 1];
+      out.tint = pack(b * (1 + hue), b, b * (1 - hue), 1);
+    }
+    const age = smoothstep(0.35, 0.65, fbm2(x / 170, z / 170, this.sAge, 2));
+    out.scale = Math.min(Math.max((0.62 + 0.5 * age) * (0.6 + 0.8 * Math.pow(r4, 0.8)) * (1 - 0.3 * smoothstep(line - 0.25, line, hRel)), MIN_TREE_SCALE), MAX_TREE_SCALE);
   }
 
   /** Rock candidate of fine cell (cx, cz): steep, bare or stream-side ground, in clumps. Fills `out` (scale = radius) and returns whether one is wanted. */

@@ -4,6 +4,8 @@
 
 const CANOPY_EXTINCTION : f32 = 0.24;
 const CANOPY_CORE : f32 = 0.6;
+const CANOPY_RIM_NOISE : f32 = 0.3;
+const CANOPY_LOBE : f32 = 0.15;
 const CANOPY_GAP_BASE : f32 = 0.4;
 const CANOPY_GAP_SPAN : f32 = 1.2;
 const CANOPY_INV_CLUMP : f32 = 1.1111111;
@@ -27,6 +29,16 @@ fn valueNoise3(p : vec3f) -> f32 {
   return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z);
 }
 
+fn canopyLobe(u : vec3f, c : vec3f) -> f32 {
+  let ph = c.x * 0.73 + c.z * 1.31;
+  return sin(3.3 * u.x + ph) * sin(2.6 * u.z + 1.7 * u.y + ph * 1.3);
+}
+
+// Per-ray random in [0, 1) (origin, direction and frame): the chord samples are dithered with it, the temporal / a-trous passes average it out.
+fn canopyJitter(o : vec3f, d : vec3f) -> f32 {
+  return hash31(bitcast<vec3u>(o * 97.0 + d * 1013.0 + vec3f(f32(frameIndex() & 1023u) * 0.7548776662)));
+}
+
 // Optical depth of crown sphere `i` along o + t*d (unit d) within [0, tMax].
 fn canopyOpticalDepth(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
   let c = bitcast<vec4f>(primWord(i, 0u)).xyz;
@@ -40,11 +52,15 @@ fn canopyOpticalDepth(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
   let t1 = min(-b + s, tMax);
   if (t1 <= t0) { return 0.0; }
   let ds = (t1 - t0) / f32(CANOPY_SAMPLES);
+  let jitter = canopyJitter(o, d);
   var tau = 0.0;
   for (var k = 0u; k < CANOPY_SAMPLES; k++) {
-    let p = o + d * (t0 + ds * (f32(k) + 0.5));
-    let leaf = 1.0 - smoothstep(CANOPY_CORE, 1.0, length(p - c) / r);
-    tau += leaf * (CANOPY_GAP_BASE + CANOPY_GAP_SPAN * valueNoise3(p * CANOPY_INV_CLUMP));
+    let p = o + d * (t0 + ds * (f32(k) + jitter));
+    let n = valueNoise3(p * CANOPY_INV_CLUMP);
+    let u = (p - c) / r;
+    let rho = length(u) * (1.0 - CANOPY_RIM_NOISE * (2.0 * n - 1.0) + CANOPY_LOBE * canopyLobe(u, c));
+    let leaf = 1.0 - smoothstep(CANOPY_CORE, 1.0, rho);
+    tau += leaf * (CANOPY_GAP_BASE + CANOPY_GAP_SPAN * n);
   }
   return tau * ds * CANOPY_EXTINCTION;
 }

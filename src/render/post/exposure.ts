@@ -9,8 +9,9 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * the centre and, mildly, the ground. By day the darkest 30% of the frame (forest shade) is cut from that mean too: a frame of dark shade
  * with sunlit grass and sky used to open the camera 2.5 EV, which washed the grass out to code 200 and blew the sky; now the sunlit parts
  * decide (grass near code 140, the shade still readable) and an overcast frame, with everything dim, still brightens. The exposure then
- * follows highlight priority: the brightest ~12% of the frame (sunlit ground, sky, clouds) never lands above ~0.9 scene-linear (code ~205);
- * a low sun with a bright sky near it lowers the exposure up to protectMaxEv. The key itself falls with the metered scene luminance so a
+ * follows highlight priority: the brightest ~12% of the frame (sunlit ground, sky, clouds) never lands above ~0.7 scene-linear (code ~200),
+ * which keeps a dusk sky off the white plateau (sun 5 degrees up: 1.4% of the frame at code 250 or more instead of 3.5%); a low sun with a bright sky near
+ * it lowers the exposure up to protectMaxEv. The key itself falls with the metered scene luminance so a
  * dark scene stays dark.
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
@@ -56,11 +57,11 @@ export const EXPOSURE_TUNING = {
   /** The bottom row weighs 1 + vertBias and the top row 1 - vertBias: the ground leads, but the sky counts (a sunlit meadow is not metered as if it were forest shade). */
   vertBias: 0.3,
   /**
-   * Highlight priority: the brightest clipFrac of the (weighted) frame (sunlit ground, sky, clouds) may sit at most clipEv above the key, i.e. at ~0.9
-   * scene-linear (display code ~205); the exposure gives up to protectMaxEv to get there (a low sun with a bright sky near it).
+   * Highlight priority: the brightest clipFrac of the (weighted) frame (sunlit ground, sky, clouds) may sit at most clipEv above the key, i.e. at ~0.7
+   * scene-linear (display code ~200); the exposure gives up to protectMaxEv to get there (a low sun with a bright sky near it).
    */
   clipFrac: 0.12,
-  clipEv: 2,
+  clipEv: 1.7,
   protectMaxEv: 3,
   stride: 2,
   weightScale: 64,

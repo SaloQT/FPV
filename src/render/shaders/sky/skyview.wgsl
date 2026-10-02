@@ -60,7 +60,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 #ifdef MOON_PASS
   let mu = clamp(frame.moonDir.y, -1.0, 1.0);
   let light = vec3f(sqrt(max(1.0 - mu * mu, 0.0)), mu, 0.0);
-  textureStore(outTex, vec2i(gid.xy), vec4f(marchSky(dir, r, light, frame.moonIrradiance.rgb), 1.0));
+  textureStore(outTex, vec2i(gid.xy), vec4f(marchSky(dir, r, light, frame.moonIrradiance.rgb * MOON_SCATTER_TINT), 1.0));
 #else
   let mu = clamp(frame.sunDir.y, -1.0, 1.0);
   let light = vec3f(sqrt(max(1.0 - mu * mu, 0.0)), mu, 0.0);

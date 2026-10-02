@@ -230,6 +230,20 @@ describe('targetTotalEv', () => {
     expect(targetTotalEv(KEY_EV, DAY_PRE, KEY_EV + T.clipEv + 10)).toBeCloseTo(noHigh - T.protectMaxEv, 9);
   });
 
+  it('holds the brightest 12% of a day frame at about 0.7 scene-linear whatever the shade around it', () => {
+    const hist = new Float64Array(T.bins);
+    for (let i = 0; i < 80; i++) accumulate(hist, 0.02, 0.5, 0.5);
+    for (let i = 0; i < 20; i++) accumulate(hist, 0.8, 0.5, 0.5);
+    const mean = meteredMeanEv(hist, DAY_PRE) as number;
+    const high = topQuantileEv(hist) as number;
+    const [ratio] = exposureOutput(targetTotalEv(mean, DAY_PRE, high), DAY_PRE, mean);
+    const ceiling = T.key * 2 ** T.clipEv;
+    expect(ceiling).toBeGreaterThan(0.65);
+    expect(ceiling).toBeLessThan(0.75);
+    expect(2 ** high * ratio).toBeCloseTo(ceiling, 1);
+    expect(2 ** mean * ratio).toBeLessThan(T.key);
+  });
+
   it('takes at most protectMaxEv from a lift, so a dark scene with a bright decile is still brightened', () => {
     const [ratio] = exposureOutput(targetTotalEv(KEY_EV - 3, DAY_PRE, KEY_EV + 3), DAY_PRE, KEY_EV - 3);
     expect(ratio).toBeCloseTo(2 ** (3 - T.protectMaxEv), 9);

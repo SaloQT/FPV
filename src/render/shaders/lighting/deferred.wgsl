@@ -171,6 +171,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 
   var color = direct * pre + indirect + msc.a * EMISSIVE_MAX_NITS * alb.rgb * pre;
   let ap = sampleAerialPerspective(uv, dist);
-  color = color * ap.a + ap.rgb * pre;
+  color = color * select(1.0, ap.a, ap.a >= 0.0 && ap.a <= 1.0) + finiteNits(ap.rgb) * pre;
   textureStore(hdrOut, px, vec4f(clamp(color, vec3f(0.0), vec3f(MAX_HDR)), 1.0));
 }

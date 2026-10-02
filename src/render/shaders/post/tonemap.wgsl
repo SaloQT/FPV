@@ -1,5 +1,5 @@
-// Display transform: a hue-preserving filmic curve on luminance (Narkowicz's ACES fit), sensor-style highlight desaturation, a
-// smooth gamut compression, a mild FPV-camera grade and the sRGB OETF.
+// Display transform: a hue-preserving filmic curve on luminance (Narkowicz's ACES fit) with a daylight shadow lift, sensor-style
+// highlight desaturation, a smooth gamut compression, a mild FPV-camera grade and the sRGB OETF.
 // Input is scene-linear light already multiplied by the exposure ratio (0.22 ~ mid grey); output of `tonemap` is display-linear in [0, 1].
 // The curve acts on luminance only and the colour keeps its chromaticity, so hue does not skew with brightness the way a per-channel curve
 // does (blue sky drifting to cyan, foliage to neon yellow-green). A colour that nears the gamut edge slides along the line to the grey of
@@ -14,20 +14,34 @@ struct Grade {
   desatEnd : f32,
   gamutCeil : f32,
   gamutKnee : f32,
+  dayPreScale : f32,
+  dayToe : f32,
+  dayGainLo : f32,
+  dayGainHi : f32,
 };
 
 // preScale 0.64 puts the 0.22 key at about 0.2 display-linear (sRGB 0.48); saturation is the camera's colour matrix strength;
 // desat: a scene luminance range over which the sensor saturates all three channels and the colour burns out to white.
 // gamut: the brightest channel of a chromatic colour tops out at gamutCeil (display-linear; a neutral still reaches 1), and the chroma
 // compression starts at gamutKnee of the room below that ceiling.
-const GRADE : Grade = Grade(0.64, 1.05, 0.15, 4.0, 40.0, 0.93, 0.72);
+// day*: the camera's wide-dynamic-range shadow lift. With the sensor gain under dayGainLo (EV over the daylight reference) the toe of the curve
+// is dayToe instead of 0.03 (deep shade reads about 1.5x brighter) and preScale falls to dayPreScale so the mid-tones and the sky stay put;
+// it fades out by dayGainHi, because lifting shadows amplifies noise and a night camera (up to +20 EV) keeps the curve it was tuned with.
+const GRADE : Grade = Grade(0.64, 1.05, 0.15, 4.0, 40.0, 0.90, 0.72, 0.58, 0.10, 4.5, 9.0);
+const TOE_NIGHT : f32 = 0.03;
 
 fn lumaOf(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 
-// Odd around zero, so sensor noise on a black pixel averages to black instead of rectifying into a lifted floor. Slope at 0 is 0.03 / 0.14.
-fn filmicLuma(x : f32) -> f32 {
-  let a = abs(x) * GRADE.preScale;
-  return sign(x) * a * (2.51 * a + 0.03) / (a * (2.43 * a + 0.59) + 0.14);
+// 1 in daylight, 0 once the sensor gain is that of dusk or night.
+fn dayWeight(gainEv : f32) -> f32 { return 1.0 - smoothstep(GRADE.dayGainLo, GRADE.dayGainHi, gainEv); }
+
+fn preScaleFor(day : f32) -> f32 { return mix(GRADE.preScale, GRADE.dayPreScale, day); }
+fn toeFor(day : f32) -> f32 { return mix(TOE_NIGHT, GRADE.dayToe, day); }
+
+// Odd around zero, so sensor noise on a black pixel averages to black instead of rectifying into a lifted floor. Slope at 0 is preScale * toe / 0.14.
+fn filmicLuma(x : f32, day : f32) -> f32 {
+  let a = abs(x) * preScaleFor(day);
+  return sign(x) * a * (2.51 * a + toeFor(day)) / (a * (2.43 * a + 0.59) + 0.14);
 }
 
 // Chroma (brightest channel minus luma) of a colour of luma y is compressed with a hyperbolic knee whose asymptote is the gamut ceiling.
@@ -41,10 +55,12 @@ fn compressGamut(o : vec3f, y : f32) -> vec3f {
   return vec3f(y) + (o - vec3f(y)) * ((knee + span * over / (over + span)) / c);
 }
 
-fn tonemap(sceneLinear : vec3f) -> vec3f {
+// gainEv: the sensor gain the auto exposure applied over the daylight reference (it picks the day or the night toe).
+fn tonemap(sceneLinear : vec3f, gainEv : f32) -> vec3f {
+  let day = dayWeight(gainEv);
   let l = lumaOf(sceneLinear);
-  let y = min(filmicLuma(l), 1.0);
-  let k = select(GRADE.preScale * 0.03 / 0.14, y / l, abs(l) > 1e-6);
+  let y = min(filmicLuma(l, day), 1.0);
+  let k = select(preScaleFor(day) * toeFor(day) / 0.14, y / l, abs(l) > 1e-6);
   var o = sceneLinear * k;
   o = mix(o, vec3f(y), smoothstep(GRADE.desatStart, GRADE.desatEnd, l));
   o = vec3f(y) + (o - vec3f(y)) * GRADE.saturation;

@@ -46,9 +46,14 @@ export interface VegPlacement {
   bushes: number;
   /** The first `obstacleTrees` plants are the track's tree obstacles (real trees on the obstacle's spot, whatever the ground); the rest follow the density rules. */
   obstacleTrees: number;
+  /** Per plant, the approximate distance (m) from the racing line to the walk cell that produced it (0 for obstacle trees); a tier's prefix is complete out to roughly its last entry. */
+  plantRing: Float32Array;
 }
 
 export const REGION_RADIUS = 1000;
+/** Seed of the density rules and of the walk order; the far-field canopy uses the same ones so its stands line up with the real trees. */
+export const placementSeed = (terrain: TerrainData): number => deriveSeed(terrain.seed, 0x7e6e);
+export const regionSeed = (terrain: TerrainData): number => deriveSeed(terrain.seed, 0x7e6e, 23) | 0;
 /** Rocks are always placed up to this many so that plants avoid the same ground in every tier. */
 export const ROCK_CAP = 4000;
 /** Trees and bushes stay this far from the racing line; the brief asks for at least 6 m. */
@@ -137,9 +142,10 @@ class Placer {
   private readonly sJit: number;
   private readonly sPerm: number;
   obstacleTrees = 0;
+  ring = new Float32Array(0);
 
   constructor(readonly terrain: TerrainData, private readonly track: TrackData | null, readonly region: Region) {
-    const seed = deriveSeed(terrain.seed, 0x7e6e);
+    const seed = placementSeed(terrain);
     this.fields = new TerrainFields(terrain);
     this.rules = new PlacementRules(this.fields, seed);
     this.sJit = deriveSeed(seed, 21) | 0;
@@ -220,6 +226,7 @@ class Placer {
   placePlants(cap: number): InstanceSet {
     const out = makeSet(cap), r = this.region, pick = this.pick, f = this.fields;
     const n2 = PLANT_PER_COARSE * PLANT_PER_COARSE;
+    const ring = new Float32Array(cap);
     this.placeObstacleTrees(out);
     for (const c of r.order) {
       if (out.count >= cap) break;
@@ -240,10 +247,12 @@ class Placer {
         if (this.rockHash.overlaps(x, z, group === 0 ? TREE_TRUNK : BUSH_TRUNK, 0.3)) continue;
         if (this.plantHash.conflicts(x, z, def.spacing * scale, group, 1, 0.6)) continue;
         const nrm = packNormal(f.gx, f.gz);
+        ring[out.count] = cellDist;
         push(out, x, f.height(x, z) - 0.05 * scale, z, pick, nrm, d);
         this.plantHash.add(x, z, def.spacing * scale, group);
       }
     }
+    this.ring = ring.slice(0, out.count);
     return take(out, out.count);
   }
 }
@@ -255,12 +264,12 @@ class Placer {
 export function placeVegetation(terrain: TerrainData, track: TrackData | null, limits: PlacementLimits): VegPlacement {
   const e = (terrain.resolution - 1) * terrain.cellSize;
   const [ox, oz] = terrain.origin;
-  const region = buildRegion(track, [ox + e / 2, oz + e / 2], REGION_RADIUS, [ox, oz, ox + e, oz + e], deriveSeed(terrain.seed, 0x7e6e, 23) | 0);
+  const region = buildRegion(track, [ox + e / 2, oz + e / 2], REGION_RADIUS, [ox, oz, ox + e, oz + e], regionSeed(terrain));
   const placer = new Placer(terrain, track, region);
   const rocks = placer.placeRocks(ROCK_CAP);
   const plants = placer.placePlants(limits.plants);
   const shown = limits.rocks < rocks.count ? take(rocks, limits.rocks) : rocks;
   let trees = 0;
   for (let i = 0; i < plants.count; i++) if (VARIANT_DEFS[plants.variant[i]].group === 'tree') trees++;
-  return { plants, rocks: shown, trees, bushes: plants.count - trees, obstacleTrees: placer.obstacleTrees };
+  return { plants, rocks: shown, trees, bushes: plants.count - trees, obstacleTrees: placer.obstacleTrees, plantRing: placer.ring };
 }

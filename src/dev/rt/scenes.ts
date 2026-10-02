@@ -3,8 +3,8 @@ import { MaterialId, type RTPrimitive } from '../../render/contracts';
 import { createTerrainSampler, generateTerrain } from '../../world/terrain';
 import type { TimeOfDay } from '../render/astro';
 
-export type SceneName = 'gate' | 'bleed' | 'canyon' | 'hills' | 'gen';
-export const SCENE_NAMES: readonly SceneName[] = ['gate', 'bleed', 'canyon', 'hills', 'gen'];
+export type SceneName = 'gate' | 'bleed' | 'canyon' | 'hills' | 'gen' | 'plain';
+export const SCENE_NAMES: readonly SceneName[] = ['gate', 'bleed', 'canyon', 'hills', 'gen', 'plain'];
 
 export interface DevProp { prim: RTPrimitive; id: MaterialId }
 
@@ -139,6 +139,17 @@ function hillsScene(): DevScene {
   });
 }
 
+/** An 8 km gently rolling plain seen from 900 m up: big enough for the km-scale shadow patches of the clouds to show. */
+function plainScene(): DevScene {
+  const terrain = makeTerrain(512, 16, (x, z) => 5 * Math.sin(x * 0.004) * Math.cos(z * 0.0033) + 1.5 * Math.sin(x * 0.02 + z * 0.015));
+  return scene('plain', terrain, {
+    props: [],
+    ground: { albedo: [0.45, 0.42, 0.3], roughness: 0.9 },
+    camera: { pos: [0, 900, 2800], target: [0, 0, -400], fovDeg: 70 },
+    time: 'noon', sun: [45, 200], flatRegion: [0.4, 0.6, 0.6, 0.9],
+  });
+}
+
 function genScene(): DevScene {
   const terrain = generateTerrain({ seed: 1, quality: 'low', resolution: 256, cellSize: 4 });
   const s = createTerrainSampler(terrain);
@@ -162,6 +173,7 @@ export function buildScene(name: SceneName): DevScene {
     case 'canyon': return canyonScene();
     case 'hills': return hillsScene();
     case 'gen': return genScene();
+    case 'plain': return plainScene();
     default: return gateScene();
   }
 }

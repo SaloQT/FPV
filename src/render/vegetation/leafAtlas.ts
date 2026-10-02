@@ -2,13 +2,13 @@ import { Rng } from '../../world/track/rng';
 import { birchPainter, blobPainter, newSample, sat, shrubPainter, sprigPainter, type Painter } from './treeLeafShapes';
 import { conifer, sprayPainter } from './treeNeedleShapes';
 
-export const TILE_SIZE = 256;
+export const TILE_SIZE = 512;
 export const TILES_X = 3;
 export const TILES_Y = 2;
 export const ATLAS_W = TILE_SIZE * TILES_X;
 export const ATLAS_H = TILE_SIZE * TILES_Y;
 /** Mips are kept down to 4 x 4 texels per tile so bilinear taps never reach a neighbouring tile's shape. */
-export const ATLAS_MIPS = 7;
+export const ATLAS_MIPS = 8;
 /** Tile indices: 3 x 2 tiles, tile = column + 3 * row from the top-left. */
 export const TILE = { sprig: 0, needles: 1, blob: 2, conifer: 3, birch: 4, shrub: 5 } as const;
 export const TILE_COUNT = 6;

@@ -13,7 +13,11 @@ const HAS_TIP : bool = ${HAS_TIP};
 const MIN_HALF_PX : f32 = 0.35;
 const MAX_TILT : f32 = 1.45;
 const GRASS_ID : f32 = 2.0;
-const TRANSLUCENCY : f32 = 0.5;
+const TRANSLUCENCY : f32 = 0.42;
+// Blades thinner than a pixel (true half width in px below THIN_PX) shade as the sward, not as a mirror: roughness, normals and translucency
+// are pulled to the smooth values, because a sub-pixel blade samples one random normal per pixel and flickers under TAA.
+const THIN_PX : f32 = 0.9;
+const GRAZE_ROUGH : f32 = 1.0;
 
 const STRAW : vec3f = vec3f(0.285, 0.235, 0.115);
 const SEED_HEAD : vec3f = vec3f(0.24, 0.17, 0.065);
@@ -26,6 +30,7 @@ struct VsOut {
   @location(3) albedo : vec3f,
   @location(4) shade : vec2f,   // x = cavity, y = roughness
   @location(5) motion : vec2f,
+  @location(6) cover : vec2f,   // x = share of the drawn width that is real blade (the rest is the one-pixel floor), y = thinness 0..1
 };
 
 fn flowerColor(code : u32) -> vec3f {
@@ -142,7 +147,8 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
 
   let clip0 = frame.viewProj * vec4f(centre, 1.0);
   let pxPerM = frame.screen.y * 0.5 * frame.proj[1][1] / max(clip0.w, 0.05);
-  let hw = max(b.halfWidth * wf, select(MIN_HALF_PX / pxPerM, 0.0, isTip));
+  let trueHw = b.halfWidth * wf;
+  let hw = max(trueHw, select(MIN_HALF_PX / pxPerM, 0.0, isTip));
   let world = centre + sideEff * (sv * hw);
 
   // Patch colour (turf, already bleached where the ground is dry) times per-blade variation: luminance, a blue-green to yellow-green
@@ -171,18 +177,34 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   o.albedo = col;
   o.shade = vec2f(mix(0.42, 1.0, saturate1(t * 1.8)), mix(0.64, 0.5, gt));
   o.motion = motionVectorPrev(world, world + (prevCentre - centre));
+  o.cover = vec2f(select(1.0, saturate1(trueHw / hw), !isTip), 1.0 - smoothstep(0.3 * THIN_PX, THIN_PX, trueHw * pxPerM));
   return o;
+}
+
+// Blue-noise threshold, rotated every frame (golden ratio) when TAA is on so the history converges on the true coverage.
+fn coverThreshold(px : vec2u, seed : f32) -> f32 {
+  var t = textureLoad(blueNoise, vec2i(px & vec2u(127u)), 0).x + seed;
+  if ((frame.misc.y & 4u) != 0u) { t += f32(frame.misc.x & 255u) * 0.6180339887; }
+  return fract(t);
 }
 
 @fragment
 fn fs(in : VsOut) -> FsOut {
+  // A blade narrower than the one-pixel floor is drawn at the floor but only on `cover` of its pixels, so the coverage stays the real one.
+  if (in.cover.x < 1.0 && coverThreshold(vec2u(in.pos.xy), hash21(bitcast<vec2u>(vec2i(in.world.xz * 64.0)))) >= in.cover.x) { discard; }
+  let toCam = frame.camPos.xyz - in.world;
   var n = normalize(in.nrm);
-  if (dot(n, frame.camPos.xyz - in.world) < 0.0) { n = -n; }
-  n = normalize(mix(n, normalize(in.terrainNrm), 0.5));
+  if (dot(n, toCam) < 0.0) { n = -n; }
+  let thin = in.cover.y;
+  n = normalize(mix(n, normalize(in.terrainNrm), mix(0.5, 0.9, thin)));
+  let nv = saturate1(dot(n, normalize(toCam)));
+  // Wider lobe at grazing view and for thin blades: a sunlit or sky-lit mirror reflection off random blade normals is what glitters.
+  let graze = sq(1.0 - nv);
+  let rough = mix(in.shade.y, GRAZE_ROUGH, max(graze, thin));
   var o : FsOut;
   o.albedo = vec4f(in.albedo, in.shade.x);
-  o.normal = vec4f(octEncode(n), in.shade.y, 0.0);
-  o.misc = vec4f(GRASS_ID / 255.0, TRANSLUCENCY, 0.0, 0.0);
+  o.normal = vec4f(octEncode(n), rough, 0.0);
+  o.misc = vec4f(GRASS_ID / 255.0, TRANSLUCENCY * (1.0 - 0.3 * thin), 0.0, 0.0);
   o.motion = in.motion;
   return o;
 }

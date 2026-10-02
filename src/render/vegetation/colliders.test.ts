@@ -88,7 +88,7 @@ describe('buildColliders', () => {
     dense.variant = new Uint8Array(n).fill(VARIANTS_OF.spruce[0]);
     dense.pathDist = new Float32Array(n);
     for (let i = 0; i < n; i++) { dense.pos[i * 3] = i; dense.pathDist[i] = i / 100; }
-    const boxes = buildColliders({ plants: dense, rocks: emptySet(), trees: n, bushes: 0, obstacleTrees: 0 });
+    const boxes = buildColliders({ plants: dense, rocks: emptySet(), trees: n, bushes: 0, obstacleTrees: 0, plantRing: new Float32Array(0) });
     expect(boxes.length).toBe(MAX_COLLIDERS);
     boxes.forEach((b, k) => expect(b.center[0]).toBe(k));
   });
@@ -101,7 +101,7 @@ describe('buildColliders', () => {
     bushes.yaw = new Float32Array(3);
     bushes.variant = new Uint8Array(3).fill(VARIANTS_OF.bush[0]);
     bushes.pathDist = new Float32Array(3).fill(10);
-    expect(buildColliders({ plants: bushes, rocks: emptySet(), trees: 0, bushes: 3, obstacleTrees: 0 })).toEqual([]);
+    expect(buildColliders({ plants: bushes, rocks: emptySet(), trees: 0, bushes: 3, obstacleTrees: 0, plantRing: new Float32Array(0) })).toEqual([]);
   });
 });
 

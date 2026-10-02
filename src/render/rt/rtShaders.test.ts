@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
 import {
-  CANOPY_CORE, CANOPY_CLUMP_M, CANOPY_EXTINCTION, CANOPY_GAP_BASE, CANOPY_GAP_SPAN, CANOPY_SAMPLES, PRIM_FLAG_CANOPY,
+  CANOPY_CORE, CANOPY_CLUMP_M, CANOPY_EXTINCTION, CANOPY_GAP_BASE, CANOPY_GAP_SPAN, CANOPY_LOBE, CANOPY_RIM_NOISE, CANOPY_SAMPLES, PRIM_FLAG_CANOPY,
 } from './canopy';
 
 const constant = (src: string, name: string): number => {
@@ -16,6 +16,8 @@ describe('shaders/rt/rt_canopy.wgsl', () => {
   it('mirrors the constants of rt/canopy.ts', () => {
     expect(constant(src, 'CANOPY_EXTINCTION')).toBe(CANOPY_EXTINCTION);
     expect(constant(src, 'CANOPY_CORE')).toBe(CANOPY_CORE);
+    expect(constant(src, 'CANOPY_RIM_NOISE')).toBe(CANOPY_RIM_NOISE);
+    expect(constant(src, 'CANOPY_LOBE')).toBe(CANOPY_LOBE);
     expect(constant(src, 'CANOPY_GAP_BASE')).toBe(CANOPY_GAP_BASE);
     expect(constant(src, 'CANOPY_GAP_SPAN')).toBe(CANOPY_GAP_SPAN);
     expect(constant(src, 'CANOPY_SAMPLES')).toBe(CANOPY_SAMPLES);
@@ -28,6 +30,22 @@ describe('leaf transmission', () => {
   it('is 0.8 of the reflectance in both the deferred BRDF and the RT hit shading', () => {
     expect(constant(resolveShader('common/pbr.wgsl'), 'LEAF_TRANSMITTANCE')).toBe(0.8);
     expect(constant(resolveShader('rt/rt_scene.wgsl', { GRP: 2 }), 'LEAF_TRANSMISSION')).toBe(0.8);
+  });
+
+  it('only scales the translucent term: an opaque surface (translucency 0) gets neither wrap nor back-lit light', () => {
+    const pbr = resolveShader('common/pbr.wgsl');
+    expect(pbr).toMatch(/let wrap = 0\.5 \* translucency;/);
+    expect(pbr).toMatch(/let back = translucency \* saturate1\(-ndl\)/);
+  });
+});
+
+describe('emission in the RT hit shading', () => {
+  const scene = resolveShader('rt/rt_scene.wgsl', { GRP: 2 });
+
+  it('is clamped to the fp16-safe radiance before it is added and stored (pre-exposure reaches 1000 at night)', () => {
+    expect(constant(scene, 'MAX_RADIANCE')).toBe(6e4);
+    expect(scene).toContain('min(s.emissive * (EMISSIVE_MAX_NITS * pre), vec3f(MAX_RADIANCE))');
+    expect(scene).toContain('+ emission, vec3f(MAX_RADIANCE))');
   });
 });
 

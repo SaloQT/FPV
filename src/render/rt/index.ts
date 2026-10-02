@@ -5,7 +5,7 @@ import { buildGroups, type RtGroups } from './groups';
 import { createLayouts, type RtLayouts } from './layouts';
 import { RtParamBlock, RT_PARAM_BYTES, type RtParamInput } from './params';
 import { ATROUS_ITERATIONS, createPipelines, createTestPipeline, type RtPipelines, type Signal } from './pipelines';
-import { PROBE_RAY_BUDGET, ProbeGrid } from './probes';
+import { probeLimits, ProbeGrid, type ProbeLimits } from './probes';
 import { runSelfTest, type RtSelfTest } from './selfTest';
 import { SceneBuffers } from './sceneBuffers';
 import { RtTextures } from './textures';
@@ -22,8 +22,8 @@ export interface RtOptions {
   rayRange: number;
   /** Fraction of the old probe value kept by an update (0.9 .. 0.95). */
   probeHysteresis: number;
-  /** Probe rays traced per frame at most; a bigger grid refreshes a rotating 1/K of its probes each frame (see probeStride). */
-  probeRayBudget: number;
+  /** Probe rays traced per frame at most (null = the quality profile's own budget, see probeLimits); a bigger grid refreshes a rotating 1/K of its probes each frame. */
+  probeRayBudget: number | null;
 }
 
 export interface RtStats {
@@ -94,7 +94,7 @@ class RtModule implements RTModule {
   private terrain: TerrainSampler | null = null;
   private testPipeline: GPUComputePipeline | null = null;
   private readonly block = new RtParamBlock();
-  private readonly options: RtOptions = { softness: 1, rayRange: 300, probeHysteresis: 0.92, probeRayBudget: PROBE_RAY_BUDGET };
+  private readonly options: RtOptions = { softness: 1, rayRange: 300, probeHysteresis: 0.92, probeRayBudget: null };
   private readonly params: RtParamInput = {
     rtWidth: 0, rtHeight: 0, fullWidth: 0, fullHeight: 0, divisor: 1, maxSteps: 0, giRays: 0, spec: false, terrain: false,
     staticRoot: 0, dynamicRoot: 0, visitCap: 0, frameIndex: 0, debugView: 0, seed: 0,
@@ -115,7 +115,7 @@ class RtModule implements RTModule {
     const d = rc.device;
     this.layouts = createLayouts(d);
     [this.pipes, this.buffers] = await Promise.all([createPipelines(rc, this.layouts), new SceneBuffers(d)]);
-    this.probes = new ProbeGrid(d, rc.quality.probes, this.options.probeRayBudget);
+    this.probes = new ProbeGrid(d, rc.quality.probes, this.probeLimits(rc.quality));
     this.paramBuffer = d.createBuffer({ label: 'rt params', size: RT_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.prevPre = d.createBuffer({ label: 'rt prev pre-exposure', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.probeSampler = d.createSampler({ label: 'rt probe', magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat', addressModeW: 'repeat' });
@@ -164,6 +164,11 @@ class RtModule implements RTModule {
     return runSelfTest(rc, this.layouts, this.testPipeline, this.buffers, this.terrain, SELF_TEST_STEPS);
   }
 
+  private probeLimits(q: RenderContext['quality']): ProbeLimits {
+    const own = probeLimits(q);
+    return this.options.probeRayBudget === null ? own : { rayBudget: this.options.probeRayBudget, maxStride: own.maxStride };
+  }
+
   private allocate(rc: RenderContext): void {
     this.tex?.destroy();
     this.tex = new RtTextures(rc.device, rc.gbuf.rtWidth, rc.gbuf.rtHeight);
@@ -175,9 +180,10 @@ class RtModule implements RTModule {
   private prepare(rc: RenderContext): RtGroups {
     if (!this.tex || this.bound !== rc.gbuf) this.allocate(rc);
     const tex = this.tex!;
-    if (!this.probes.matches(rc.quality.probes, this.options.probeRayBudget)) {
+    const limits = this.probeLimits(rc.quality);
+    if (!this.probes.matches(rc.quality.probes, limits)) {
       this.probes.destroy();
-      this.probes = new ProbeGrid(rc.device, rc.quality.probes, this.options.probeRayBudget);
+      this.probes = new ProbeGrid(rc.device, rc.quality.probes, limits);
       this.groups = null;
     }
     if (rc.quality.rtSpecular && !tex.spec) {

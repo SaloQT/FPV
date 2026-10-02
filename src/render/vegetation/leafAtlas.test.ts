@@ -134,7 +134,8 @@ describe('leaf atlas', () => {
 
   it('is deterministic', () => {
     const again = buildLeafAtlas();
-    again.colour.forEach((level, l) => expect(level).toEqual(atlas().colour[l]));
-    again.data.forEach((level, l) => expect(level).toEqual(atlas().data[l]));
+    const firstDiff = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return i; return -1; };
+    again.colour.forEach((level, l) => expect(firstDiff(level, atlas().colour[l])).toBe(-1));
+    again.data.forEach((level, l) => expect(firstDiff(level, atlas().data[l])).toBe(-1));
   }, SLOW);
 });

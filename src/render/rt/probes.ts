@@ -1,8 +1,27 @@
 import type { QualityProfile } from '../contracts';
 
-/** Rays the probe update may trace per frame before the rotating subset shrinks (probes are refreshed every K-th frame). */
+/** Probe rays per frame the reference profile (High: 2 GI rays x 96-step walks) may trace before the rotating subset shrinks. */
 export const PROBE_RAY_BUDGET = 150_000;
+/** Longest refresh rotation (frames between two updates of a probe) the reference profile accepts. */
 export const PROBE_MAX_STRIDE = 16;
+
+const REFERENCE_RAY_WORK = 2 * 96;
+const MIN_PROBE_BUDGET = 20_000;
+const MAX_STRIDE_LIMIT = 32;
+
+export interface ProbeLimits { rayBudget: number; maxStride: number }
+
+/**
+ * Probe work follows the profile's screen-space ray work (GI rays x walk length: both feed the same indirect-light estimate), so a cheaper
+ * profile traces fewer probe rays per frame and accepts a longer rotation to get there; the budget never drops below MIN_PROBE_BUDGET.
+ */
+export function probeLimits(q: Pick<QualityProfile, 'giRays' | 'rtMaxSteps'>): ProbeLimits {
+  const work = Math.max(q.giRays, 1) * q.rtMaxSteps / REFERENCE_RAY_WORK;
+  return {
+    rayBudget: Math.max(MIN_PROBE_BUDGET, Math.round((PROBE_RAY_BUDGET * work) / 1000) * 1000),
+    maxStride: Math.min(MAX_STRIDE_LIMIT, Math.max(PROBE_MAX_STRIDE, Math.ceil(PROBE_MAX_STRIDE / work))),
+  };
+}
 
 /** Refresh stride K for a grid of `total` probes with `raysPerProbe` rays each: the smallest K that keeps the per-frame rays within `budget`. */
 export function probeStride(total: number, raysPerProbe: number, budget = PROBE_RAY_BUDGET, maxStride = PROBE_MAX_STRIDE): number {
@@ -33,12 +52,12 @@ export class ProbeGrid {
   private valid = false;
   private readonly textures: GPUTexture[] = [];
 
-  constructor(device: GPUDevice, q: QualityProfile['probes'], readonly rayBudget = PROBE_RAY_BUDGET) {
+  constructor(device: GPUDevice, q: QualityProfile['probes'], readonly limits: ProbeLimits = { rayBudget: PROBE_RAY_BUDGET, maxStride: PROBE_MAX_STRIDE }) {
     this.dim = [q.dim[0], q.dim[1], q.dim[2]];
     this.spacing = q.spacing;
     this.raysPerProbe = q.raysPerProbe;
     this.total = q.dim[0] * q.dim[1] * q.dim[2];
-    this.stride = probeStride(this.total, q.raysPerProbe, rayBudget);
+    this.stride = probeStride(this.total, q.raysPerProbe, limits.rayBudget, limits.maxStride);
     const set = (i: number): ProbeSet => ({ r: this.make(device, `rt probe R ${i}`), g: this.make(device, `rt probe G ${i}`), b: this.make(device, `rt probe B ${i}`) });
     this.sets = [set(0), set(1)];
   }
@@ -53,8 +72,8 @@ export class ProbeGrid {
     return { texture, view: texture.createView({ dimension: '3d' }) };
   }
 
-  matches(q: QualityProfile['probes'], rayBudget = PROBE_RAY_BUDGET): boolean {
-    return rayBudget === this.rayBudget && q.dim[0] === this.dim[0] && q.dim[1] === this.dim[1] && q.dim[2] === this.dim[2] && q.spacing === this.spacing && q.raysPerProbe === this.raysPerProbe;
+  matches(q: QualityProfile['probes'], limits: ProbeLimits): boolean {
+    return limits.rayBudget === this.limits.rayBudget && limits.maxStride === this.limits.maxStride && q.dim[0] === this.dim[0] && q.dim[1] === this.dim[1] && q.dim[2] === this.dim[2] && q.spacing === this.spacing && q.raysPerProbe === this.raysPerProbe;
   }
 
   get bytes(): number { return this.total * 8 * 6; }

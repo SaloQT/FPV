@@ -12,16 +12,22 @@ const nums = (src: string, re: RegExp): number[] => (src.match(re)?.[1] ?? '').s
 // The mirrors below read the shader's own constants, so a retuned WGSL constant cannot silently diverge from the tested formula.
 const GRADE = nums(tonemapSrc, /const GRADE : Grade = Grade\(([^)]*)\)/);
 const SENSOR = nums(sensorSrc, /const SENSOR : SensorModel = SensorModel\(([^)]*)\)/);
-const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE] = GRADE;
+const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE, DAY_PRE_SCALE, DAY_TOE, DAY_GAIN_LO, DAY_GAIN_HI] = GRADE;
+const TOE_NIGHT = Number(tonemapSrc.match(/const TOE_NIGHT : f32 = ([^;]*);/)?.[1]);
 
 type V3 = [number, number, number];
 const luma = (c: V3): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 const clamp = (x: number, a: number, b: number): number => Math.min(b, Math.max(a, x));
 const smooth = (a: number, b: number, x: number): number => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
-const filmicLuma = (x: number): number => {
-  const a = Math.abs(x) * PRE_SCALE;
-  return (Math.sign(x) * a * (2.51 * a + 0.03)) / (a * (2.43 * a + 0.59) + 0.14);
+const dayWeight = (gainEv: number): number => 1 - smooth(DAY_GAIN_LO, DAY_GAIN_HI, gainEv);
+const preScaleFor = (day: number): number => PRE_SCALE + (DAY_PRE_SCALE - PRE_SCALE) * day;
+const toeFor = (day: number): number => TOE_NIGHT + (DAY_TOE - TOE_NIGHT) * day;
+
+// day = 0 is the night curve every legacy test below was written for; the day lift has its own describe.
+const filmicLuma = (x: number, day = 0): number => {
+  const a = Math.abs(x) * preScaleFor(day);
+  return (Math.sign(x) * a * (2.51 * a + toeFor(day))) / (a * (2.43 * a + 0.59) + 0.14);
 };
 
 function compressGamut(o: V3, y: number): V3 {
@@ -35,10 +41,11 @@ function compressGamut(o: V3, y: number): V3 {
   return o.map((x) => y + (x - y) * k) as V3;
 }
 
-function tonemap(scene: V3, saturation = SATURATION): V3 {
+function tonemap(scene: V3, saturation = SATURATION, gainEv = Infinity): V3 {
+  const day = dayWeight(gainEv);
   const l = luma(scene);
-  const y = Math.min(filmicLuma(l), 1);
-  const k = Math.abs(l) > 1e-6 ? y / l : (PRE_SCALE * 0.03) / 0.14;
+  const y = Math.min(filmicLuma(l, day), 1);
+  const k = Math.abs(l) > 1e-6 ? y / l : (preScaleFor(day) * toeFor(day)) / 0.14;
   const w = smooth(DESAT_START, DESAT_END, l);
   let o = scene.map((x) => (1 - w) * x * k + w * y) as V3;
   o = o.map((x) => y + (x - y) * saturation) as V3;
@@ -290,6 +297,55 @@ describe('tonemap', () => {
     const chroma = (o: V3): number => o[0] - luma(o);
     expect(chroma(flat)).toBeGreaterThan(0.01);
     expect(chroma(graded) / chroma(flat)).toBeCloseTo(SATURATION, 6);
+  });
+});
+
+describe('daylight shadow lift', () => {
+  const code = (v: number, gain: number): number => Math.round(255 * encode(tonemap([v, v, v], SATURATION, gain)[1]));
+
+  it('is 1 in daylight, 0 from dayGainHi on and falls monotonically between', () => {
+    expect(dayWeight(0)).toBe(1);
+    expect(dayWeight(DAY_GAIN_LO)).toBe(1);
+    expect(dayWeight(DAY_GAIN_HI)).toBe(0);
+    expect(dayWeight(20)).toBe(0);
+    let prev = 1;
+    for (let g = DAY_GAIN_LO; g <= DAY_GAIN_HI; g += 0.25) {
+      expect(dayWeight(g)).toBeLessThanOrEqual(prev + 1e-12);
+      prev = dayWeight(g);
+    }
+  });
+
+  it('lifts deep shade by a good margin and leaves the mid-tones and highlights where they were', () => {
+    expect(code(0.02, 0)).toBeGreaterThanOrEqual(code(0.02, 20) + 6);
+    expect(code(0.005, 0)).toBeGreaterThan(code(0.005, 20));
+    for (const v of [0.28, 0.6, 1.2, 4]) expect(Math.abs(code(v, 0) - code(v, 20))).toBeLessThanOrEqual(3);
+  });
+
+  it('does not touch the night camera: from dayGainHi on the curve is exactly the night one', () => {
+    for (const v of [0.0001, 0.003, 0.05, 0.3, 2]) expect(tonemap([v, v * 0.8, v * 0.6], SATURATION, DAY_GAIN_HI)).toEqual(tonemap([v, v * 0.8, v * 0.6]));
+  });
+
+  it('moves continuously with the gain, so the look does not pop through dusk', () => {
+    let prev = code(0.02, 0);
+    for (let g = 0; g <= 12; g += 0.25) {
+      const c = code(0.02, g);
+      expect(Math.abs(c - prev)).toBeLessThanOrEqual(2);
+      expect(c).toBeLessThanOrEqual(prev);
+      prev = c;
+    }
+  });
+
+  it('keeps a finite slope at black and stays monotonic and odd, in daylight too', () => {
+    const slope = (DAY_PRE_SCALE * DAY_TOE) / 0.14;
+    expect(filmicLuma(1e-6, 1) / 1e-6).toBeCloseTo(slope, 3);
+    expect(tonemap([1e-4, 1e-4, 1e-4], SATURATION, 0)[0] / 1e-4).toBeCloseTo(slope, 2);
+    expect(filmicLuma(-0.02, 1)).toBeCloseTo(-filmicLuma(0.02, 1), 12);
+    let prev = -1;
+    for (let ev = -14; ev <= 14; ev += 0.25) {
+      const o = tonemap([0.2 * 2 ** ev, 0.2 * 2 ** ev, 0.2 * 2 ** ev], SATURATION, 0)[0];
+      expect(o).toBeGreaterThanOrEqual(prev);
+      prev = o;
+    }
   });
 });
 

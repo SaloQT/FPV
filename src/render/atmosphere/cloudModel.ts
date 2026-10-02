@@ -162,6 +162,16 @@ export function presence(n: number, coverage: number): number {
   return smoothstep(t - 0.09, t + 0.09, n);
 }
 
+/** Fair-weather cumulus is convective and dissipates after sunset, so a night keeps this fraction of the daytime cover (a mostly clear night is the default). */
+export const NIGHT_CUMULUS_SCALE = 0.35;
+export const NIGHT_CUMULUS_SIN_LO = -0.2;
+export const NIGHT_CUMULUS_SIN_HI = 0.05;
+
+/** Factor on the cumulus sky cover for a sun whose elevation has the given sine: 1 by day, NIGHT_CUMULUS_SCALE from about -11.5 degrees down. */
+export function nightCumulusScale(sinSunElevation: number): number {
+  return mix(NIGHT_CUMULUS_SCALE, 1, smoothstep(NIGHT_CUMULUS_SIN_LO, NIGHT_CUMULUS_SIN_HI, sinSunElevation));
+}
+
 /** Schneider's height gradient: ramps up over the first 10 % and down over the last 38 % of the (per-cloud scaled) layer. */
 export const cumulusGradient = (hs: number): number => smoothstep(0, 0.1, hs) * (1 - smoothstep(0.62, 1, hs));
 

@@ -1,11 +1,15 @@
 import type { ObstacleCollider, Vec3 } from '../../contracts';
 import type { FrameInfo, RenderContext, RenderModule, SceneData } from '../contracts';
 import { buildColliders, buildRtProxies } from './colliders';
+import { FarCanopy } from './farCanopy';
 import { GrassSystem } from './grass';
 import { packInstances } from './instanceData';
-import { VEG_PARAM_BYTES, TREE_TIER, createParamViews, packVegParams } from './params';
-import { TIER_LIMITS, placeVegetation, type VegPlacement } from './placement';
+import { FAR_TIER, FAR_UNCOVERED_NEAR, VEG_PARAM_BYTES, TREE_TIER, createParamViews, packVegParams } from './params';
+import { REGION_RADIUS, TIER_LIMITS, placeVegetation, type VegPlacement } from './placement';
+import { diffPlans, vegPlan, type VegPlan } from './placementPlan';
+import { COARSE } from './region';
 import { TreeAssets } from './treeAssets';
+import { placeFarForest } from './treePlanFar';
 import { TreeSystem } from './treeSystem';
 import { DRAW_COUNT } from './variants';
 
@@ -32,6 +36,11 @@ export interface VegetationStats {
   meshTriangles: number[];
   colliders: number;
   rtPrimitives: number;
+  /** Far-field canopy cards (billboards for trees beyond the real-tree draw distance and over ground the tree cap left bare): placed, of those over bare ground, GPU bytes and the triangles drawn at most (2 per card). */
+  farCards: number;
+  farUncovered: number;
+  farBytes: number;
+  farTriangles: number;
 }
 
 export type VegetationModule = RenderModule & {
@@ -61,11 +70,13 @@ export function createVegetationModule(): VegetationModule {
   let grass: GrassSystem | null = null;
   let assets: TreeAssets | null = null;
   let trees: TreeSystem | null = null;
+  let far: FarCanopy | null = null;
+  let farUncovered = 0;
+  let built: VegPlan | null = null;
   let place: VegPlacement | null = null;
   let colliders: ObstacleCollider[] = [];
   let rtCount = 0;
   let treeCount = 0, bushCount = 0, rockCount = 0;
-  let tier = '';
   const treeParams = { ...TREE_TIER.medium, slots: 0, draws: DRAW_COUNT };
 
   function rebuildGrass(ctx: RenderContext): void {
@@ -88,6 +99,21 @@ export function createVegetationModule(): VegetationModule {
     rockCount = rocks;
     const packed = packInstances([{ set: place.plants, count: plantCount }, { set: place.rocks, count: rocks }], assets.variants);
     trees = new TreeSystem(ctx, assets, paramsBuf, packed, devReadback);
+  }
+
+  function rebuildFar(ctx: RenderContext): void {
+    far?.destroy();
+    far = null;
+    farUncovered = 0;
+    if (!paramsBuf || !place || !scene) return;
+    const q = ctx.quality;
+    const limits = TIER_LIMITS[q.tier];
+    // The real trees are a nearest-first prefix: complete out to the walk ring of their last tree (or the whole region when the cap was not reached).
+    const n = Math.min(limits.plants, place.plants.count);
+    const coveredRing = n < limits.plants ? REGION_RADIUS : place.plantRing[n - 1] - COARSE;
+    const forest = placeFarForest(scene.terrain, scene.track, { cap: FAR_TIER[q.tier].cards, radius: q.terrainViewDistance, coveredRing, uncoveredNear: FAR_UNCOVERED_NEAR });
+    farUncovered = forest.uncovered;
+    far = new FarCanopy(ctx, paramsBuf, forest);
   }
 
   function currentQuad(f: FrameInfo): typeof quadUse | null {
@@ -117,7 +143,7 @@ export function createVegetationModule(): VegetationModule {
     init(ctx: RenderContext) {
       paramsBuf = ctx.device.createBuffer({ label: 'vegetation-params', size: VEG_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       assets = new TreeAssets(ctx);
-      tier = ctx.quality.tier;
+      built = vegPlan(ctx.quality);
       rebuildGrass(ctx);
     },
 
@@ -128,16 +154,21 @@ export function createVegetationModule(): VegetationModule {
       const proxies = buildRtProxies(place, sceneFocus(s));
       rtCount = proxies.length;
       ctx.rt.setStatic('vegetation', proxies);
+      const now = vegPlan(ctx.quality);
+      built = built ? { ...now, grassBladesPerM2: built.grassBladesPerM2, grassDistance: built.grassDistance } : now;
       rebuildTrees(ctx);
+      rebuildFar(ctx);
     },
 
     update(ctx: RenderContext, f: FrameInfo) {
       if (!paramsBuf || !scene) return;
-      if (ctx.quality.tier !== tier) {
-        tier = ctx.quality.tier;
-        rebuildGrass(ctx);
-        rebuildTrees(ctx);
-      }
+      // Compared on the resolved profile, not the tier: Performance 240 keeps the tier but thins the grass.
+      const now = vegPlan(ctx.quality);
+      const redo = diffPlans(built, now);
+      built = now;
+      if (redo.grass) rebuildGrass(ctx);
+      if (redo.trees) rebuildTrees(ctx);
+      if (redo.far) rebuildFar(ctx);
       if (!grass) return;
       grass.pollReadback();
       trees?.pollReadback();
@@ -154,6 +185,7 @@ export function createVegetationModule(): VegetationModule {
         seed: t.seed,
         cameraXZ: camXZ,
         tree: treeParams,
+        farDistance: built ? built.farDistance : 0,
       });
       ctx.device.queue.writeBuffer(paramsBuf, 0, views.u32);
     },
@@ -168,6 +200,7 @@ export function createVegetationModule(): VegetationModule {
       if (!scene) return;
       grass?.encodeGBuffer(pass);
       trees?.encodeGBuffer(pass);
+      far?.encodeGBuffer(pass);
     },
 
     setQuad(pos: Vec3, vel: Vec3, thrust: number) {
@@ -205,16 +238,22 @@ export function createVegetationModule(): VegetationModule {
         meshTriangles: assets ? assets.triangles.slice() : [],
         colliders: colliders.length,
         rtPrimitives: rtCount,
+        farCards: far ? far.cards : 0,
+        farUncovered,
+        farBytes: far ? far.bytes : 0,
+        farTriangles: far ? 2 * far.cards : 0,
       };
     },
 
     destroy() {
       grass?.destroy();
       trees?.destroy();
+      far?.destroy();
       assets?.destroy();
       paramsBuf?.destroy();
       grass = null;
       trees = null;
+      far = null;
       assets = null;
       paramsBuf = null;
     },

@@ -12,6 +12,7 @@ struct VegParams {
   caps : vec4u,     // xyz = grass instance capacity of LOD0..2, w = chunk capacity
   tree : vec4f,     // x = LOD distance scale, y = max draw distance (m), z = smallest bounding radius kept (pixels), w = unused
   treeCount : vec4u, // x = instance slots (padding included; also the visible-list stride per LOD), y = number of draws
+  far : vec4f,      // x = canopy-card fade-out distance (m)
 };
 
 @group(2) @binding(0) var<uniform> vp : VegParams;

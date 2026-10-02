@@ -20,27 +20,35 @@ export const MIE_SCATTER = 0.092;
 export const MIE_SCALE_HEIGHT_KM = 1.4;
 /**
  * Aerosol phase function: a narrow diffraction peak (the glare around the sun and moon), a broad forward lobe, a nearly isotropic side lobe
- * and a weak back lobe. A single g = 0.76 lobe is flat out to 16 degrees and spreads a haze over the whole sun side of the sky; real
- * aerosols peak within a few degrees (p(0) ~ 6, p(5 deg) ~ 2, p(20 deg) ~ 0.3 per sr) and keep ~0.03 per sr at 90 degrees.
+ * and a weak back lobe. A single g = 0.76 lobe is flat out to 16 degrees and spreads a haze over the whole sun side of the sky. Real
+ * aerosols peak within a couple of degrees and the glow is mostly gone by 6 degrees: here p(0) ~ 12, p(0.8 deg) ~ 10, p(5.6 deg) ~ 1.2 (an eighth
+ * of the peak), p(20 deg) ~ 0.34 per sr, and ~0.035 per sr at 90 degrees. At night that glare is the moon's aureole, and the earlier wider
+ * peak (p(5.6 deg) ~ 1.9) read as a haze disc around it.
  */
 export const MIE_G = 0.6;
-export const MIE_NARROW_G = 0.93;
-export const MIE_NARROW_WEIGHT = 0.22;
+export const MIE_NARROW_G = 0.96;
+export const MIE_NARROW_WEIGHT = 0.12;
 export const MIE_SIDE_G = 0.3;
 export const MIE_SIDE_WEIGHT = 0.22;
 export const MIE_BACK_G = -0.3;
 export const MIE_BACK_WEIGHT = 0.16;
 /**
- * Ozone (Chappuis band, peak 603 nm) per km at the layer's centre. Point samples at 680 / 550 / 440 nm (0.65, 1.88, 0.085) put the sRGB red
- * primary far out on the band's red tail, where ozone barely absorbs; the primary actually integrates 580-700 nm, around the peak, so its
- * band-averaged absorption is ~2.2e-3 and green's ~1.5e-3. With the point samples a twilight sky came out magenta-lilac everywhere (green
- * absorbed, red not; measured twilight zenith skies have R/Y ~ 0.6, G/Y ~ 1.0). These values move a good part of the way: R and G come out
- * level at the twilight zenith (blue-violet, not pink) and the sun-side horizon keeps its peach to pink band.
+ * Ozone (Chappuis band, peak 603 nm) per km at the layer's centre. Integrating the band over the sRGB primaries gives ~2.3 (red) and ~1.55
+ * (green), a compromise that is not literally right: with those the sun-side twilight glow goes yellow-green (the far-red that survives the
+ * long slant path is lost to one red channel), and with the old point samples at 680 / 550 / 440 nm (0.65, 1.88, 0.085) green was absorbed
+ * more than red and the whole twilight dome came out magenta-lilac. These values keep red a little weaker than green: the zenith is
+ * blue-violet (R/Y ~ 0.7, G/Y ~ 1.0, B/Y ~ 2.3 at sun -4.5 deg), the sun-side horizon keeps its orange-pink (R/Y > 1.2).
  */
-export const OZONE_ABSORPTION: Vec3 = [1.1e-3, 1.7e-3, 0.09e-3];
+export const OZONE_ABSORPTION: Vec3 = [1.5e-3, 1.65e-3, 0.09e-3];
 export const OZONE_CENTER_KM = 25;
 export const OZONE_HALF_WIDTH_KM = 15;
 export const GROUND_ALBEDO = 0.3;
+/**
+ * Extra cooling of the moonlit sky (the aureole and the moon's aerial perspective) on top of the tint already in frame.moonIrradiance. Moonlit
+ * scenes are seen with blue-shifted scotopic vision, so moonlight scattered into the air reads as a cool glow, not the tan of the moon's own
+ * reddish albedo. Roughly luminance neutral.
+ */
+export const MOON_SCATTER_TINT: Vec3 = [0.92, 1, 1.1];
 
 /**
  * Night light that is not scattered sunlight (nits at a night-scale of 1, before extinction; shaders/sky/night_light.wgsl mirrors it).
@@ -125,6 +133,21 @@ export function miePhase(cosTheta: number): number {
   const broad = 1 - MIE_NARROW_WEIGHT - MIE_SIDE_WEIGHT - MIE_BACK_WEIGHT;
   return broad * cornetteShanksPhase(cosTheta, MIE_G) + MIE_NARROW_WEIGHT * hgPhase(cosTheta, MIE_NARROW_G)
     + MIE_SIDE_WEIGHT * hgPhase(cosTheta, MIE_SIDE_G) + MIE_BACK_WEIGHT * hgPhase(cosTheta, MIE_BACK_G);
+}
+
+/**
+ * Gain on the multiple-scattering term along a view ray with horizontal cosine `cosToLight` to the light's azimuth (view . horizontal light
+ * direction, so 0 at the zenith). The table holds the sphere average of the second-order light, which is isotropic and so fills the Earth's
+ * shadow on the anti-solar side as brightly as the glow side. After sunset most of that light comes from the sunlit air on the glow side:
+ * a dipole of strength MS_DIPOLE (mean 1 over the sphere, so the average is unchanged) toward the light, fading out for a light above
+ * MS_DIPOLE_MU_HI of local elevation, restores the glow-to-shadow gradient. 1 for a light well above the horizon.
+ */
+export const MS_DIPOLE = 0.8;
+export const MS_DIPOLE_MU_LO = -0.1;
+export const MS_DIPOLE_MU_HI = 0.03;
+export function multiScatterDipole(lightMuLocal: number, cosToLight: number): number {
+  const t = Math.min(1, Math.max(0, (lightMuLocal - MS_DIPOLE_MU_LO) / (MS_DIPOLE_MU_HI - MS_DIPOLE_MU_LO)));
+  return 1 + MS_DIPOLE * (1 - t * t * (3 - 2 * t)) * cosToLight;
 }
 
 /** Henyey-Greenstein phase (per sr). */

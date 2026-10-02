@@ -30,7 +30,7 @@ function shading(plan: TreePlan): Shading {
         const g = norm([(p[0] - cx) / (rx * rx), (p[1] - cy) / (ry * ry), (p[2] - cz) / (rz * rz)]);
         return norm([g[0], g[1] + 0.25, g[2]]);
       },
-    aoAt: (p) => (0.3 + 0.7 * smoothstep(0.2, 1, Math.hypot((p[0] - cx) / rx, (p[1] - cy) / ry, (p[2] - cz) / rz))) * (0.62 + 0.38 * smoothstep(-0.9, 0.6, (p[1] - cy) / ry)),
+    aoAt: (p) => (0.38 + 0.62 * smoothstep(0.2, 1, Math.hypot((p[0] - cx) / rx, (p[1] - cy) / ry, (p[2] - cz) / rz))) * (0.7 + 0.3 * smoothstep(-0.9, 0.6, (p[1] - cy) / ry)),
     swayAt: (y) => Math.min(Math.pow(Math.max(y, 0) / H, 1.6), 1),
   };
 }

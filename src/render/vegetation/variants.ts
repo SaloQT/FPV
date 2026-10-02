@@ -29,7 +29,7 @@ export interface VariantDef {
   swayStrength: number;
   /** Leaf-card wobble amplitude in metres. */
   flutter: number;
-  /** Leaf (or base rock) albedo. */
+  /** Leaf (or base rock) albedo of the unpainted green: the atlas multiplies it by a shade of 0.5-1 and a hue ramp, so painted leaves land at 0.04-0.15 per channel (conifer needles at 0.04-0.08). */
   tone: Vec3;
   translucency: number;
   /** LOD0 and LOD1 hand-over distances as multiples of the bounding radius. */
@@ -48,14 +48,14 @@ const rock = (name: string, shape: number, tone: Vec3): VariantDef => ({
 
 /** Variants 0-7 are plants, 8-11 rocks; the order is the shader's variant index. */
 export const VARIANT_DEFS: readonly VariantDef[] = [
-  tree('spruce A', 18, 3.2, 0x5a01, (r) => sprucePlan(r, 18, 0.19), [0.45, 0.003, 0.03], [0.022, 0.054, 0.026], 0.3),
-  tree('spruce B', 22, 3.4, 0x5a02, (r) => sprucePlan(r, 22, 0.17), [0.42, 0.003, 0.03], [0.024, 0.058, 0.028], 0.3),
-  tree('pine', 19.5, 4.2, 0x5a03, (r) => pinePlan(r, 19.5), [0.38, 0.0042, 0.03], [0.03, 0.064, 0.028], 0.3),
-  tree('oak A', 15, 5.2, 0x5a04, (r) => oakPlan(r, 15), [0.33, 0.0028, 0.09], [0.058, 0.12, 0.028], 0.45),
-  tree('oak B', 17, 5.4, 0x5a05, (r) => oakPlan(r, 17), [0.31, 0.0028, 0.09], [0.064, 0.126, 0.03], 0.45),
-  tree('birch', 13, 3.6, 0x5a06, (r) => birchPlan(r, 13), [0.65, 0.006, 0.1], [0.074, 0.145, 0.034], 0.5),
-  bush('bush', 1.6, 1.7, 0x5a07, (r) => bushPlan(r, 1.6), [1.1, 0.004, 0.06], [0.052, 0.105, 0.027], 0.45),
-  bush('juniper', 1.3, 1.6, 0x5a08, (r) => juniperPlan(r, 1.3), [0.9, 0.004, 0.03], [0.028, 0.06, 0.034], 0.3),
+  tree('spruce A', 18, 3.2, 0x5a01, (r) => sprucePlan(r, 18, 0.19), [0.45, 0.003, 0.03], [0.03, 0.075, 0.043], 0.3),
+  tree('spruce B', 22, 3.4, 0x5a02, (r) => sprucePlan(r, 22, 0.17), [0.42, 0.003, 0.03], [0.032, 0.079, 0.046], 0.3),
+  tree('pine', 19.5, 4.2, 0x5a03, (r) => pinePlan(r, 19.5), [0.38, 0.0042, 0.03], [0.04, 0.085, 0.046], 0.3),
+  tree('oak A', 15, 5.2, 0x5a04, (r) => oakPlan(r, 15), [0.33, 0.0028, 0.09], [0.058, 0.12, 0.038], 0.45),
+  tree('oak B', 17, 5.4, 0x5a05, (r) => oakPlan(r, 17), [0.31, 0.0028, 0.09], [0.064, 0.126, 0.04], 0.45),
+  tree('birch', 13, 3.6, 0x5a06, (r) => birchPlan(r, 13), [0.65, 0.006, 0.1], [0.07, 0.135, 0.044], 0.5),
+  bush('bush', 1.6, 1.7, 0x5a07, (r) => bushPlan(r, 1.6), [1.1, 0.004, 0.06], [0.052, 0.105, 0.036], 0.45),
+  bush('juniper', 1.3, 1.6, 0x5a08, (r) => juniperPlan(r, 1.3), [0.9, 0.004, 0.03], [0.036, 0.078, 0.05], 0.3),
   rock('angular rock', 0, [0.3, 0.29, 0.27]),
   rock('round boulder', 1, [0.27, 0.26, 0.24]),
   rock('flat slab', 2, [0.34, 0.31, 0.27]),

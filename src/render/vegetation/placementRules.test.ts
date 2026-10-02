@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerrainData } from '../../contracts';
-import { MAX_SLOPE_DEG, MAX_TREE_SCALE, MIN_SOIL, MIN_TREE_SCALE, PlacementRules, type Pick } from './placementRules';
+import { MAX_SLOPE_DEG, MAX_TREE_SCALE, MIN_SOIL, MIN_TREE_SCALE, PlacementRules, type Canopy, type Pick } from './placementRules';
 import { TerrainFields } from './terrainFields';
 import { VARIANT_DEFS, VARIANTS_OF } from './variants';
 
@@ -186,5 +186,57 @@ describe('PlacementRules.rock', () => {
     expect([...bare.variants].sort((a, b) => a - b)).toEqual([VARIANTS_OF.rock[0], VARIANTS_OF.rock[2]]);
     expect([...stream.variants].sort((a, b) => a - b)).toEqual([VARIANTS_OF.rock[1], VARIANTS_OF.rock[2]]);
     for (const v of new Set([...steep.variants, ...bare.variants, ...stream.variants])) expect(VARIANT_DEFS[v].group).toBe('rock');
+  });
+});
+
+describe('PlacementRules.canopy', () => {
+  const sample = (g: Partial<Ground>, step = 3): Canopy[] => {
+    const rules = new PlacementRules(new TerrainFields(terrainOf(g)), 1234);
+    const out: Canopy[] = [];
+    for (let cx = -60; cx < 60; cx += step) {
+      for (let cz = -60; cz < 60; cz += step) {
+        const c: Canopy = { density: 0, variant: 0, scale: 1, tint: 0 };
+        rules.canopy(cx, cz, (cx + 0.5) * 3, (cz + 0.5) * 3, c);
+        out.push(c);
+      }
+    }
+    return out;
+  };
+
+  it('is empty where no tree can stand: steep, thin soil, water, river', () => {
+    for (const g of [{ slope: 0.7 }, { soil: 0.1 }, { water: FLAT.base + 5 }, { flow: 0.95 }]) {
+      expect(sample(g).every((c) => c.density === 0)).toBe(true);
+    }
+  });
+
+  it('has forest on good ground, bounded like the per-cell tree probability, and wetter ground has more', () => {
+    const dry = sample({ wetness: 0.05 }), wet = sample({ wetness: 0.95 });
+    const mean = (a: Canopy[]): number => a.reduce((t, c) => t + c.density, 0) / a.length;
+    expect(Math.max(...wet.map((c) => c.density))).toBeLessThanOrEqual(0.85);
+    expect(mean(wet)).toBeGreaterThan(0.02);
+    expect(mean(wet)).toBeGreaterThan(mean(dry));
+  });
+
+  it('agrees with the per-cell rule: a cell that grows a tree has canopy density there, with a tree species and a legal scale', () => {
+    const rules = new PlacementRules(new TerrainFields(terrainOf({ wetness: 0.8 })), 1234);
+    const pick: Pick = { variant: 0, scale: 1, yaw: 0, tint: 0 };
+    const c: Canopy = { density: 0, variant: 0, scale: 1, tint: 0 };
+    let trees = 0;
+    for (let cx = -60; cx < 60; cx++) {
+      for (let cz = -60; cz < 60; cz++) {
+        const x = (cx + 0.5) * 3, z = (cz + 0.5) * 3;
+        rules.canopy(cx, cz, x, z, c);
+        if (rules.plant(cx, cz, x, z, pick) === 1) {
+          trees++;
+          expect(c.density).toBeGreaterThan(0);
+        }
+        if (c.density > 0) {
+          expect(VARIANT_DEFS[c.variant].group).toBe('tree');
+          expect(c.scale).toBeGreaterThanOrEqual(MIN_TREE_SCALE);
+          expect(c.scale).toBeLessThanOrEqual(MAX_TREE_SCALE);
+        }
+      }
+    }
+    expect(trees).toBeGreaterThan(100);
   });
 });

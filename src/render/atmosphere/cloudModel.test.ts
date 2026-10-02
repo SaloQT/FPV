@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CIRRUS_SIGMA_KM, CLOUD_SHADOW_EXTENT_M, CLOUD_SHADOW_SIZE, CUMULUS_SIGMA_KM, cirrusDensity, cirrusWeather, cloudAmbientScale, cloudField, cloudOpticalDepth,
-  cloudVisibility, cumulusDensity, cumulusGradient, cumulusWeather, hash21, pcg, presence, snapShadowCenter, u01,
+  NIGHT_CUMULUS_SCALE, NIGHT_CUMULUS_SIN_HI, NIGHT_CUMULUS_SIN_LO, cloudVisibility, cumulusDensity, cumulusGradient, cumulusWeather, hash21, nightCumulusScale, pcg, presence,
+  snapShadowCenter, u01,
 } from './cloudModel';
 import { DEFAULT_ATMOSPHERE_SETTINGS, type AtmosphereSettings } from './settings';
 import { windOffset } from './uniforms';
@@ -293,5 +294,33 @@ describe('sky light and shadow map', () => {
     expect(snapShadowCenter(100, 1000, 10)).toBe(100);
     expect(snapShadowCenter(149, 1000, 10)).toBe(100);
     expect(snapShadowCenter(151, 1000, 10)).toBe(200);
+  });
+});
+
+describe('night cumulus', () => {
+  it('keeps the whole daytime cover while the sun is up and a fixed fraction once it is well below the horizon', () => {
+    expect(nightCumulusScale(1)).toBe(1);
+    expect(nightCumulusScale(NIGHT_CUMULUS_SIN_HI)).toBe(1);
+    expect(nightCumulusScale(NIGHT_CUMULUS_SIN_LO)).toBe(NIGHT_CUMULUS_SCALE);
+    expect(nightCumulusScale(-1)).toBe(NIGHT_CUMULUS_SCALE);
+    expect(NIGHT_CUMULUS_SCALE * DEFAULT_ATMOSPHERE_SETTINGS.cloudCoverage).toBeLessThan(0.25);
+  });
+
+  it('falls monotonically through twilight', () => {
+    let prev = 1;
+    for (let s = NIGHT_CUMULUS_SIN_HI; s >= NIGHT_CUMULUS_SIN_LO; s -= 0.01) {
+      const k = nightCumulusScale(s);
+      expect(k).toBeLessThanOrEqual(prev + 1e-12);
+      prev = k;
+    }
+  });
+
+  it('is mirrored by cloud_density.wgsl', () => {
+    const nodeFs = (globalThis as unknown as { process: { getBuiltinModule(n: 'node:fs'): { readFileSync(u: URL): Uint8Array } } }).process.getBuiltinModule('node:fs');
+    const text = new TextDecoder().decode(nodeFs.readFileSync(new URL('../shaders/sky/cloud_density.wgsl', import.meta.url)));
+    const c = (name: string): number => Number(text.match(new RegExp(`const ${name}\\s*:\\s*f32\\s*=\\s*([^;]+);`))?.[1]);
+    expect(c('NIGHT_CUMULUS_SCALE')).toBe(NIGHT_CUMULUS_SCALE);
+    expect(c('NIGHT_CUMULUS_SIN_LO')).toBe(NIGHT_CUMULUS_SIN_LO);
+    expect(c('NIGHT_CUMULUS_SIN_HI')).toBe(NIGHT_CUMULUS_SIN_HI);
   });
 });

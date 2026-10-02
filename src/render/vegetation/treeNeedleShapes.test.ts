@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Rng } from '../../world/track/rng';
 import { newSample } from './treeLeafShapes';
-import { conifer, sprayPainter } from './treeNeedleShapes';
+import { TILE_SIZE } from './leafAtlas';
+import { NEEDLE_R, NEEDLE_RES, conifer, sprayPainter } from './treeNeedleShapes';
 
 const N = 128;
 
@@ -28,6 +29,24 @@ describe('sprayPainter', () => {
     expect(total).toBeGreaterThan(0.12);
     expect(total).toBeLessThan(0.6);
     expect(Math.max(...r.cover)).toBeLessThan(0.9);
+  });
+
+  it('paints needles about 4 mm wide on a 1.5 m spray (a real spruce needle is 1-2 mm): at most 1.5 texels of the atlas tile', () => {
+    expect(NEEDLE_RES).toBe(TILE_SIZE);
+    expect(2 * NEEDLE_R * 1.5).toBeLessThan(0.0045);
+    expect(2 * NEEDLE_R * NEEDLE_RES).toBeLessThan(1.5);
+  });
+
+  it('fills the spray with dense fine shoots: most covered texels belong to needles, not to the thick stems', () => {
+    const paint = sprayPainter(new Rng(4)), s = newSample();
+    let covered = 0, stem = 0;
+    for (let y = 0; y < NEEDLE_RES; y += 2) for (let x = 0; x < NEEDLE_RES; x += 2) {
+      if (!paint((x + 0.5) / NEEDLE_RES, (y + 0.5) / NEEDLE_RES, s)) continue;
+      covered++;
+      if (s.thin === 0.55 && s.shade < 0.35) stem++;
+    }
+    expect(covered).toBeGreaterThan(0.18 * (NEEDLE_RES / 2) ** 2);
+    expect(stem / covered).toBeLessThan(0.3);
   });
 
   it('narrows toward the tip like a conifer branchlet', () => {

@@ -92,7 +92,7 @@ fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32) -> vec3f {
   if (P.look.w > 0.0) { c += sensorNoise(c, pix, frame, exposure.y, P.look.w); }
   c *= vec3f(lensMask(L.r, size), lensMask(L.g, size), lensMask(L.b, size));
 
-  var e = gradeContrast(srgbEncode(tonemap(c)));
+  var e = gradeContrast(srgbEncode(tonemap(c, exposure.y)));
   if (debug == 2u) { e = mix(e, heatColor(exposure.y), 0.5); }
   e = videoPost(e, pix, uv, frame, vn);
   e = clamp(e + tpdfDither(pix, frame) * DITHER_LSB, vec3f(0.0), vec3f(1.0));
