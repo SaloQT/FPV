@@ -25,22 +25,30 @@ const port = Number(args.port ?? (await freePort()));
 const exe = process.env.CHROME_BIN ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 let server;
+const stopServer = () => { if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } server = undefined; } };
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopServer(); process.exit(130); });
 let base = args.url;
-if (!base) {
-  server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-  base = `http://127.0.0.1:${port}/`;
-  await new Promise((res, rej) => {
-    const t = setTimeout(() => rej(new Error('vite did not start')), 30000);
-    server.stdout.on('data', (d) => { if (String(d).includes('Local') || String(d).includes('ready')) { clearTimeout(t); res(); } });
-    server.on('exit', (c) => rej(new Error('vite exited ' + c)));
+let browser;
+try {
+  if (!base) {
+    server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    base = `http://127.0.0.1:${port}/`;
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error('vite did not start')), 30000);
+      server.stdout.on('data', (d) => { if (String(d).includes('Local') || String(d).includes('ready')) { clearTimeout(t); res(); } });
+      server.on('exit', (c) => { clearTimeout(t); rej(new Error('vite exited ' + c)); });
+    });
+  }
+  browser = await chromium.launch({
+    executablePath: exe,
+    headless: true,
+    args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU', '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader', '--ignore-gpu-blocklist', '--no-sandbox', '--enable-webgpu-developer-features', '--disable-gpu-watchdog', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'],
   });
+} catch (e) {
+  stopServer();
+  console.error(`shot: could not start (${e.message.split('\n')[0]}). Set CHROME_BIN to a Chrome or Chromium executable with WebGPU.`);
+  process.exit(2);
 }
-
-const browser = await chromium.launch({
-  executablePath: exe,
-  headless: true,
-  args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU', '--use-angle=swiftshader', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader', '--ignore-gpu-blocklist', '--no-sandbox', '--enable-webgpu-developer-features', '--disable-gpu-watchdog', '--disable-background-timer-throttling', '--disable-renderer-backgrounding'],
-});
 const errors = [];
 const logs = [];
 let code = 0;
@@ -70,7 +78,7 @@ try {
   console.error('harness failure:', e);
   code = 1;
 } finally {
-  await browser.close();
-  if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } }
+  await browser.close().catch(() => undefined);
+  stopServer();
 }
 process.exit(code);

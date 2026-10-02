@@ -5,11 +5,11 @@
  *
  *   node tools/bench.mjs                          software WebGPU (SwiftShader): proves the pipeline runs, says nothing about speed
  *   node tools/bench.mjs --gpu                    the machine's real GPU (needs a Chromium/Chrome with WebGPU; set CHROME_BIN)
+ *   node tools/bench.mjs --gpu --uncapped         also lifts Chrome's frame-rate limit and v-sync so avgFps shows what the GPU can do
+ *                                                 beyond the display refresh (a measuring aid; a normal page can never do this)
  *
  * CHROME_BIN is the path of the browser executable. Without it the software run falls back to the Chromium of the development container
  * (/opt/pw-browsers/chromium-1194), which exists nowhere else, and --gpu has no browser at all unless Playwright installed one.
- *   node tools/bench.mjs --gpu --uncapped         also lifts Chrome's frame-rate limit and v-sync so avgFps shows what the GPU can do
- *                                                 beyond the display refresh (a measuring aid; a normal page can never do this)
  *
  * Options: --seconds <n> measured seconds (default 20)   --warmup <n> seconds (default 2)   --size 1920x1080
  *          --query "quality=ultra&scale=0.75&perf240=1"  extra app query parameters (see src/app/perfParams.ts, src/app/params.ts)
@@ -34,6 +34,8 @@ const softwareArgs = [...gpuArgs, '--use-angle=swiftshader', '--use-vulkan=swift
 const launchArgs = [...(args.gpu ? gpuArgs : softwareArgs), ...(args.uncapped ? ['--disable-frame-rate-limit', '--disable-gpu-vsync'] : [])];
 
 let server;
+const stopServer = () => { if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } server = undefined; } };
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopServer(); process.exit(130); });
 let base = args.url;
 if (!base) {
   const port = Number(args.port ?? (await freePort()));
@@ -42,7 +44,11 @@ if (!base) {
   await new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error('vite did not start')), 30000);
     server.stdout.on('data', (d) => { if (String(d).includes('Local') || String(d).includes('ready')) { clearTimeout(t); res(); } });
-    server.on('exit', (c) => rej(new Error('vite exited ' + c)));
+    server.on('exit', (c) => { clearTimeout(t); rej(new Error('vite exited ' + c)); });
+  }).catch((e) => {
+    stopServer();
+    console.error(`bench: ${e.message}`);
+    process.exit(2);
   });
 }
 
@@ -52,7 +58,6 @@ query.set('benchSeconds', String(args.seconds ?? 20));
 query.set('benchWarmup', String(args.warmup ?? 2));
 if (args.uncapped && !query.has('refresh')) query.set('refresh', '1000');
 
-const stopServer = () => { if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } } };
 let browser;
 try {
   browser = await chromium.launch({ executablePath: exe, headless: !args.headed, args: launchArgs });
@@ -83,7 +88,7 @@ try {
   console.error('harness failure:', e);
   code = 1;
 } finally {
-  await browser.close();
+  await browser.close().catch(() => undefined);
   stopServer();
 }
 process.exit(code);

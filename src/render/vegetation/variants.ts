@@ -2,6 +2,7 @@ import type { Vec3 } from '../../contracts';
 import { Rng } from '../../world/track/rng';
 import type { MeshData } from './meshBuilder';
 import { rockAssets } from './rockGen';
+import { runSliced, runSync, type Steps } from './slices';
 import { buildTreeLods } from './treeGen';
 import { juniperPlan, birchPlan, bushPlan, oakPlan } from './treePlanBroad';
 import { pinePlan, sprucePlan, type TreePlan } from './treePlan';
@@ -94,15 +95,30 @@ function bounds(lods: readonly MeshData[]): { height: number; centreY: number; r
   return { height: y1, centreY: cy, radius: r };
 }
 
-/** Generates every variant's three LOD meshes and bounding spheres (about 0.1 s of CPU). */
-export function buildVariantAssets(): VariantAsset[] {
+function* variantSteps(): Steps<VariantAsset[]> {
   const rocks = rockAssets();
-  return VARIANT_DEFS.map((def, v) => {
+  yield;
+  const out: VariantAsset[] = [];
+  for (let v = 0; v < VARIANT_DEFS.length; v++) {
+    const def = VARIANT_DEFS[v];
     if (def.rock >= 0) {
       const r = rocks[def.rock];
-      return { def, lods: r.lods, height: r.height, centreY: r.centreY, radius: r.radius };
+      out.push({ def, lods: r.lods, height: r.height, centreY: r.centreY, radius: r.radius });
+    } else {
+      const lods = buildTreeLods(variantPlan(v) as TreePlan, def.seed);
+      out.push({ def, lods, ...bounds(lods) });
     }
-    const lods = buildTreeLods(variantPlan(v) as TreePlan, def.seed);
-    return { def, lods, ...bounds(lods) };
-  });
+    yield;
+  }
+  return out;
+}
+
+/** Generates every variant's three LOD meshes and bounding spheres (about 0.4 s of CPU). */
+export function buildVariantAssets(): VariantAsset[] {
+  return runSync(variantSteps());
+}
+
+/** The same assets generated in slices with an event-loop yield between them (see slices.ts). */
+export function buildVariantAssetsSliced(budgetMs = 8, yieldFn?: () => Promise<void>): Promise<VariantAsset[]> {
+  return runSliced(variantSteps(), budgetMs, yieldFn);
 }

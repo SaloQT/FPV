@@ -8,10 +8,11 @@ import {
 import { CloudNoise } from './cloudNoise';
 import { AtmosphereLuts } from './lutPasses';
 import { bakeMilkyWay } from './milkyWay';
+import { NightDome } from './nightDome';
 import { DEFAULT_ATMOSPHERE_SETTINGS, sanitizeAtmosphereSettings, type AtmosphereSettings } from './settings';
 import { SkyPass } from './skyPass';
 import { packStars, starMagnitudeLimit } from './starData';
-import { AtmosUniforms } from './uniforms';
+import { AtmosUniforms, eclipticNorthWorld } from './uniforms';
 
 export type { AtmosphereSettings } from './settings';
 
@@ -53,6 +54,8 @@ const MOON_SCATTER_MIN_ELEVATION = (-7 * Math.PI) / 180;
 const MOON_SCATTER_MIN_FRACTION = 0.002;
 const HISTORY_BLEND = 0.9;
 const LIGHT_STEPS = { low: 4, medium: 5, high: 6, ultra: 6 } as const;
+/** The night dome (zodiacal light, Milky Way, stars) is only integrated for a sun this far below the horizon (radians); in daylight it is 1e-8 of the sky. */
+const NIGHT_DOME_MAX_SUN_ELEVATION = (-3 * Math.PI) / 180;
 
 class Atmosphere implements AtmosphereModule {
   readonly name = 'atmosphere';
@@ -67,6 +70,11 @@ class Atmosphere implements AtmosphereModule {
   private readonly shadow: CloudShadowMapping = { centerX: 0, centerZ: 0, extentM: CLOUD_SHADOW_EXTENT_M };
   private moonActive = false;
   private device: GPUDevice | null = null;
+  private nightDome: NightDome | null = null;
+  private domeMilkyWay = -1;
+  private domeStars = -1;
+  private readonly domeRadiance: Vec3 = [0, 0, 0];
+  private readonly eclNorth: Vec3 = [0, 0, 0];
 
   constructor(options: Partial<AtmosphereSettings>) {
     this.settings = sanitizeAtmosphereSettings(options, DEFAULT_ATMOSPHERE_SETTINGS);
@@ -80,7 +88,9 @@ class Atmosphere implements AtmosphereModule {
     rc.device.queue.submit([enc.finish()]);
     this.clouds = new CloudLayer(rc, this.noise, this.luts.params);
     const catalog = await this.loadCatalog();
-    this.sky.setMilkyWay(bakeMilkyWay(catalog));
+    const milkyWay = bakeMilkyWay(catalog);
+    this.sky.setMilkyWay(milkyWay);
+    this.nightDome = new NightDome(milkyWay, catalog);
     this.sky.setStars(catalog ? packStars(catalog) : null);
     this.device = rc.device;
     running.set(rc.device, this);
@@ -109,18 +119,30 @@ class Atmosphere implements AtmosphereModule {
     const magLimit = starMagnitudeLimit(rc.quality.tier);
     const seed = this.settings.seed ?? rc.settings.seed;
     this.clouds.prepare();
+    this.updateNightDome(a);
     this.shadow.centerX = snapShadowCenter(cam[0]);
     this.shadow.centerZ = snapShadowCenter(cam[2]);
     const data = this.uniforms.write({
       settings: this.settings, moonScattering: this.moonActive, seed, timeSeconds: f.time,
       equatorialToWorld: a.equatorialToWorld, starMagLimit: magLimit, cloudSteps: rc.quality.cloudSteps, jitterIndex: this.clouds.frameIndex,
       shadowCenterX: this.shadow.centerX, shadowCenterZ: this.shadow.centerZ, shadowExtentM: this.shadow.extentM,
-      historyBlend: HISTORY_BLEND, historyValid: this.clouds.historyValid, lightSteps: LIGHT_STEPS[rc.quality.tier],
+      historyBlend: HISTORY_BLEND, historyValid: this.clouds.historyValid, lightSteps: LIGHT_STEPS[rc.quality.tier], nightDome: this.domeRadiance,
     });
     rc.device.queue.writeBuffer(this.luts.params, 0, data as Float32Array<ArrayBuffer>);
     this.sky.update(f, magLimit);
     this.camera[0] = cam[0]; this.camera[1] = cam[1]; this.camera[2] = cam[2];
     cloudField(this.settings, seed, f.time, rc.settings.observer.altitudeM, this.field);
+  }
+
+  private updateNightDome(a: FrameInfo['astro']): void {
+    const dome = this.nightDome, s = this.settings;
+    if (!dome || a.sunElevation > NIGHT_DOME_MAX_SUN_ELEVATION) { this.domeRadiance.fill(0); this.domeMilkyWay = this.domeStars = -1; return; }
+    const milkyWay = s.milkyWayEnabled ? s.milkyWayBrightness : 0, stars = s.starsEnabled ? s.starBrightness : 0;
+    if (!dome.needsRefresh(a.equatorialToWorld) && milkyWay === this.domeMilkyWay && stars === this.domeStars) return;
+    this.domeMilkyWay = milkyWay; this.domeStars = stars;
+    eclipticNorthWorld(a.equatorialToWorld, this.eclNorth);
+    const m = dome.compute(a.equatorialToWorld, a.sunDir, this.eclNorth, milkyWay, stars);
+    this.domeRadiance[0] = m[0]; this.domeRadiance[1] = m[1]; this.domeRadiance[2] = m[2];
   }
 
   encodePre(enc: GPUCommandEncoder): void {

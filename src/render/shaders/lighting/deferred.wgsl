@@ -18,6 +18,13 @@ const MAX_HDR : f32 = 60000.0;
 const AMBIENT_SAMPLES : u32 = 16u;
 const GROUND_ALBEDO : f32 = 0.15;
 const HORIZON_EPS : f32 = -0.0145;
+// A thin leaf reflects the ambient light that falls on its front and transmits (about 0.8 of that, LEAF_TRANSMITTANCE) what falls on its back; inside a crown both faces
+// see about the same ambient, a crown's outer leaf sees a darker back, so 0.7 of the back-face share is taken (rt_scene.wgsl: the crown proxy's own scatter model).
+const LEAF_AMBIENT_BACK : f32 = 0.7;
+// The baked and traced occlusion of a leaf is mostly other leaves, which are not black: they reflect and transmit about 0.22 (green) of what falls on them and
+// that light is scattered on into the crown (multiple scattering), so the occluded part of the ambient is partly refilled. Without it a deep crown interior
+// is lit by about a third of its sky and reads 5 to 8 % of a sunlit leaf, where a leafy shade measures 15 %.
+const LEAF_AO_FILL : f32 = 0.5;
 
 // Depth- and normal-aware upsample of the RT-resolution signals (sun shadow, GI, specular) to a full-resolution pixel. Every RT texel stands
 // for the full-res pixel rtSourcePixel() picks this frame (the RT passes use the same mapping), so its depth and normal are re-read from the
@@ -166,7 +173,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
   let reflDir = normalize(mix(reflect(-v, n), n, rough * rough));
   let specRadiance = mix(envRadiance(reflDir, ground) * pre, gs.rgb, saturate1(gs.a));
-  let indirect = diffuseColor * irradianceOverPi * ao
+  let leafAmbient = (1.0 + LEAF_AMBIENT_BACK * LEAF_TRANSMITTANCE * msc.g) * mix(ao, 1.0, LEAF_AO_FILL * msc.g);
+  let indirect = diffuseColor * irradianceOverPi * leafAmbient
                + specRadiance * envBrdfApprox(f0, rough, nv) * specularOcclusion(nv, ao, rough);
 
   var color = direct * pre + indirect + msc.a * EMISSIVE_MAX_NITS * alb.rgb * pre;

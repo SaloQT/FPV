@@ -1,8 +1,8 @@
 import type { RenderContext } from '../contracts';
 import { DEPTH_STATE, GBUFFER_TARGETS } from '../contracts';
-import { ATLAS_H, ATLAS_MIPS, ATLAS_W, buildLeafAtlas } from './leafAtlas';
+import { ATLAS_H, ATLAS_MIPS, ATLAS_W, buildLeafAtlasSliced, type LeafAtlas } from './leafAtlas';
 import { VERTEX_STRIDE, packMeshes } from './meshBuilder';
-import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, buildVariantAssets, type VariantAsset } from './variants';
+import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, buildVariantAssetsSliced, type VariantAsset } from './variants';
 
 export const ARGS_WORDS = 5;
 export const ARGS_BYTES = DRAW_COUNT * ARGS_WORDS * 4;
@@ -40,9 +40,16 @@ export class TreeAssets {
   private readonly atlas: GPUTexture;
   private readonly atlasData: GPUTexture;
 
-  constructor(rc: RenderContext) {
+  /** Builds the meshes and the leaf atlas in time slices (the loading screen keeps painting), then the GPU objects. */
+  static async create(rc: RenderContext): Promise<TreeAssets> {
+    const variants = await buildVariantAssetsSliced();
+    const atlas = await buildLeafAtlasSliced();
+    return new TreeAssets(rc, variants, atlas);
+  }
+
+  private constructor(rc: RenderContext, variants: VariantAsset[], atlas: LeafAtlas) {
     const dev = rc.device;
-    this.variants = buildVariantAssets();
+    this.variants = variants;
     const packed = packMeshes(this.variants.flatMap((v) => v.lods));
     this.argsTemplate = new Uint32Array(DRAW_COUNT * ARGS_WORDS);
     packed.ranges.forEach((r, k) => {
@@ -64,7 +71,6 @@ export class TreeAssets {
       });
       return tex;
     };
-    const atlas = buildLeafAtlas();
     this.atlas = atlasTexture('leaf-atlas-colour', atlas.colour);
     this.atlasData = atlasTexture('leaf-atlas-data', atlas.data);
     this.atlasView = this.atlas.createView();

@@ -114,4 +114,14 @@ describe('AtmosParams layout', () => {
     expect(on[31]).toBeCloseTo(105 * DEG, 6);
     expect(Math.hypot(on[28], on[29], on[30])).toBeCloseTo(1, 6);
   });
+
+  it('carries the night-dome radiance in the free w lanes of the galactic rows and leaves the axes alone', () => {
+    const u = new AtmosUniforms();
+    const axes = galacticAxesEquatorial();
+    const d = u.write(inputs({}, { nightDome: [1.5e-4, 1.4e-4, 1.3e-4] }));
+    expect([d[35], d[39], d[43]].map((v) => Math.fround(v))).toEqual([1.5e-4, 1.4e-4, 1.3e-4].map((v) => Math.fround(v)));
+    for (let a = 0; a < 3; a++) for (let i = 0; i < 3; i++) expect(d[32 + a * 4 + i]).toBeCloseTo(axes[a][i], 6);
+    const none = u.write(inputs());
+    expect([none[35], none[39], none[43]]).toEqual([0, 0, 0]);
+  });
 });

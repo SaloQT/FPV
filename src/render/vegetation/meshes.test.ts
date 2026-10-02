@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { KIND, type MeshData } from './meshBuilder';
 import { ROCK_FREQUENCY, ROCK_SHAPES, rockAssets } from './rockGen';
-import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets, type VariantAsset } from './variants';
+import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets, buildVariantAssetsSliced, type VariantAsset } from './variants';
 
 const VALID_KINDS = new Set<number>(Object.values(KIND));
 const isLeafKind = (k: number): boolean => k >= KIND.leaf;
@@ -155,6 +155,20 @@ describe('variant meshes', () => {
         expect(m.attr).toEqual(ref.attr);
       });
     });
+  });
+});
+
+describe('time-sliced variant build', () => {
+  it('yields between variants and gives byte-identical meshes', { timeout: SLOW }, async () => {
+    let hops = 0;
+    const sliced = await buildVariantAssetsSliced(0, async () => { hops++; });
+    expect(hops).toBeGreaterThanOrEqual(VARIANT_COUNT);
+    sliced.forEach((v, i) => v.lods.forEach((m, l) => {
+      const ref = assets()[i].lods[l];
+      expect(m.pos).toEqual(ref.pos);
+      expect(m.idx).toEqual(ref.idx);
+      expect(m.attr).toEqual(ref.attr);
+    }));
   });
 });
 

@@ -51,3 +51,30 @@ describe('grass.wgsl shading of thin blades', () => {
     expect(grass).toContain('saturate1(trueHw / hw)');
   });
 });
+
+describe('grass.wgsl flower heads', () => {
+  const fn = (name: string): string => {
+    const start = grass.indexOf(`fn ${name}(`);
+    return grass.slice(start, grass.indexOf('\n}\n', start));
+  };
+
+  it('keeps head sizes at real flower scale: 1.2 to 4 cm across', () => {
+    const radii = [...fn('headRadius').matchAll(/return ([0-9.]+) \+ ([0-9.]+) \* u;/g)].map((m) => [Number(m[1]), Number(m[1]) + Number(m[2])]);
+    expect(radii.length).toBe(4);
+    for (const [lo, hi] of radii) {
+      expect(2 * lo).toBeGreaterThanOrEqual(0.012);
+      expect(2 * hi).toBeLessThanOrEqual(0.04);
+    }
+  });
+
+  it('uses petal reflectances of a real flower, never paper white (every head colour channel at most 0.6)', () => {
+    const channels = [...fn('headColour').matchAll(/vec3f\(([0-9.]+), ([0-9.]+), ([0-9.]+)\)/g)].flatMap((m) => [m[1], m[2], m[3]].map(Number));
+    expect(channels.length).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...channels)).toBeLessThanOrEqual(0.6);
+  });
+
+  it('shades a head from its position on the disc and makes sub-pixel heads share the blade coverage dither', () => {
+    expect(grass).toContain('headColour(in.hcode, in.head.xy, in.head.z');
+    expect(grass).toContain('cover = sq(R / Rd)');
+  });
+});

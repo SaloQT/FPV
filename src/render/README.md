@@ -86,15 +86,15 @@ export function createFooModule(): RenderModule {
 
 Do not read `GPUTextureUsage`/`GPUShaderStage`/`GPUBufferUsage` at module top level in files that vitest imports (Node has no such globals).
 Register static geometry proxies with `rc.rt.setStatic(groupId, prims)`, moving ones with `setDynamic` (<= 64 primitives).
-Stub modules (`export function create*Module` in atmosphere/terrain/vegetation/objects/rt `index.ts`) are replaced by their wave-2 owners
-and must keep the export name; stub module names end in `-stub`.
+`createDefaultModules()` (`modules.ts`) lists the factories (`create*Module` in the `index.ts` of atmosphere, terrain, vegetation, objects and rt) in the
+order the hooks run. No placeholder module ships; the dev pages only treat a module whose name ends in `-stub` as one to swap for a dev stand-in.
 
 ## Dev entries and screenshots
 
 `src/dev/<name>.ts` (top-level only; helpers go in `src/dev/<name>/`) with `export default async (canvas, osdCanvas) => {...}` runs at
 `/?dev=<name>`. Set `window.__fpv = { ready: true, stats, errors }` once the image is stable (after >= 3 frames, again after resizes).
-`src/dev/render.ts` is the reference: default modules, dev props, a CPU dev atmosphere (only while the atmosphere module is a stub) and an
-orbiting camera. Params: `t=noon|dusk|night  frames=N  dyn=1  quality=low|medium|high|ultra  scale=0.5  spin=rad/s  fps=60
+`src/dev/render.ts` is the reference: default modules, dev props, an optional CPU dev atmosphere (`atmo=dev`; the real atmosphere module is the default)
+and an orbiting camera. Params: `t=noon|dusk|night  frames=N  dyn=1  quality=low|medium|high|ultra  scale=0.5  spin=rad/s  fps=60
 atmo=dev|real  osd=0`.
 
 ```

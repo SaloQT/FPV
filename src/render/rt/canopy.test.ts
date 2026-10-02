@@ -39,10 +39,10 @@ describe('canopyTransmittance', () => {
     expect(canopyTransmittance(c, 4, [20, 0, 0], up, 1000)).toBe(1);
   });
 
-  it('through a deep crown with mean noise stays inside the 0.1 .. 0.35 band of a leafy canopy', () => {
+  it('through a deep crown with mean noise stays inside the 0.1 .. 0.45 band of a leafy, clumped canopy', () => {
     const t = canopyTransmittance(c, 4.5, [0, 0, 0], up, 1000);
     expect(t).toBeGreaterThan(0.1);
-    expect(t).toBeLessThan(0.35);
+    expect(t).toBeLessThan(0.45);
   });
 
   it('is bracketed by the full-chord and the core-chord Beer-Lambert values (the rim is thinner than the core)', () => {
@@ -132,11 +132,11 @@ describe('crown shadow shape', () => {
     expect(Math.abs(mean - mid) / mid).toBeLessThan(0.15);
   });
 
-  it('a crown crossed along the 22 degree sun ray still passes 0.1 .. 0.4 of the light through its middle', () => {
+  it('a crown crossed along the 22 degree sun ray still passes 0.1 .. 0.5 of the light through its middle', () => {
     const d = [Math.cos(0.38) * 0.5, Math.sin(0.38), Math.cos(0.38) * Math.sqrt(0.75)];
     const o = [-d[0] / d[1] * 10, 0, -d[2] / d[1] * 10];
     const t = canopyTransmittance(c, r, o, d, 1e4, noise);
     expect(t).toBeGreaterThan(0.1);
-    expect(t).toBeLessThan(0.4);
+    expect(t).toBeLessThan(0.5);
   });
 });

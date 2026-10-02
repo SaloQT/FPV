@@ -1,5 +1,6 @@
 import { el, setHidden, setText } from './dom';
 import './ui.css';
+import './flow.css';
 
 const FADE_MS = 320;
 

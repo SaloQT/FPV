@@ -13,6 +13,7 @@
  *   loseDevice()  pretends the GPU device was lost, to exercise the failure panel and Recover
  *   bench      with `?bench=1`: the result of the scripted run once it finished (see bench.ts);  benchDone  the promise of it
  *
+ * `stats.request` is the exact track request that produced the world (seed, style, gates, laps, difficulty: what a share link carries).
  * `stats` carries the renderer's numbers too: displayHz (measured refresh), targetFps, frameCap, dynamicDriver, passMs (GPU ms per
  * frame section, see render/gpuTimer.ts, NaN without timestamp-query) and errorCount.
  */
@@ -82,6 +83,7 @@ function collectStats(ctx: AppCtx): Record<string, unknown> {
     baseSeed: w.baseSeed,
     terrainSeed: w.terrainSeed,
     style: w.style,
+    request: { ...w.request },
     gates: w.track.gates.length,
     trackAttempts: w.attempts,
     start: w.track.start.pos.slice(),

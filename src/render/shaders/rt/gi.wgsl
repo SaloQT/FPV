@@ -36,7 +36,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       vis += 1.0;
     } else {
       sum += hitRadiance(h, origin, d, e, steps);
-      vis += saturate1(h.t / CONTACT_RANGE);
+      vis += 1.0 - hitSolidity(h, origin, d) * (1.0 - saturate1(h.t / CONTACT_RANGE));
     }
   }
   let inv = 1.0 / f32(rays);

@@ -30,16 +30,62 @@ struct VsOut {
   @location(3) albedo : vec3f,
   @location(4) shade : vec2f,   // x = cavity, y = roughness
   @location(5) motion : vec2f,
-  @location(6) cover : vec2f,   // x = share of the drawn width that is real blade (the rest is the one-pixel floor), y = thinness 0..1
+  @location(6) cover : vec2f,   // x = share of the drawn width (or head area) that is real, the rest is the one-pixel floor, y = thinness 0..1
+  @location(7) head : vec4f,    // xy = position on the flower head disc in head radii (|xy| < 1 inside the head, far outside on the stem), z = head radius in px
+  @location(8) @interpolate(flat) hcode : u32,
 };
 
-fn flowerColor(code : u32) -> vec3f {
+// Flower heads are small camera-facing discs on a thin stem: the top rows of the strip are laid out as a polygon on the head plane.
+// Head radius in metres by colour code (ox-eye daisy 2.4-4 cm across, buttercup 1.8-3, self-heal or vetch 1.2-2.2, clover 1.6-2.8).
+fn headRadius(code : u32, u : f32) -> f32 {
   switch (code) {
-    case 1u: { return vec3f(0.66, 0.64, 0.56); }
-    case 2u: { return vec3f(0.55, 0.38, 0.02); }
-    case 3u: { return vec3f(0.15, 0.07, 0.25); }
-    default: { return vec3f(0.42, 0.07, 0.05); }
+    case 1u: { return 0.012 + 0.008 * u; }
+    case 2u: { return 0.009 + 0.006 * u; }
+    case 3u: { return 0.006 + 0.005 * u; }
+    default: { return 0.008 + 0.006 * u; }
   }
+}
+
+fn grassNoise2(p : vec2f) -> f32 {
+  let i = floor(p);
+  let f = p - i;
+  let u = f * f * (3.0 - 2.0 * f);
+  let b = bitcast<vec2u>(vec2i(i));
+  return mix(mix(hash21(b), hash21(b + vec2u(1u, 0u)), u.x), mix(hash21(b + vec2u(0u, 1u)), hash21(b + vec2u(1u, 1u)), u.x), u.y);
+}
+
+// Petal colours are muted reflectances (white petals about 0.6, not paper white); `keep` 0 cuts the gaps between petals once the head
+// is several pixels across, so smaller heads shade as the mean of petals and gaps and do not shimmer.
+fn headColour(code : u32, hp : vec2f, pxR : f32, seed : f32) -> vec4f {
+  let r = length(hp);
+  let a = atan2(hp.y, hp.x) + seed * TAU;
+  let detail = smoothstep(2.0, 5.0, pxR);
+  var col : vec3f;
+  var keep = 1.0;
+  switch (code) {
+    case 1u: {
+      let petal = abs(sin(a * 6.5));
+      let eye = 1.0 - smoothstep(0.26, 0.34, r);
+      let ray = (0.9 + 0.1 * petal) * (0.72 + 0.28 * smoothstep(0.3, 0.7, r));
+      col = mix(vec3f(0.60, 0.585, 0.53) * ray, vec3f(0.44, 0.285, 0.02), eye);
+      if (r > 0.4 && petal < 0.16 * detail) { keep = 0.0; }
+    }
+    case 2u: {
+      let eye = 1.0 - smoothstep(0.18, 0.3, r);
+      col = mix(vec3f(0.55, 0.42, 0.06) * (0.88 + 0.12 * smoothstep(0.1, 0.9, r)), vec3f(0.42, 0.28, 0.02), eye);
+      if (r > 0.86 + 0.14 * cos(5.0 * a) && detail > 0.5) { keep = 0.0; }
+    }
+    case 3u: {
+      let eye = 1.0 - smoothstep(0.14, 0.24, r);
+      col = mix(vec3f(0.23, 0.095, 0.37) * (0.85 + 0.15 * smoothstep(0.2, 0.8, r)), vec3f(0.42, 0.38, 0.16), eye);
+      if (r > 0.7 + 0.3 * abs(cos(2.5 * a)) && detail > 0.5) { keep = 0.0; }
+    }
+    default: {
+      let floret = hash21(bitcast<vec2u>(vec2i(floor((hp + vec2f(1.0)) * 4.0))));
+      col = vec3f(0.42, 0.15, 0.25) * (0.8 + 0.4 * floret) * (0.8 + 0.2 * (1.0 - r));
+    }
+  }
+  return vec4f(col, keep);
 }
 
 // Lean, flutter, wash and trample as one tilt vector (radians) plus the wash squash factor.
@@ -85,6 +131,8 @@ fn bladeArc(b : Blade, t : f32, dirY : vec2f, curl : f32, time : f32, rnd : f32,
   return r;
 }
 
+const NECK : u32 = NSEG / 2u;
+
 @vertex
 fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> VsOut {
   let b = blades[iid];
@@ -99,7 +147,9 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   let rnd = f32(b.info >> 23u) / 511.0;
   let tintCode = unpack4x8unorm(b.tint);
   let code = u32(tintCode.a * 255.0 + 0.5);
+  // The farthest LOD draws a flower as a plain stem: its head is far below a pixel there.
   let isFlower = code >= 1u && code <= 4u;
+  let hasHead = isFlower && HAS_TIP;
   let isSeed = code == 5u;
   let turf = tintCode.rgb * tintCode.rgb * 0.5;
   let time = frame.camPos.w;
@@ -114,8 +164,9 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
     default: {}
   }
   if (isFlower) { curl *= 0.4; }
-  // The head is a short cap on the stem, not the whole top segment.
-  if (isFlower && HAS_TIP && row + 1u >= NSEG) { t = select(1.0 - min(0.014 / b.height, 1.0 / f32(NSEG)), 1.0, isTip); }
+  // A flower's stem ends at the neck row; every row above it belongs to the head.
+  let headRow = hasHead && row > NECK;
+  if (hasHead) { t = f32(min(row, NECK)) / max(f32(NECK), 1.0); }
 
   let dirY = vec2f(cos(yaw), sin(yaw));
   let arc = bladeArc(b, t, dirY, curl, time, rnd, stiff);
@@ -134,8 +185,7 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
 
   var wf = 1.0 - 0.85 * t * t;
   if (species == 4u) { wf = max(0.12, 6.75 * t * (1.0 - t) * (1.0 - t)); }
-  let headRow = select(NSEG, NSEG - 1u, HAS_TIP);
-  if (isFlower) { wf = select(0.25, 3.6, row == headRow); }
+  if (isFlower) { wf = 0.3; }
   if (isSeed && t > 0.66) { wf = 1.9; }
   if (isTip) { wf = 0.0; }
 
@@ -149,22 +199,59 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   let pxPerM = frame.screen.y * 0.5 * frame.proj[1][1] / max(clip0.w, 0.05);
   let trueHw = b.halfWidth * wf;
   let hw = max(trueHw, select(MIN_HALF_PX / pxPerM, 0.0, isTip));
-  let world = centre + sideEff * (sv * hw);
+  var world = centre + sideEff * (sv * hw);
+  var cover = select(1.0, saturate1(trueHw / hw), !isTip);
+  var thinPx = trueHw * pxPerM;
+  var headPos = vec2f(0.0, -9.0);
+  var headPx = 0.0;
+  var headN = nb + side * (0.5 * sv);
+
+  let r2 = hash11(b.info * 747796405u + b.tint);
+  if (hasHead && row >= NECK) {
+    // The head faces up and a little toward the camera, like a flower following the sun; its disc is the plane of vr and `ha`.
+    let nH = normalize(vec3f(0.0, 0.5 + 0.5 * rnd, 0.0) + vdir * (0.9 - 0.3 * rnd));
+    var ha = normalize(cross(nH, vr));
+    if (ha.y < 0.0) { ha = -ha; }
+    let R = headRadius(code, r2);
+    let Rpx = R * pxPerM;
+    // A head under half a pixel across is drawn at the floor on `cover` of its pixels, so its area stays the real one.
+    let Rd = max(R, 0.5 / pxPerM);
+    headN = nH;
+    headPx = Rpx;
+    thinPx = Rpx;
+    if (headRow) {
+      let L = NSEG - NECK;
+      let s = -1.0 + 2.0 * f32(row - NECK) / f32(L);
+      let w = sqrt(max(1.0 - s * s, 0.0));
+      world = centre + ha * (Rd * (1.0 + s)) + vr * (Rd * w * sv);
+      headPos = vec2f(sv * w, s);
+      cover = sq(R / Rd);
+    } else {
+      headPos = vec2f(sv * 0.08, -0.98);
+    }
+  }
 
   // Patch colour (turf, already bleached where the ground is dry) times per-blade variation: luminance, a blue-green to yellow-green
   // hue pick and dead straw blades or dead tips. Dark root to lighter, slightly yellower tip; roots also stand in for sward self-shadow.
-  let r2 = hash11(b.info * 747796405u + b.tint);
+  // Variation that is random per blade averages out below a pixel and then only shimmers, so it fades to the sward mean as blades thin;
+  // the world-space clump tone below is correlated between neighbouring blades, survives the distance and is stable under TAA.
+  let thinV = 1.0 - smoothstep(0.3 * THIN_PX, 1.6 * THIN_PX, trueHw * pxPerM);
+  let calm = 0.6 * thinV;
   let gt = pow(t, 0.8);
-  var base = turf * (0.72 + 0.56 * rnd);
-  base *= mix(vec3f(0.88, 1.04, 1.05), vec3f(1.22, 1.08, 0.62), smoothstep(0.5, 1.0, r2));
+  var base = turf * mix(0.72 + 0.56 * rnd, 1.0, calm);
+  base *= mix(mix(vec3f(0.88, 1.04, 1.05), vec3f(1.22, 1.08, 0.62), smoothstep(0.5, 1.0, r2)), vec3f(1.0), calm);
   if (species == 3u) { base *= vec3f(0.9, 1.0, 0.9); }
   if (species == 4u) { base *= vec3f(0.82, 1.0, 0.78); }
-  var col = base * mix(0.35, 1.4, gt) * mix(vec3f(1.0), vec3f(1.06, 1.02, 0.8), gt);
+  let tuftTone = grassNoise2(b.pos.xz * 2.2);
+  let swathTone = grassNoise2(b.pos.xz * 0.55 + vec2f(17.0, 5.0));
+  let toneAll = (0.7 + 0.6 * tuftTone) * mix(vec3f(0.96, 0.99, 1.07), vec3f(1.04, 1.01, 0.92), swathTone);
+  base *= toneAll;
+  var col = base * mix(mix(0.35, 1.4, gt), 0.93, 0.5 * thinV) * mix(vec3f(1.0), vec3f(1.06, 1.02, 0.8), gt);
   var strawMix = 0.45 * smoothstep(0.6, 1.0, t) * smoothstep(0.3, 0.9, fract(r2 * 9.7));
   if (r2 < 0.06 + 0.35 * dry) { strawMix = 0.85; }
+  strawMix = mix(strawMix, 0.12 + 0.3 * dry, calm);
   col = mix(col, STRAW * (0.55 + 0.6 * rnd) * mix(0.5, 1.0, gt), strawMix);
   if (isSeed && t > 0.66) { col = mix(vec3f(0.12, 0.13, 0.05), SEED_HEAD, 0.4 + 0.6 * dry); }
-  if (isFlower && row >= headRow) { col = flowerColor(code); }
 
   let tn2 = unpack2x16snorm(b.nrm);
   let tn = vec3f(tn2.x, sqrt(max(1.0 - dot(tn2, tn2), 0.0)), tn2.y);
@@ -172,12 +259,14 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   var o : VsOut;
   o.pos = frame.viewProj * vec4f(world, 1.0);
   o.world = world;
-  o.nrm = normalize(nb + side * (0.5 * sv));
+  o.nrm = normalize(headN);
   o.terrainNrm = tn;
   o.albedo = col;
   o.shade = vec2f(mix(0.42, 1.0, saturate1(t * 1.8)), mix(0.64, 0.5, gt));
   o.motion = motionVectorPrev(world, world + (prevCentre - centre));
-  o.cover = vec2f(select(1.0, saturate1(trueHw / hw), !isTip), 1.0 - smoothstep(0.3 * THIN_PX, THIN_PX, trueHw * pxPerM));
+  o.cover = vec2f(cover, 1.0 - smoothstep(0.3 * THIN_PX, THIN_PX, thinPx));
+  o.head = vec4f(headPos, headPx, 0.0);
+  o.hcode = select(0u, code, hasHead);
   return o;
 }
 
@@ -196,15 +285,29 @@ fn fs(in : VsOut) -> FsOut {
   var n = normalize(in.nrm);
   if (dot(n, toCam) < 0.0) { n = -n; }
   let thin = in.cover.y;
-  n = normalize(mix(n, normalize(in.terrainNrm), mix(0.5, 0.9, thin)));
+  var albedo = in.albedo;
+  var tr = TRANSLUCENCY * (1.0 - 0.3 * thin);
+  var cavity = in.shade.x;
+  var rough0 = in.shade.y;
+  var pull = mix(0.5, 0.9, thin);
+  if (in.hcode != 0u && length(in.head.xy) < 1.0) {
+    let h = headColour(in.hcode, in.head.xy, in.head.z, f32(in.hcode) * 0.37);
+    if (h.w < 0.5) { discard; }
+    albedo = h.rgb;
+    tr = 0.3 * (1.0 - 0.3 * thin);
+    cavity = 1.0;
+    rough0 = 0.6;
+    pull = mix(0.2, 0.9, thin);
+  }
+  n = normalize(mix(n, normalize(in.terrainNrm), pull));
   let nv = saturate1(dot(n, normalize(toCam)));
   // Wider lobe at grazing view and for thin blades: a sunlit or sky-lit mirror reflection off random blade normals is what glitters.
   let graze = sq(1.0 - nv);
-  let rough = mix(in.shade.y, GRAZE_ROUGH, max(graze, thin));
+  let rough = mix(rough0, GRAZE_ROUGH, max(graze, thin));
   var o : FsOut;
-  o.albedo = vec4f(in.albedo, in.shade.x);
+  o.albedo = vec4f(albedo, cavity);
   o.normal = vec4f(octEncode(n), rough, 0.0);
-  o.misc = vec4f(GRASS_ID / 255.0, TRANSLUCENCY * (1.0 - 0.3 * thin), 0.0, 0.0);
+  o.misc = vec4f(GRASS_ID / 255.0, tr, 0.0, 0.0);
   o.motion = in.motion;
   return o;
 }

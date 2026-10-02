@@ -9,6 +9,19 @@ export interface FailureActions {
   dismiss?: () => void;
 }
 
+const DEV_ORIGIN = 'http://localhost:5173';
+
+/** The loopback address of the port this page is served on (an empty port is the scheme's default, 80 for the http pages that need this hint). */
+export function loopbackOrigin(port: string): string {
+  return port === '' ? 'http://localhost' : `http://localhost:${port}`;
+}
+
+/** errorMessages.ts names the dev server's address; `npm run preview` (4173) or a deployment is on another port, so the hint points at the one in use. */
+export function withLoopbackPort(m: FailureMessage, port: string): FailureMessage {
+  const origin = loopbackOrigin(port);
+  return origin === DEV_ORIGIN ? m : { ...m, steps: m.steps.map((s) => s.replace(DEV_ORIGIN, origin)) };
+}
+
 export function browserEnvironment(): Environment {
   return { userAgent: navigator.userAgent, secureContext: window.isSecureContext, hostname: location.hostname };
 }
@@ -43,7 +56,7 @@ export class ErrorScreen {
   }
 
   show(kind: FailureKind, detail: string, actions: FailureActions = {}): void {
-    this.render(describeFailure(kind, detail, this.env), actions);
+    this.render(withLoopbackPort(describeFailure(kind, detail, this.env), location.port), actions);
   }
 
   hide(): void {

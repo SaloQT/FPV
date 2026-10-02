@@ -3,8 +3,8 @@
 // The map folds the view azimuth around the SUN (common/atmosphere_sample.wgsl), so two passes build it:
 //   MOON_PASS defined : moonlight scattering, folded around the MOON, into skyMoon (exact for the moon; the sky pass samples it directly).
 //   otherwise         : sun scattering + night airglow + starlight floor into skySun (stored as nits / skySunStoreScale()), and world.skyView
-//                       (plain nits, clamped to FP16_STORE_MAX) = that + the moon's map symmetrised over the two possible view sides
-//                       (accurate for the low-frequency consumers: ambient and reflections).
+//                       (plain nits, clamped to FP16_STORE_MAX) = that + the night dome (zodiacal light, Milky Way, stars) + the moon's map
+//                       symmetrised over the two possible view sides (accurate for the low-frequency consumers: ambient and reflections).
 #include "sky/lut_common.wgsl"
 #include "sky/atmos_uniforms.wgsl"
 #include "sky/night_light.wgsl"
@@ -47,6 +47,14 @@ fn nightSky(cosZ : f32, r : f32) -> vec3f {
   return nightSkyNits(cosZ, frame.sky.x) * sampleTransmittance(r, cosZ) * (frame.sky.w * ap.flags.y * horizon);
 }
 
+// Zodiacal light, Milky Way and bright stars as one dome radiance (CPU-integrated, src/render/atmosphere/nightDome.ts), for the ambient only: the
+// sky pass draws them from their own maps. Same extinction and horizon taper as the airglow above.
+fn nightDome(cosZ : f32, r : f32) -> vec3f {
+  if (cosZ <= 0.0) { return vec3f(0.0); }
+  let horizon = smoothstep(0.0, 0.04, cosZ);
+  return vec3f(ap.gal0.w, ap.gal1.w, ap.gal2.w) * sampleTransmittance(r, cosZ) * (frame.sky.w * ap.flags.y * horizon);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   let dims = textureDimensions(outTex);
@@ -68,7 +76,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let sky = marchSky(dir, r, light, frame.sunIrradiance.rgb) + nightSky(cosZ, r);
   textureStore(outTex, vec2i(gid.xy), vec4f(min(sky / skySunStoreScale(), vec3f(FP16_STORE_MAX)), 1.0));
 
-  var world = sky;
+  var world = sky + nightDome(cosZ, r);
   if (ap.flags.x > 0.5) {
     let sxz = vec2f(frame.sunDir.x, frame.sunDir.z);
     let mxz = vec2f(frame.moonDir.x, frame.moonDir.z);

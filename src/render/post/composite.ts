@@ -109,7 +109,7 @@ export function createCompositeStage(): CompositeStage {
           { binding: 0, visibility: F, texture: { sampleType: 'float' } },
           { binding: 1, visibility: F, texture: { sampleType: 'float' } },
           { binding: 2, visibility: F, sampler: { type: 'filtering' } },
-          { binding: 3, visibility: F, buffer: { type: 'uniform', minBindingSize: 16 } },
+          { binding: 3, visibility: F, buffer: { type: 'uniform', minBindingSize: 32 } },
           { binding: 4, visibility: F, buffer: { type: 'uniform', minBindingSize: PARAM_BYTES } },
         ],
       });
@@ -189,7 +189,7 @@ export function createCompositeStage(): CompositeStage {
             { binding: 0, resource: io.resolved },
             { binding: 1, resource: io.bloom },
             { binding: 2, resource: sampler },
-            { binding: 3, resource: { buffer: io.exposure, size: 16 } },
+            { binding: 3, resource: { buffer: io.exposure, size: 32 } },
             { binding: 4, resource: { buffer: paramBuffer } },
           ],
         });

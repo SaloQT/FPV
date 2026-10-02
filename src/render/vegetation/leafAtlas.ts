@@ -1,5 +1,6 @@
 import { Rng } from '../../world/track/rng';
 import { birchPainter, blobPainter, newSample, sat, shrubPainter, sprigPainter, type Painter } from './treeLeafShapes';
+import { runSliced, runSync, type Steps } from './slices';
 import { conifer, sprayPainter } from './treeNeedleShapes';
 
 export const TILE_SIZE = 512;
@@ -57,9 +58,11 @@ export interface LeafAtlas {
 /** Painted channels per sample: colour rgb, tilt u and v, translucency, openness. */
 const CHANNELS = 7;
 const STRIDE = CHANNELS + 1;
+/** A rasterise or downsample generator yields every ROWS_PER_STEP + 1 rows (a power of two minus one mask). */
+const ROWS_PER_STEP = 3;
 const byte = (x: number): number => Math.round(sat(x) * 255);
 
-function rasterise(paint: Painter, tile: number, out: Level): void {
+function* rasterise(paint: Painter, tile: number, out: Level): Steps<void> {
   const ox = (tile % TILES_X) * TILE_SIZE, oy = Math.floor(tile / TILES_X) * TILE_SIZE;
   const s = newSample(), c: [number, number, number] = [0, 0, 0];
   const sum = new Float64Array(CHANNELS), mean = new Float64Array(CHANNELS);
@@ -83,6 +86,7 @@ function rasterise(paint: Painter, tile: number, out: Level): void {
       covered++;
       for (let k = 0; k < CHANNELS; k++) { texel[o + 1 + k] = sum[k] / cover; mean[k] += texel[o + 1 + k]; }
     }
+    if ((y & ROWS_PER_STEP) === ROWS_PER_STEP) yield;
   }
   // Empty texels take the tile's mean so bilinear taps and mips at a leaf edge never blend toward black.
   const fill = Array.from(mean, (m) => (covered > 0 ? m / covered : 0));
@@ -96,6 +100,7 @@ function rasterise(paint: Painter, tile: number, out: Level): void {
       out.colour[o + 3] = Math.round(a * 255);
       out.data[o] = byte(0.5 + 0.5 * v(3)); out.data[o + 1] = byte(0.5 + 0.5 * v(4)); out.data[o + 2] = byte(v(5)); out.data[o + 3] = byte(v(6));
     }
+    if ((y & ROWS_PER_STEP) === ROWS_PER_STEP) yield;
   }
 }
 
@@ -108,7 +113,7 @@ export function tileCoverage(colour: Uint8Array, width: number, height: number, 
 }
 
 /** Box-filtered next mip: every channel weighted by alpha, then alpha rescaled per tile so alpha-tested coverage matches level 0 (leaves keep their mass at distance). */
-function downsample(src: Level, w: number, h: number, target: readonly number[]): Level {
+function* downsample(src: Level, w: number, h: number, target: readonly number[]): Steps<Level> {
   const hw = w >> 1, hh = h >> 1;
   const dst: Level = { colour: new Uint8Array(hw * hh * 4), data: new Uint8Array(hw * hh * 4) };
   const acc = new Float64Array(7);
@@ -129,12 +134,14 @@ function downsample(src: Level, w: number, h: number, target: readonly number[])
       dst.data[o + 3] = Math.round(acc[6] / weight);
       dst.colour[o + 3] = Math.round(a / 4);
     }
+    if ((y & 15) === 15) yield;
   }
   for (let tile = 0; tile < TILE_COUNT; tile++) {
     let lo = 1, hi = 8;
     for (let it = 0; it < 14; it++) {
       const mid = 0.5 * (lo + hi);
       if (tileCoverage(dst.colour, hw, hh, tile, mid) < target[tile]) lo = mid; else hi = mid;
+      yield;
     }
     const tw = hw / TILES_X, th = hh / TILES_Y, ox = (tile % TILES_X) * tw, oy = Math.floor(tile / TILES_X) * th;
     for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
@@ -151,16 +158,26 @@ function painters(): Painter[] {
   return [sprigPainter(rng(0)), sprayPainter(rng(1)), blobPainter(rng(2)), conifer(23), birchPainter(rng(4)), shrubPainter(rng(5))];
 }
 
-/** The deterministic leaf atlas; level 0 is ATLAS_W x ATLAS_H. */
-export function buildLeafAtlas(): LeafAtlas {
+function* atlasSteps(): Steps<LeafAtlas> {
   const base: Level = { colour: new Uint8Array(ATLAS_W * ATLAS_H * 4), data: new Uint8Array(ATLAS_W * ATLAS_H * 4) };
-  painters().forEach((p, tile) => rasterise(p, tile, base));
+  const paint = painters();
+  for (let tile = 0; tile < paint.length; tile++) yield* rasterise(paint[tile], tile, base);
   const target = Array.from({ length: TILE_COUNT }, (_, t) => tileCoverage(base.colour, ATLAS_W, ATLAS_H, t));
   const levels: Level[] = [base];
   let w = ATLAS_W, h = ATLAS_H;
   for (let l = 1; l < ATLAS_MIPS; l++) {
-    levels.push(downsample(levels[l - 1], w, h, target));
+    levels.push(yield* downsample(levels[l - 1], w, h, target));
     w >>= 1; h >>= 1;
   }
   return { colour: levels.map((l) => l.colour), data: levels.map((l) => l.data) };
+}
+
+/** The deterministic leaf atlas; level 0 is ATLAS_W x ATLAS_H. */
+export function buildLeafAtlas(): LeafAtlas {
+  return runSync(atlasSteps());
+}
+
+/** The same atlas built in slices of about `budgetMs` with an event-loop yield between them, so the loading screen keeps painting. */
+export function buildLeafAtlasSliced(budgetMs = 8, yieldFn?: () => Promise<void>): Promise<LeafAtlas> {
+  return runSliced(atlasSteps(), budgetMs, yieldFn);
 }

@@ -5,8 +5,11 @@
  */
 import type { RTPrimitive } from '../contracts';
 
-/** Extinction of a leafy crown, 1/m: G (~0.5 projected-area factor) x leaf area density (LAI ~5 over a ~9 m crown, ~0.45 m2/m3). */
-export const CANOPY_EXTINCTION = 0.24;
+/**
+ * Extinction of a leafy crown, 1/m: G (~0.5 projected-area factor) x leaf area density (LAI ~5 over a ~9 m crown, ~0.45 m2/m3) x the clumping index of a broadleaf
+ * crown (0.8: leaves sit in clumps with gaps between them, so a clumped crown lets through more than a homogeneous medium of the same leaf area, 0.225 x 0.8).
+ */
+export const CANOPY_EXTINCTION = 0.19;
 /** Radius fraction (of the crown sphere) inside which the leaf density is full; it falls off to zero at the proxy surface (fluffy rim). */
 export const CANOPY_CORE = 0.6;
 export const CANOPY_SAMPLES = 4;

@@ -16,78 +16,31 @@ export interface GrassCounters {
   chunks: number;
 }
 
-/**
- * GPU-driven grass: encodePre culls patches, generates and thins blades and writes indirect arguments (compute only, no readback);
- * encodeGBuffer issues three indirect draws, one per blade LOD.
- */
-export class GrassSystem {
-  readonly budget: GrassBudget;
-  private readonly device: GPUDevice;
-  private readonly counters: GPUBuffer;
-  private readonly chunks: GPUBuffer;
-  private readonly blades: GPUBuffer;
-  private readonly dispatchArgs: GPUBuffer;
-  private readonly drawArgs: GPUBuffer;
-  private readonly genGroup: GPUBindGroup;
-  private readonly finGroup: GPUBindGroup;
-  private readonly drawGroups: GPUBindGroup[] = [];
-  private readonly patchesPipe: GPUComputePipeline;
-  private readonly bladesPipe: GPUComputePipeline;
-  private readonly finDispatchPipe: GPUComputePipeline;
-  private readonly finDrawPipe: GPUComputePipeline;
-  private readonly drawPipes: GPURenderPipeline[] = [];
-  private readonly staging: GPUBuffer | null;
-  private copyQueued = false;
-  private mapping = false;
-  private sinceSample = 0;
-  readonly counts: GrassCounters = { lod: [0, 0, 0], patches: 0, chunks: 0 };
-  /** True once a counter readback has completed. */
-  sampled = false;
+/** Bind-group layouts, shader modules and pipelines of the grass passes: independent of the scene and the quality budget, built once and shared by every GrassSystem. */
+export class GrassPipelines {
+  readonly genLayout: GPUBindGroupLayout;
+  readonly finLayout: GPUBindGroupLayout;
+  readonly drawLayout: GPUBindGroupLayout;
+  readonly patchesPipe: GPUComputePipeline;
+  readonly bladesPipe: GPUComputePipeline;
+  readonly finDispatchPipe: GPUComputePipeline;
+  readonly finDrawPipe: GPUComputePipeline;
+  readonly drawPipes: GPURenderPipeline[] = [];
 
-  constructor(rc: RenderContext, params: GPUBuffer, readback: boolean) {
+  constructor(rc: RenderContext) {
     const dev = rc.device;
-    this.device = dev;
-    const maxBytes = Math.min(dev.limits.maxStorageBufferBindingSize, dev.limits.maxBufferSize);
-    this.budget = grassBudget(rc.quality, maxBytes);
-    const b = this.budget;
-    const S = GPUBufferUsage.STORAGE;
-    this.counters = dev.createBuffer({ label: 'grass-counters', size: COUNTER_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-    this.chunks = dev.createBuffer({ label: 'grass-chunks', size: b.chunkCap * CHUNK_BYTES, usage: S });
-    this.blades = dev.createBuffer({ label: 'grass-blades', size: b.bladeBytes, usage: S });
-    this.dispatchArgs = dev.createBuffer({ label: 'grass-dispatch-args', size: 16, usage: S | GPUBufferUsage.INDIRECT });
-    this.drawArgs = dev.createBuffer({ label: 'grass-draw-args', size: 48, usage: S | GPUBufferUsage.INDIRECT });
-    this.staging = readback ? dev.createBuffer({ label: 'grass-counter-readback', size: COUNTER_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }) : null;
-
     const C = GPUShaderStage.COMPUTE;
     const storage = (binding: number, type: GPUBufferBindingType = 'storage'): GPUBindGroupLayoutEntry => ({ binding, visibility: C, buffer: { type } });
     const uniform: GPUBindGroupLayoutEntry = { binding: 0, visibility: C, buffer: { type: 'uniform' } };
-    const genLayout = dev.createBindGroupLayout({ label: 'grass-gen', entries: [uniform, storage(1), storage(2), storage(3)] });
-    const finLayout = dev.createBindGroupLayout({ label: 'grass-fin', entries: [uniform, storage(1), storage(2), storage(3)] });
+    this.genLayout = dev.createBindGroupLayout({ label: 'grass-gen', entries: [uniform, storage(1), storage(2), storage(3)] });
+    this.finLayout = dev.createBindGroupLayout({ label: 'grass-fin', entries: [uniform, storage(1), storage(2), storage(3)] });
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
-    const drawLayout = dev.createBindGroupLayout({
+    this.drawLayout = dev.createBindGroupLayout({
       label: 'grass-draw',
       entries: [{ binding: 0, visibility: VF, buffer: { type: 'uniform' } }, { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }],
     });
-    this.genGroup = dev.createBindGroup({
-      label: 'grass-gen',
-      layout: genLayout,
-      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.chunks } }, { binding: 3, resource: { buffer: this.blades } }],
-    });
-    this.finGroup = dev.createBindGroup({
-      label: 'grass-fin',
-      layout: finLayout,
-      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.dispatchArgs } }, { binding: 3, resource: { buffer: this.drawArgs } }],
-    });
-    for (let i = 0; i < 3; i++) {
-      this.drawGroups.push(dev.createBindGroup({
-        label: `grass-draw-lod${i}`,
-        layout: drawLayout,
-        entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.blades, offset: b.offsets[i], size: b.caps[i] * BLADE_BYTES } }],
-      }));
-    }
-
     const layouts = (l: GPUBindGroupLayout): GPUPipelineLayout => dev.createPipelineLayout({ bindGroupLayouts: [rc.frame.layout, rc.world.layout, l] });
-    const genPipeLayout = layouts(genLayout), finPipeLayout = layouts(finLayout), drawPipeLayout = layouts(drawLayout);
+    const genPipeLayout = layouts(this.genLayout), finPipeLayout = layouts(this.finLayout), drawPipeLayout = layouts(this.drawLayout);
     const cull = rc.module('vegetation/grass_cull.wgsl');
     const fin = rc.module('vegetation/grass_finalize.wgsl');
     const compute = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string): GPUComputePipeline =>
@@ -105,6 +58,63 @@ export class GrassSystem {
         fragment: { module, entryPoint: 'fs', targets: GBUFFER_TARGETS },
         primitive: { topology: 'triangle-strip', cullMode: 'none' },
         depthStencil: DEPTH_STATE,
+      }));
+    }
+  }
+}
+
+/**
+ * GPU-driven grass: encodePre culls patches, generates and thins blades and writes indirect arguments (compute only, no readback);
+ * encodeGBuffer issues three indirect draws, one per blade LOD.
+ */
+export class GrassSystem {
+  readonly budget: GrassBudget;
+  private readonly device: GPUDevice;
+  private readonly counters: GPUBuffer;
+  private readonly chunks: GPUBuffer;
+  private readonly blades: GPUBuffer;
+  private readonly dispatchArgs: GPUBuffer;
+  private readonly drawArgs: GPUBuffer;
+  private readonly genGroup: GPUBindGroup;
+  private readonly finGroup: GPUBindGroup;
+  private readonly drawGroups: GPUBindGroup[] = [];
+  private readonly staging: GPUBuffer | null;
+  private copyQueued = false;
+  private mapping = false;
+  private sinceSample = 0;
+  readonly counts: GrassCounters = { lod: [0, 0, 0], patches: 0, chunks: 0 };
+  /** True once a counter readback has completed. */
+  sampled = false;
+
+  constructor(rc: RenderContext, private readonly pipes: GrassPipelines, params: GPUBuffer, readback: boolean) {
+    const dev = rc.device;
+    this.device = dev;
+    const maxBytes = Math.min(dev.limits.maxStorageBufferBindingSize, dev.limits.maxBufferSize);
+    this.budget = grassBudget(rc.quality, maxBytes);
+    const b = this.budget;
+    const S = GPUBufferUsage.STORAGE;
+    this.counters = dev.createBuffer({ label: 'grass-counters', size: COUNTER_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    this.chunks = dev.createBuffer({ label: 'grass-chunks', size: b.chunkCap * CHUNK_BYTES, usage: S });
+    this.blades = dev.createBuffer({ label: 'grass-blades', size: b.bladeBytes, usage: S });
+    this.dispatchArgs = dev.createBuffer({ label: 'grass-dispatch-args', size: 16, usage: S | GPUBufferUsage.INDIRECT });
+    this.drawArgs = dev.createBuffer({ label: 'grass-draw-args', size: 48, usage: S | GPUBufferUsage.INDIRECT });
+    this.staging = readback ? dev.createBuffer({ label: 'grass-counter-readback', size: COUNTER_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }) : null;
+
+    this.genGroup = dev.createBindGroup({
+      label: 'grass-gen',
+      layout: pipes.genLayout,
+      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.chunks } }, { binding: 3, resource: { buffer: this.blades } }],
+    });
+    this.finGroup = dev.createBindGroup({
+      label: 'grass-fin',
+      layout: pipes.finLayout,
+      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.dispatchArgs } }, { binding: 3, resource: { buffer: this.drawArgs } }],
+    });
+    for (let i = 0; i < 3; i++) {
+      this.drawGroups.push(dev.createBindGroup({
+        label: `grass-draw-lod${i}`,
+        layout: pipes.drawLayout,
+        entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.blades, offset: b.offsets[i], size: b.caps[i] * BLADE_BYTES } }],
       }));
     }
   }
@@ -132,16 +142,16 @@ export class GrassSystem {
     const pass = enc.beginComputePass({ label: 'grass-cull' });
     pass.setBindGroup(0, rc.frame.group);
     pass.setBindGroup(1, rc.world.group);
-    pass.setPipeline(this.patchesPipe);
+    pass.setPipeline(this.pipes.patchesPipe);
     pass.setBindGroup(2, this.genGroup);
     pass.dispatchWorkgroups(Math.ceil((b.cellsPerSide * b.cellsPerSide) / 64));
-    pass.setPipeline(this.finDispatchPipe);
+    pass.setPipeline(this.pipes.finDispatchPipe);
     pass.setBindGroup(2, this.finGroup);
     pass.dispatchWorkgroups(1);
-    pass.setPipeline(this.bladesPipe);
+    pass.setPipeline(this.pipes.bladesPipe);
     pass.setBindGroup(2, this.genGroup);
     pass.dispatchWorkgroupsIndirect(this.dispatchArgs, 0);
-    pass.setPipeline(this.finDrawPipe);
+    pass.setPipeline(this.pipes.finDrawPipe);
     pass.setBindGroup(2, this.finGroup);
     pass.dispatchWorkgroups(1);
     pass.end();
@@ -154,7 +164,7 @@ export class GrassSystem {
 
   encodeGBuffer(pass: GPURenderPassEncoder): void {
     for (let i = 0; i < 3; i++) {
-      pass.setPipeline(this.drawPipes[i]);
+      pass.setPipeline(this.pipes.drawPipes[i]);
       pass.setBindGroup(2, this.drawGroups[i]);
       pass.drawIndirect(this.drawArgs, i * 16);
     }

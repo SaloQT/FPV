@@ -19,7 +19,11 @@ struct Params {
 @group(0) @binding(0) var resolvedTex : texture_2d<f32>;
 @group(0) @binding(1) var bloomTex : texture_2d<f32>;
 @group(0) @binding(2) var samp : sampler;
-@group(0) @binding(3) var<uniform> exposure : vec4f;  // ratio, sensor gain EV over daylight, metered mean EV, total EV
+struct Exposure {
+  ratio : vec4f,  // ratio, sensor gain EV over daylight, metered mean EV, total EV
+  look : vec4f,   // highlight knee (scene-linear after the ratio, 1e12 = off), roll-off strength 0..1
+};
+@group(0) @binding(3) var<uniform> exposure : Exposure;
 @group(0) @binding(4) var<uniform> P : Params;
 
 const HDR_MAX : f32 = 60000.0;
@@ -88,12 +92,12 @@ fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32) -> vec3f {
     let bl = min(max(textureSampleLevel(bloomTex, samp, L.g, 0.0).rgb, vec3f(0.0)), vec3f(HDR_MAX));
     c = select(c * (1.0 - bloomMix) + bl, bl, debug == 3u);
   }
-  c *= exposure.x * lensVignette(L.rad, P.look.x);
-  if (P.look.w > 0.0) { c += sensorNoise(c, pix, frame, exposure.y, P.look.w); }
+  c *= exposure.ratio.x * lensVignette(L.rad, P.look.x);
+  if (P.look.w > 0.0) { c += sensorNoise(c, pix, frame, exposure.ratio.y, P.look.w); }
   c *= vec3f(lensMask(L.r, size), lensMask(L.g, size), lensMask(L.b, size));
 
-  var e = gradeContrast(srgbEncode(tonemap(c, exposure.y)));
-  if (debug == 2u) { e = mix(e, heatColor(exposure.y), 0.5); }
+  var e = gradeContrast(srgbEncode(tonemap(c, exposure.ratio.y, exposure.look.x, exposure.look.y)));
+  if (debug == 2u) { e = mix(e, heatColor(exposure.ratio.y), 0.5); }
   e = videoPost(e, pix, uv, frame, vn);
   e = clamp(e + tpdfDither(pix, frame) * DITHER_LSB, vec3f(0.0), vec3f(1.0));
 #ifdef OUT_HW_SRGB

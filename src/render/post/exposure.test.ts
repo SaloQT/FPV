@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
 import {
-  DAY_TOTAL_EV, EXPECTED_MEAN_EV, EXPOSURE_TUNING as T, accumulate, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines,
-  exposureOutput, keyEvFor, luminanceOf, meteredMeanEv, nightWeight, shadeTrimWeight, softClipEv, targetTotalEv, topQuantileEv, trimmedMeanEv,
+  DAY_TOTAL_EV, EXPECTED_MEAN_EV, EXPOSURE_TUNING as T, accumulate, adaptHighlight, adaptTotalEv, binCenterEv, binCoords, centerWeight, exposureDefines,
+  exposureOutput, foldSky, highlightKneeEv, highlightRoll, keyEvFor, luminanceOf, meterFrame, meteredMeanEv, nightWeight, shadeTrimWeight, skyCapLevelEv, softClipEv,
+  targetTotalEv, topQuantileEv, trimmedMeanEv,
 } from './exposure';
 
 const KEY_EV = Math.log2(T.key);
@@ -495,5 +496,184 @@ describe('daylight scenes (pre-exposed luminance, grey card = 0.25, grass of alb
     const s = scene(sunset, DAY_PRE);
     expect(s.ratioEv).toBeLessThan(-0.3);
     expect(s.at(0.7)).toBeLessThan(0.6);
+  });
+});
+
+describe('sky and ground metering', () => {
+  const frame = (groundEv: number, skyEv: number, groundCount: number, skyCount: number): { ground: Float64Array; sky: Float64Array } => {
+    const ground = new Float64Array(T.bins), sky = new Float64Array(T.bins);
+    for (let i = 0; i < groundCount; i++) accumulate(ground, 2 ** groundEv, 0.5, 0.5);
+    for (let i = 0; i < skyCount; i++) accumulate(sky, 2 ** skyEv, 0.5, 0.5);
+    return { ground, sky };
+  };
+  const sum = (h: ArrayLike<number>): number => Array.from({ length: T.bins }, (_, i) => h[i]).reduce((a, b) => a + b, 0);
+  const DAY = DAY_PRE;
+
+  it('folds the sky above the cap onto it, keeps every other bin and conserves the weight', () => {
+    const { ground, sky } = frame(-5, 3, 40, 30);
+    for (let i = 0; i < 25; i++) accumulate(sky, 2 ** -7, 0.5, 0.5);
+    const out = new Float64Array(T.bins);
+    foldSky(ground, sky, -1, out);
+    expect(sum(out)).toBeCloseTo(sum(ground) + sum(sky), 9);
+    let above = 0, aboveEv = 0;
+    for (let i = 0; i < T.bins; i++) if (binCenterEv(i) > -1 + 1e-9 && out[i] !== ground[i] + sky[i]) { above += out[i]; aboveEv += out[i] * binCenterEv(i); }
+    const lo = Math.floor(((-7 - T.evMin) / (T.evMax - T.evMin)) * T.bins);
+    expect(out[lo] + out[lo + 1]).toBeCloseTo(ground[lo] + ground[lo + 1] + sky[lo] + sky[lo + 1], 9);
+    expect(aboveEv / Math.max(above, 1)).toBeLessThan(-0.5);
+    expect(topQuantileEv(out, 0.3) as number).toBeLessThan(-0.6);
+    foldSky(ground, sky, 50, out);
+    for (let i = 0; i < T.bins; i++) expect(out[i]).toBe(ground[i] + sky[i]);
+  });
+
+  it('keeps the metered value moving smoothly with the cap level instead of hopping a bin at a time', () => {
+    const { ground, sky } = frame(-5, 3, 60, 40);
+    const a = new Float64Array(T.bins), b = new Float64Array(T.bins);
+    let prev = trimmedMeanEv(ground.map((v, i) => v + sky[i]), 0.05) as number;
+    for (let cap = -2; cap <= -1; cap += binWidthEv / 8) {
+      foldSky(ground, sky, cap, a);
+      const m = trimmedMeanEv(a, 0.05) as number;
+      if (cap > -2) {
+        expect(m).toBeGreaterThanOrEqual(prev - 1e-12);
+        expect(m - prev).toBeLessThan(0.08);
+      }
+      prev = m;
+    }
+    foldSky(ground, sky, -1.3, a);
+    foldSky(ground, sky, -1.3 + binWidthEv, b);
+    expect((trimmedMeanEv(b, 0.05) as number) - (trimmedMeanEv(a, 0.05) as number)).toBeGreaterThan(0);
+  });
+
+  it('puts the cap skyCapEv over the ground mean, and lifts it away as the ground share falls below skyGroundHi', () => {
+    const full = frame(-4, 0, 70, 30);
+    const groundMean = meteredMeanEv(full.ground, DAY) as number;
+    expect(skyCapLevelEv(full.ground, full.sky, DAY)).toBeCloseTo(groundMean + T.skyCapEv, 9);
+    let prev = Infinity;
+    for (const g of [0.2, 0.12, 0.1, 0.07, 0.04, 0.03, 0.01]) {
+      const f = frame(-4, 0, Math.round(g * 1000), Math.round((1 - g) * 1000));
+      const cap = skyCapLevelEv(f.ground, f.sky, DAY);
+      expect(cap).toBeGreaterThanOrEqual(prev === Infinity ? -Infinity : prev - 1e-9);
+      prev = cap;
+    }
+    expect(prev).toBeGreaterThan(30);
+    expect(skyCapLevelEv(new Float64Array(T.bins), full.sky, DAY)).toBeGreaterThan(30);
+  });
+
+  it('meters a daylight frame exactly as one histogram of everything: the sky 1.5 EV over the grass is under the cap', () => {
+    const f = frame(-3, -1.5, 650, 350);
+    const all = f.ground.map((v, i) => v + f.sky[i]);
+    const m = meterFrame(f.ground, f.sky, DAY) as { meanEv: number; highEv: number };
+    expect(m.meanEv).toBeCloseTo(meteredMeanEv(all, DAY) as number, 9);
+    expect(m.highEv).toBeCloseTo(topQuantileEv(all) as number, 9);
+  });
+
+  it('lets the ground set the exposure at dusk: a sky 6 EV over the ground opens the camera, a frame that is all sky is still metered', () => {
+    const dusk = frame(-5, 1, 650, 350);
+    const all = dusk.ground.map((v, i) => v + dusk.sky[i]);
+    const pre = 6e-4;
+    const m = meterFrame(dusk.ground, dusk.sky, pre) as { meanEv: number; highEv: number };
+    const old = targetTotalEv(meteredMeanEv(all, pre) as number, pre, topQuantileEv(all) as number);
+    const now = targetTotalEv(m.meanEv, pre, m.highEv);
+    expect(now - old).toBeGreaterThan(1.2);
+    expect(m.highEv).toBeLessThan(topQuantileEv(all) as number);
+    const up = frame(-5, 1, 5, 995);
+    const upAll = up.ground.map((v, i) => v + up.sky[i]);
+    const mu = meterFrame(up.ground, up.sky, pre) as { meanEv: number; highEv: number };
+    expect(mu.meanEv).toBeCloseTo(meteredMeanEv(upAll, pre) as number, 9);
+    expect(mu.highEv).toBeCloseTo(topQuantileEv(upAll) as number, 9);
+  });
+
+  it('holds the grass of a real dusk frame (sun 5 degrees up: grass 0.03, shade 0.015, sky 0.6 pre-exposed) near display code 60 instead of 30', () => {
+    const pre = 6.7e-4;
+    const ground = new Float64Array(T.bins), sky = new Float64Array(T.bins);
+    for (let j = 0; j < 40; j++) for (let i = 0; i < 64; i++) {
+      const u = (i + 0.5) / 64, v = (j + 0.5) / 40;
+      accumulate(ground, (i * 7 + j * 3) % 10 < 3 ? 0.015 : 0.03, u, v * 0.4 + 0.6);
+    }
+    for (let j = 0; j < 20; j++) for (let i = 0; i < 64; i++) accumulate(sky, 0.5 + 0.2 * Math.sin(i), (i + 0.5) / 64, j / 40);
+    const all = ground.map((v, i) => v + sky[i]);
+    const ratioOf = (mean: number, high: number): number => 2 ** (targetTotalEv(mean, pre, high) - Math.log2(pre));
+    const m = meterFrame(ground, sky, pre) as { meanEv: number; highEv: number };
+    const now = ratioOf(m.meanEv, m.highEv);
+    const old = ratioOf(meteredMeanEv(all, pre) as number, topQuantileEv(all) as number);
+    expect(now / old).toBeGreaterThan(2);
+    expect(0.03 * now).toBeGreaterThan(0.07);
+    expect(0.03 * now).toBeLessThan(0.2);
+  });
+
+  it('reports no frame for empty histograms', () => {
+    expect(meterFrame(new Float64Array(T.bins), new Float64Array(T.bins), DAY)).toBeNull();
+  });
+});
+
+describe('highlight knee', () => {
+  const frame = (groundCount: number, skyCount: number): { ground: Float64Array; sky: Float64Array } => {
+    const ground = new Float64Array(T.bins), sky = new Float64Array(T.bins);
+    for (let i = 0; i < groundCount; i++) accumulate(ground, 2 ** -4, 0.5, 0.5);
+    for (let i = 0; i < skyCount; i++) accumulate(sky, 2 ** 1, 0.5, 0.5);
+    return { ground, sky };
+  };
+
+  it('sits hlKneeEv over the ground mean by day', () => {
+    const f = frame(700, 300);
+    expect(highlightKneeEv(f.ground, f.sky, DAY_PRE)).toBeCloseTo((meteredMeanEv(f.ground, DAY_PRE) as number) + T.hlKneeEv, 9);
+  });
+
+  it('is off with the camera looking up and in the dark, where the sky is the picture', () => {
+    const up = frame(5, 995);
+    expect(highlightKneeEv(up.ground, up.sky, DAY_PRE)).toBeGreaterThan(30);
+    const f = frame(700, 300);
+    expect(highlightKneeEv(f.ground, f.sky, 250)).toBeGreaterThan(30);
+    expect(highlightKneeEv(f.ground, f.sky, 1e3)).toBeGreaterThan(30);
+  });
+
+  it('applies the roll-off with the sky-over-ground gap: none in daylight, full at dusk, monotone between', () => {
+    const at = (gapEv: number, skyCount = 300): number => {
+      const f = frame(700, skyCount);
+      const sky = new Float64Array(T.bins);
+      for (let i = 0; i < skyCount; i++) accumulate(sky, 2 ** (-4 + gapEv), 0.5, 0.5);
+      return highlightRoll(f.ground, sky, DAY_PRE);
+    };
+    const groundMean = meteredMeanEv(frame(700, 0).ground, DAY_PRE) as number;
+    expect(groundMean).toBeCloseTo(-4, 0);
+    expect(at(1.5)).toBe(0);
+    expect(at(T.hlGapHi + 1.2)).toBe(1);
+    let prev = -1;
+    for (let g = 1; g <= 7; g += 0.25) {
+      const r = at(g);
+      expect(r).toBeGreaterThanOrEqual(prev);
+      prev = r;
+    }
+    expect(at(0, 0)).toBe(0);
+  });
+
+  it('uses the sky median, so a bright patch of the sky does not switch it on', () => {
+    const f = frame(700, 0);
+    const sky = new Float64Array(T.bins);
+    for (let i = 0; i < 280; i++) accumulate(sky, 2 ** -3, 0.5, 0.5);
+    for (let i = 0; i < 20; i++) accumulate(sky, 2 ** 3, 0.5, 0.5);
+    expect(highlightRoll(f.ground, sky, DAY_PRE)).toBe(0);
+    expect(highlightRoll(new Float64Array(T.bins), sky, DAY_PRE)).toBe(0);
+  });
+
+  it('smooths in EV with an exponential that cannot overshoot and a capped dt', () => {
+    expect(adaptHighlight(2, 2, 0.1)).toBe(2);
+    expect(adaptHighlight(0, 4, 0.2)).toBeCloseTo(4 * (1 - Math.exp(-0.2 / T.hlTau)), 9);
+    expect(adaptHighlight(0, 4, 1e3)).toBeCloseTo(adaptHighlight(0, 4, T.maxDt), 12);
+    expect(adaptHighlight(0, 4, -1)).toBe(0);
+    expect(adaptHighlight(40, 3, 0.2)).toBeGreaterThan(3);
+  });
+});
+
+describe('exposure shader depth split', () => {
+  it('bins ground and sky apart by the G-buffer depth, 128 bins in all', () => {
+    const code = resolveShader('post/histogram.wgsl', exposureDefines());
+    expect(code).toContain('texture_depth_2d');
+    expect(code).toContain('array<atomic<u32>, 128>');
+    expect(code).toContain('textureLoad(depthTex');
+    expect(code).toContain('array<f32, 8>');
+    const d = exposureDefines();
+    expect(d.SKY_CAP_EV).toBe(T.skyCapEv);
+    expect(d.HL_KNEE_EV).toBe(T.hlKneeEv);
+    expect(d.SKY_GROUND_LO).toBe(T.skyGroundLo);
   });
 });

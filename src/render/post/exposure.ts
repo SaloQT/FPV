@@ -13,6 +13,10 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * which keeps a dusk sky off the white plateau (sun 5 degrees up: 1.4% of the frame at code 250 or more instead of 3.5%); a low sun with a bright sky near
  * it lowers the exposure up to protectMaxEv. The key itself falls with the metered scene luminance so a
  * dark scene stays dark.
+ * The ground leads: pixels the sky pass owns (G-buffer depth 0) are binned apart and every sky bin above the ground's own metered mean + skyCapEv is
+ * folded onto that level before the mean and the highlight quantile are taken. A daylight sky (1-2 EV over the grass) is metered as before; a dusk sky
+ * 4-6 EV over a dim ground no longer sets the exposure, so the ground holds code ~60 instead of 15-25 and the sky is left to the tonemap's roll-off
+ * (highlightKneeEv / highlightRoll, applied in tonemap.wgsl) instead of the exposure having to protect it.
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
  * Night: below ~0.03 nits of CPU-estimated scene luminance the metered mean (black trees, a few stars) is replaced by that estimate, so the
@@ -63,6 +67,24 @@ export const EXPOSURE_TUNING = {
   clipFrac: 0.12,
   clipEv: 1.7,
   protectMaxEv: 3,
+  /**
+   * Sky/ground separation (G-buffer depth: the sky pass owns the pixels left at depth 0). The ground leads the metering: every sky bin above
+   * the ground's own metered mean + skyCapEv is folded onto that level, so a dusk sky 6 EV over the ground cannot set the exposure (the grass
+   * used to sit at code 15-25 with the sun 5 degrees up) while a daylight sky, 1-2 EV over the grass, is metered as before. With the ground
+   * under skyGroundLo of the weight (the camera looks up) the cap is off and the sky is metered, as a real camera does; it fades in by skyGroundHi.
+   */
+  skyCapEv: 2.5,
+  skyGroundLo: 0.03,
+  skyGroundHi: 0.12,
+  /**
+   * The tonemap compresses luminance above a highlight knee that sits hlKneeEv over the ground's metered mean (a WDR camera's sky roll-off:
+   * the gradient of a dusk sky survives with its hue instead of clipping). It is off when the camera looks up and in the dark. hlTau smooths it.
+   */
+  hlKneeEv: 0,
+  hlTau: 0.5,
+  /** The roll-off follows the sky-over-ground gap (EV, sky median over the ground's metered mean): none while the sky is a daylight 1-2 EV over the grass, full from hlGapHi (dusk: 4-5 EV). */
+  hlGapLo: 2.5,
+  hlGapHi: 4,
   stride: 2,
   weightScale: 64,
   /** Seconds. Exposure increasing (scene got darker) is slower than decreasing (scene got brighter): AGC protects highlights first. */
@@ -91,6 +113,8 @@ const TRIM_BLEND_HI_EV = Math.log2(T.trimBlendHiNits);
 /** log2 of the pre-exposed luminance the CPU pre-exposure gives the surface it was computed from. */
 export const EXPECTED_MEAN_EV = Math.log2(CPU_EXPOSURE_KEY);
 const LUMA = [0.2126, 0.7152, 0.0722] as const;
+/** Added to the sky cap to switch it off (beyond the 20 EV histogram range). */
+const SKY_UNCAPPED_EV = 40;
 
 /** Soft-clips an absolute log2 luminance (pre-exposed units): identity below key * 2^knee, tanh compression above. */
 export function softClipEv(ev: number): number {
@@ -174,6 +198,60 @@ export function topQuantileEv(hist: ArrayLike<number>, fraction: number = T.clip
   return binCenterEv(0);
 }
 
+/** Cap level (EV, pre-exposed) for the sky bins: the ground's metered mean plus skyCapEv, lifted away as the ground share of the weight falls below skyGroundHi. */
+export function skyCapLevelEv(ground: ArrayLike<number>, sky: ArrayLike<number>, preExposure: number): number {
+  let tg = 0, ts = 0;
+  for (let i = 0; i < T.bins; i++) { tg += ground[i]; ts += sky[i]; }
+  if (tg <= 1) return SKY_UNCAPPED_EV;
+  const x = Math.min(Math.max((tg / (tg + ts) - T.skyGroundLo) / (T.skyGroundHi - T.skyGroundLo), 0), 1);
+  return (meteredMeanEv(ground, preExposure) as number) + T.skyCapEv + (1 - x * x * (3 - 2 * x)) * SKY_UNCAPPED_EV;
+}
+
+/** `out` = ground + sky with every sky bin above capEv moved onto capEv (split between the two bins around it so the metered value moves smoothly). */
+export function foldSky(ground: ArrayLike<number>, sky: ArrayLike<number>, capEv: number, out: Float64Array | number[]): void {
+  const pos = Math.min(Math.max(((capEv - T.evMin) / (T.evMax - T.evMin)) * T.bins - 0.5, 0), T.bins - 1);
+  const kc = Math.floor(pos);
+  const frac = pos - kc;
+  for (let i = 0; i < T.bins; i++) out[i] = ground[i];
+  for (let i = 0; i < T.bins; i++) {
+    if (i <= kc) out[i] += sky[i];
+    else {
+      out[kc] += sky[i] * (1 - frac);
+      out[kc + 1] += sky[i] * frac;
+    }
+  }
+}
+
+/** The metered mean and the bright-tail EV of a frame whose ground and sky were binned apart; null when both are empty. */
+export function meterFrame(ground: ArrayLike<number>, sky: ArrayLike<number>, preExposure: number): { meanEv: number; highEv: number } | null {
+  const folded = new Float64Array(T.bins);
+  foldSky(ground, sky, skyCapLevelEv(ground, sky, preExposure), folded);
+  const meanEv = meteredMeanEv(folded, preExposure);
+  const highEv = topQuantileEv(folded);
+  return meanEv === null || highEv === null ? null : { meanEv, highEv };
+}
+
+/** Pre-exposed EV (log2) of the tonemap's highlight knee: the ground's metered mean plus hlKneeEv; far above any scene (off) with the camera looking up or in the dark. */
+export function highlightKneeEv(ground: ArrayLike<number>, sky: ArrayLike<number>, preExposure: number): number {
+  const night = nightWeight(Math.log2(Math.max(preExposure, 1e-12)));
+  return skyCapLevelEv(ground, sky, preExposure) - T.skyCapEv + T.hlKneeEv + night * SKY_UNCAPPED_EV;
+}
+
+/** 0..1: how much of the tonemap's highlight roll-off applies. 0 while the sky is within hlGapLo EV of the ground (daylight), 1 from hlGapHi (dusk, a lit sky over a dim ground). */
+export function highlightRoll(ground: ArrayLike<number>, sky: ArrayLike<number>, preExposure: number): number {
+  let tg = 0, ts = 0;
+  for (let i = 0; i < T.bins; i++) { tg += ground[i]; ts += sky[i]; }
+  if (tg <= 1 || ts <= 1) return 0;
+  const gap = (topQuantileEv(sky, 0.5) as number) - (meteredMeanEv(ground, preExposure) as number);
+  const x = Math.min(Math.max((gap - T.hlGapLo) / (T.hlGapHi - T.hlGapLo), 0), 1);
+  return x * x * (3 - 2 * x);
+}
+
+/** One smoothing step of the knee (EV after the exposure ratio, so a CPU pre-exposure change does not move it) or of the roll-off strength. */
+export function adaptHighlight(current: number, target: number, dt: number): number {
+  return current + (target - current) * (1 - Math.exp(-Math.min(Math.max(dt, 0), T.maxDt) / T.hlTau));
+}
+
 /** log2 of the key the metered mean goes to, for a metered scene luminance of lumEv (log2 nits): slope keySlope below keyKneeNits, keyNightSlope below keyNightKneeNits. */
 export function keyEvFor(lumEv: number): number {
   return LOG2_KEY + T.keySlope * Math.min(lumEv - KEY_KNEE_EV, 0) + (T.keyNightSlope - T.keySlope) * Math.min(lumEv - NIGHT_KNEE_EV, 0);
@@ -226,13 +304,16 @@ export function exposureDefines(): Record<string, number> {
   return {
     EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, NIGHT_KNEE_EV, NIGHT_SLOPE: T.keyNightSlope, NIGHT_BLEND_HI_EV, NIGHT_BLEND_LO_EV, NIGHT_MARGIN_EV: T.nightMarginEv, EXPECTED_MEAN_EV, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
     CENTER_BIAS: T.centerBias, VERT_BIAS: T.vertBias, CLIP_FRAC: T.clipFrac, CLIP_EV: T.clipEv, PROTECT_MAX_EV: T.protectMaxEv,
-    STRIDE: T.stride, WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_LOW_NIGHT: T.trimLowNight, TRIM_BLEND_LO_EV, TRIM_BLEND_HI_EV, TRIM_HIGH: T.trimHigh, TAU_BRIGHTEN: T.tauBrighten,
+    STRIDE: T.stride, WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_LOW_NIGHT: T.trimLowNight, TRIM_BLEND_LO_EV, TRIM_BLEND_HI_EV, TRIM_HIGH: T.trimHigh, SKY_CAP_EV: T.skyCapEv, HL_KNEE_EV: T.hlKneeEv, HL_TAU: T.hlTau, HL_GAP_LO: T.hlGapLo, HL_GAP_HI: T.hlGapHi, SKY_GROUND_LO: T.skyGroundLo, SKY_GROUND_HI: T.skyGroundHi, SKY_UNCAPPED_EV, TAU_BRIGHTEN: T.tauBrighten,
     TAU_DARKEN: T.tauDarken, DEADBAND: T.deadbandEv, MAX_DT: T.maxDt, DAY_TOTAL_EV, MAX_GAIN_EV: T.maxGainEv,
     MIN_GAIN_EV: T.minGainEv, MAX_RATIO_EV: T.maxRatioEv,
   };
 }
 
 const GROUP = 16;
+/** The ratio buffer: (ratio, sensor gain EV, metered mean EV, total EV), then (highlight knee in scene-linear after the ratio, roll-off strength 0..1, 2 spare). */
+const RATIO_BYTES = 32;
+const KNEE_OFF = 1e12;
 
 type Readback = 'idle' | 'copied' | 'mapping';
 
@@ -248,6 +329,7 @@ export function createExposureStage(): ExposureStage {
   let staging: GPUBuffer;
   let group: GPUBindGroup | null = null;
   let boundView: GPUTextureView | null = null;
+  let boundDepth: GPUTextureView | null = null;
   let outWidth = 0;
   let outHeight = 0;
   let statsWanted = false;
@@ -256,7 +338,7 @@ export function createExposureStage(): ExposureStage {
   const paramData = new ArrayBuffer(16);
   const paramF = new Float32Array(paramData);
   const paramU = new Uint32Array(paramData);
-  const neutral = new Float32Array([1, 0, 0, 0]);
+  const neutral = new Float32Array([1, 0, 0, 0, KNEE_OFF, 0, 0, 0]);
 
   function readStats(): void {
     phase = 'mapping';
@@ -276,7 +358,7 @@ export function createExposureStage(): ExposureStage {
       const buf = (binding: number, type: GPUBufferBindingType): GPUBindGroupLayoutEntry => ({ binding, visibility: C, buffer: { type } });
       layout = rc.device.createBindGroupLayout({
         label: 'exposure',
-        entries: [{ binding: 0, visibility: C, texture: { sampleType: 'float' } }, buf(1, 'storage'), buf(2, 'uniform'), buf(3, 'storage'), buf(4, 'storage')],
+        entries: [{ binding: 0, visibility: C, texture: { sampleType: 'float' } }, buf(1, 'storage'), buf(2, 'uniform'), buf(3, 'storage'), buf(4, 'storage'), { binding: 5, visibility: C, texture: { sampleType: 'depth' } }],
       });
       const module = rc.module('post/histogram.wgsl', exposureDefines());
       const pipelineLayout = rc.device.createPipelineLayout({ bindGroupLayouts: [layout] });
@@ -284,10 +366,10 @@ export function createExposureStage(): ExposureStage {
       histPipeline = make('hist');
       reducePipeline = make('reduce');
       const U = GPUBufferUsage;
-      histogram = rc.device.createBuffer({ label: 'exposure histogram', size: T.bins * 4, usage: U.STORAGE });
+      histogram = rc.device.createBuffer({ label: 'exposure histogram', size: T.bins * 2 * 4, usage: U.STORAGE });
       params = rc.device.createBuffer({ label: 'exposure params', size: 16, usage: U.UNIFORM | U.COPY_DST });
       state = rc.device.createBuffer({ label: 'exposure state', size: 16, usage: U.STORAGE });
-      ratio = rc.device.createBuffer({ label: 'exposure ratio', size: 16, usage: U.STORAGE | U.UNIFORM | U.COPY_SRC | U.COPY_DST });
+      ratio = rc.device.createBuffer({ label: 'exposure ratio', size: RATIO_BYTES, usage: U.STORAGE | U.UNIFORM | U.COPY_SRC | U.COPY_DST });
       staging = rc.device.createBuffer({ label: 'exposure readback', size: 16, usage: U.MAP_READ | U.COPY_DST });
       rc.device.queue.writeBuffer(ratio, 0, neutral);
     },
@@ -298,19 +380,21 @@ export function createExposureStage(): ExposureStage {
       outHeight = out.height;
       group = null;
       boundView = null;
+      boundDepth = null;
     },
 
     encode(enc: GPUCommandEncoder, ctx: RenderContext, f: FrameInfo, p: PostParams, flags: PostFlags, resolved: GPUTextureView) {
-      if (boundView !== resolved) {
+      if (boundView !== resolved || boundDepth !== ctx.gbuf.views.depth) {
         group = ctx.device.createBindGroup({
           label: 'exposure',
           layout,
           entries: [
             { binding: 0, resource: resolved }, { binding: 1, resource: { buffer: histogram } }, { binding: 2, resource: { buffer: params } },
-            { binding: 3, resource: { buffer: state } }, { binding: 4, resource: { buffer: ratio } },
+            { binding: 3, resource: { buffer: state } }, { binding: 4, resource: { buffer: ratio } }, { binding: 5, resource: ctx.gbuf.views.depth },
           ],
         });
         boundView = resolved;
+        boundDepth = ctx.gbuf.views.depth;
       }
       paramF[0] = p.preExposure;
       paramF[1] = f.dt;
@@ -350,6 +434,7 @@ export function createExposureStage(): ExposureStage {
       staging?.destroy();
       group = null;
       boundView = null;
+      boundDepth = null;
     },
   };
 }

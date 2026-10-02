@@ -13,7 +13,7 @@ import { QuadPhysics } from '../sim/quad';
 import { classifyStartupError } from '../ui/errorMessages';
 import { LoadingOverlay } from '../ui/loading';
 import { newPerfSample } from '../ui/perfModel';
-import { defaultAppSettings, SETTINGS_KEY } from '../ui/settingsSchema';
+import { defaultAppSettings, SETTINGS_KEY, type AppSettings } from '../ui/settingsSchema';
 import { SettingsStore, type StorageLike } from '../ui/settingsStore';
 import { SimClock as AstroClock } from '../world/astro';
 import { menuAction, startAudioOnGesture, wireSession, wireSettings } from './actions';
@@ -23,7 +23,7 @@ import { failApp, installGlobalErrorHandlers } from './failure';
 import { SETTLE_RENDERS, makePerfSource } from './frame';
 import { createLoop, attachResize } from './loop';
 import { PadGround } from './padGround';
-import { hasPersistentOverrides, parseParams, settingsPatch } from './params';
+import { hasPersistentOverrides, parseParams, settingsPatch, type AppParams } from './params';
 import { benchSettingsPatch, parsePerfParams, perfSettingsPatch, withBench, type PerfParams } from './perfParams';
 import { createAppModules, installRecovery } from './recover';
 import { measureRefresh } from './refresh';
@@ -33,7 +33,7 @@ import type { AppCtx, AppMods } from './state';
 import { advanceFrames, installHooks, markReady } from './testHooks';
 import { createUi } from './ui';
 import { WindModel } from './wind';
-import { buildWorld, type World } from './world';
+import { buildWorld, type World, type WorldRequest } from './world';
 
 /** Share of the loading bar: GPU device, then the world (terrain 0.9, track), then the scene upload and warm-up. */
 const BAR_DEVICE = 0.4;
@@ -57,6 +57,11 @@ function memoryCopyOfSaved(): StorageLike {
     setItem: (k, v) => void data.set(k, v),
     removeItem: (k) => void data.delete(k),
   };
+}
+
+/** The first world: the terrain of `seed`, and the track of `tseed` when the URL names one (a share link to an N-key track), also with `autostart=1`. */
+export function initialWorldRequest(settings: AppSettings, params: Pick<AppParams, 'trackSeed'>): WorldRequest {
+  return { ...trackRequest(settings, params.trackSeed), terrainSeed: settings.seed, quality: settings.quality };
 }
 
 function createStore(search: string, perf: PerfParams): { store: SettingsStore; params: ReturnType<typeof parseParams> } {
@@ -85,9 +90,9 @@ export default async function boot(canvas: HTMLCanvasElement, osdCanvas: HTMLCan
   }
   loading.hide();
   markReady(ctx);
-  if (ctx.params.hold) return;
   const loop = createLoop(ctx);
   installRecovery(ctx, loop);
+  if (ctx.params.hold) return; // frozen frame for tools; a lost device still shows the panel, and Recover starts the loop
   if (perf.bench) void startBench(ctx, loop, perf);
   loop.start();
 }
@@ -119,7 +124,7 @@ async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, ro
     bar('GPU ready');
     return r;
   });
-  const worldP = buildWorld({ ...trackRequest(settings), quality: settings.quality }, worldDeps, (stage, f) => {
+  const worldP = buildWorld(initialWorldRequest(settings, params), worldDeps, (stage, f) => {
     worldFrac = f;
     bar(stage);
   });

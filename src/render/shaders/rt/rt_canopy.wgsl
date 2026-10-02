@@ -2,7 +2,7 @@
 // Light crossing a crown is attenuated by Beer-Lambert extinction integrated along the chord, with a fluffy rim and clump noise, so a crown
 // casts a soft, dappled, partially transparent shadow. Included by rt_bvh.wgsl (needs primWord from rt_prims.wgsl).
 
-const CANOPY_EXTINCTION : f32 = 0.24;
+const CANOPY_EXTINCTION : f32 = 0.19;
 const CANOPY_CORE : f32 = 0.6;
 const CANOPY_RIM_NOISE : f32 = 0.3;
 const CANOPY_LOBE : f32 = 0.15;

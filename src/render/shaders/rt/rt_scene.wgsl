@@ -21,6 +21,11 @@ const HORIZON_EPS : f32 = -0.0145;
 const SHADOW_RAY_RANGE : f32 = 1500.0;
 const NEAR_SHADOW_RANGE : f32 = 250.0;
 const LEAF_TRANSMISSION : f32 = 0.8;
+// Light that stays in a leaf crown is scattered by leaves, which reflect AND transmit (reflectance + transmittance of a green leaf: red 0.10, green 0.22,
+// blue 0.07), so a crown seen along a ray inside it glows with the single-scatter albedo, not with the proxy's reflectance-only albedo (0.09 green). Diffuse
+// light crosses a leafy layer with a Kubelka-Munk effective extinction of sqrt(1 - albedo) = 0.88 of the beam's.
+const CANOPY_SCATTER_ALBEDO : vec3f = vec3f(0.10, 0.22, 0.07);
+const CANOPY_DIFFUSE_TAU_SCALE : f32 = 0.88;
 // The RT textures are fp16 (max 65504). Pre-exposed radiance is only bounded by exposure x sky/sun brightness (pre-exposure reaches 1000 at
 // night), so every value is clamped before it is stored; an Inf in a history texture turns into NaN (Inf * 0) and then spreads through the
 // temporal reprojection and the a-trous weights as hard-edged black blocks.
@@ -171,10 +176,17 @@ fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u3
 // so the crown's own shading is blended with the environment behind it by the chord's transmittance.
 fn hitRadiance(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32) -> vec3f {
   let p = o + d * h.t;
-  let s = surfaceAt(h, p, d);
+  var s = surfaceAt(h, p, d);
+  if (s.trans <= 0.0) { return shadeSurface(s, p, h.t, h.kind, e, steps); }
+  s.albedo = CANOPY_SCATTER_ALBEDO;
   let lit = shadeSurface(s, p, h.t, h.kind, e, steps);
-  if (s.trans <= 0.0) { return lit; }
-  return mix(lit, skyRadiance(d, e), exp(-canopyOpticalDepth(h.prim, o, d, rp.f.w)));
+  return mix(lit, skyRadiance(d, e), exp(-CANOPY_DIFFUSE_TAU_SCALE * canopyOpticalDepth(h.prim, o, d, rp.f.w)));
+}
+
+// How much of a hit's short-range occlusion is real: a leaf crown is porous, so a ray that ends in one only counts for the share of its chord's light the leaves stop.
+fn hitSolidity(h : SceneHit, o : vec3f, d : vec3f) -> f32 {
+  if (h.kind != KIND_PRIM || !primIsCanopy(h.prim)) { return 1.0; }
+  return 1.0 - exp(-CANOPY_DIFFUSE_TAU_SCALE * canopyOpticalDepth(h.prim, o, d, rp.f.w));
 }
 
 // Blue-noise + R2 sample in [0,1)^2; `salt` decorrelates independent uses at the same pixel.

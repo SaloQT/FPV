@@ -24,7 +24,8 @@ Open **http://localhost:5173** in a WebGPU browser and click "Click to fly".
 - **Hardware acceleration must be on**, and `chrome://gpu` should list WebGPU as "Hardware accelerated". Software adapters work but
   render at about 1 fps (see below).
 - **Use `localhost` or HTTPS.** WebGPU only exists on secure pages: `npm run dev` also listens on the network (`--host 0.0.0.0`), but
-  opening it by a LAN address such as `http://192.168.1.20:5173` gives "WebGPU is not available". Use `http://localhost:5173`.
+  opening it by a LAN address such as `http://192.168.1.20:5173` gives "WebGPU is not available". Use `http://localhost:5173` (the failure
+  panel's hint names the port the page was actually served on, so `npm run preview` says 4173).
 - If WebGPU is missing (no `navigator.gpu`, or an insecure page), no adapter is found, the app code fails to load or startup fails, the page shows a
   full-screen explanation with troubleshooting steps and a Reload button; it never stays blank.
 - Other scripts: `npm run build` (typecheck, then the production build), `npm run preview` (serves `dist/` on port 4173), `npm run typecheck`,
@@ -33,9 +34,10 @@ Open **http://localhost:5173** in a WebGPU browser and click "Click to fly".
 
 ### Production build
 
-`npm run build` writes `dist/`: `index.html`, five script chunks (WGSL shader sources about 340 kB, renderer code about 240 kB, world and
-physics code about 130 kB, UI and app code about 160 kB, and a ~10 kB entry that holds only the failure screen, so a chunk that fails to load still
-shows the panel), the 20 kB terrain worker, two stylesheets (the failure panel and the rest of the UI) and `data/stars.bin` (660 kB). No chunk is over Vite's 500 kB warning limit.
+`npm run build` writes `dist/`: `index.html`, six script chunks in `dist/assets/` (WGSL shader sources about 355 kB, renderer code about 240 kB,
+world and physics code about 130 kB, UI and app code about 160 kB, a ~10 kB entry that holds only the failure screen, so a chunk that fails to load still
+shows the panel, and a 66-byte `app` file that only re-exports the UI chunk's entry), the 20 kB terrain worker (a seventh `.js` file), two stylesheets (the
+failure panel and the rest of the UI) and `data/stars.bin` (660 kB). No chunk is over Vite's 500 kB warning limit.
 Asset URLs are relative (`base: './'`) and the star catalogue is fetched under `import.meta.env.BASE_URL`, so `dist/` runs from any directory
 of a static host, not only from the domain root; WebGPU still needs HTTPS (or localhost). Source maps are not built unless you ask for them:
 `FPV_SOURCEMAP=1 npm run build`. The `?dev=<name>` module pages exist only on the dev server (`npm run dev`), not in the production build.
@@ -74,6 +76,7 @@ Handy for sharing a world and for the test tooling (`src/app/params.ts`, `src/ap
 | Parameter | Meaning |
 | --- | --- |
 | `seed=<n>` `style=race\|freestyle\|mountain\|sprint` `gates=<n>` `laps=<n>` `diff=<0-100>` | World and track (difficulty in percent) |
+| `tseed=<n>` | The track's own seed when it is not the terrain seed (the N key and the generator's retries move it). Honoured by the first build too, also with `autostart=1`; `window.__fpv.stats.request` shows the track request that was built |
 | `t=<0-24>` | Local solar hour at the flying site |
 | `quality=low\|medium\|high\|ultra` `perf240=1` `scale=<0.25-1>` `dyn=0\|1` | Rendering |
 | `target=<fps>` `cap=<fps>` `refresh=<hz>` | Dynamic-resolution target (0 = display), frame cap (0 = none), assumed display refresh |
@@ -82,7 +85,9 @@ Handy for sharing a world and for the test tooling (`src/app/params.ts`, `src/ap
 | `wind=<m/s>` `winddir=<deg>` | Wind |
 | `bench=1` `benchSeconds=<s>` `benchWarmup=<s>` | Benchmark (below) |
 
-Parameters change the running session only; they never overwrite the pilot's saved settings.
+Parameters change the running session only; they never overwrite the pilot's saved settings. **Share links** (the world card's Copy link) carry
+`seed`, `tseed` (only when it differs), `style`, `gates`, `laps`, `diff` and `quality`: the terrain grid size depends on the quality tier, so a link
+names the tier its terrain was built on.
 
 ## Features, exactly
 
@@ -99,8 +104,9 @@ Parameters change the running session only; they never overwrite the pilot's sav
   incision, grid refinement, Beyer droplet hydraulic erosion, thermal talus and soil creep, then material maps (flow, soil depth,
   sediment, wetness) and optional lakes. Map size 2 to 4 km by tier (512 x 512 at 4 m on Low up to 2048 x 2048 at 2 m on High), 220 m of
   relief. Rendered as a geometry clipmap with procedural micro-relief and ground materials driven by the maps.
-- **Vegetation**: GPU-driven grass blades with three LODs, wind and prop-wash; procedurally grown trees and bushes with LODs and wind;
-  boulders. Placement follows slope, soil depth and wetness (nothing grows in rivers).
+- **Vegetation**: GPU-driven grass blades with three LODs, wind and prop-wash, with meadow flowers (heads in four colours on a small share of the
+  blades, in drifts); procedurally grown trees and bushes with LODs and wind; boulders. Placement follows slope, soil depth and wetness (nothing
+  grows in rivers).
 - **Track generator**: four styles (race, freestyle, mountain, sprint) with gate spacing, turn-radius, slope and clearance validation;
   gates with LEDs, flags, cones and obstacles; gate timing, laps and splits.
 - **Start screen and race flow**: the first screen has the big "Click to fly" button, the world card (a **seed** field that takes a number or any
@@ -157,7 +163,8 @@ Per frame, in this order:
    vibration, video noise), auto exposure, tonemap and sensor noise.
 
 **What is and is not ray traced.** The scene is a *software* BVH built on the CPU over analytic primitives (boxes, capsules, spheres, tori): the gates,
-the quad, and the trunk (capsule) and canopy (sphere) proxies of the 300 trees nearest the track start. Terrain is ray marched through a
+the quad, and the trunk (capsule) and canopy (sphere) proxies of the 300 trees nearest the track start (a canopy sphere is not opaque: light
+crossing it is attenuated by a leaf-density extinction, so a crown casts a soft, partly transparent shadow). Terrain is ray marched through a
 height-field max pyramid. There is no hardware ray tracing (WebGPU has no such API) and it is not path tracing. **Foliage is not traced**:
 grass, bushes, boulders and individual leaves cast no ray-traced shadows or bounce light; the trees only through their coarse proxies.
 
@@ -173,10 +180,12 @@ grass, bushes, boulders and individual leaves cast no ray-traced shadows or boun
 
 Low has no bloom. **Performance 240** is High with the budgets that cost most cut where temporal accumulation hides it: one GI ray, shorter ray
 walks, a smaller probe grid that refreshes more often, fewer cloud steps, thinner and nearer grass and one detail octave less. Ray-target
-resolution, reflections, bloom and TAA stay. It derives from the High profile (`src/render/qualityPresets.ts`); the tests check that
-every tier costs more than the one below it and that the preset costs clearly less than High, using an analytic proxy of the work each
-profile asks for, which is not a GPU measurement. Switching the preset live changes ray, probe and cloud budgets at once; the grass density
-only follows after a reload (the vegetation module rebuilds its grass on a tier change, not on a budget change).
+resolution, reflections, bloom and TAA stay. It derives from the High profile (`src/render/qualityPresets.ts`). The probe ray budget is not a fixed
+number: it follows the profile's GI rays x ray steps (150,000 probe rays per frame at High's 2 x 96, never below 20,000), so a cheaper tier traces
+fewer probe rays per frame and refreshes each probe less often (the longest rotation allowed is 16 frames at High's ray work, up to 32 for less). The tests
+check that every tier costs more than the one below it and that the preset costs clearly less than High, using an analytic proxy of the work each
+profile asks for (`qualityCostIndex`, which takes the same probe limits the ray-tracing module uses), which is not a GPU measurement. Switching the
+preset or the tier live changes ray, probe, cloud and grass budgets at once (the vegetation module rebuilds its grass when the budget changes).
 
 ## How 240 fps is pursued
 
@@ -221,7 +230,8 @@ CHROME_BIN=/usr/bin/google-chrome node tools/bench.mjs --gpu --uncapped   # also
 (`--out file.json` also saves it) and exits 1 on any page error. Other options: `--seconds`, `--warmup`, `--size 1920x1080`, `--query "quality=ultra&perf240=1"`,
 `--headed`. **`CHROME_BIN` must point at a Chrome or Chromium executable that has WebGPU** for `--gpu`: Playwright's package here ships no browser. Without
 `CHROME_BIN` the software run falls back to `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, the Chromium of the development container, which
-exists nowhere else (`tools/shot.mjs` has the same fallback); `bench.mjs` reports a browser that cannot start with this hint instead of a stack trace.
+exists nowhere else (`tools/shot.mjs` has the same fallback); both tools report a browser that cannot start with this hint instead of a stack trace (exit code 2),
+and stop the Vite server they started on that path and on Ctrl-C.
 
 In a normal browser the average is capped by the refresh rate, so read `avgGpuMs` for the headroom. The results panel says whether the display or the GPU limited the run. `--uncapped` is a
 measuring aid for the command-line runner only and has not been verified on real hardware.
@@ -235,7 +245,9 @@ measuring aid for the command-line runner only and has not been verified on real
   starts Vite, opens the app in headless Chromium with software WebGPU, waits for `window.__fpv.ready`, prints errors and a stats JSON and saves a
   screenshot. `?dev=sky|terrain|vegetation|objects|post|rt|render|audio|ui` open single-module pages for the same tool (dev server only; the tool starts one). Every WGSL compile error and
   WebGPU validation error is printed and fails the run. A screenshot at 1 fps takes minutes; add `hold=1` to freeze the loop.
-- `window.__fpv` (stats, `state()`, `capture()`, `advance(n)`, `patch()`, `loseDevice()`, `bench`) is what tests and tools drive.
+- `window.__fpv` (`ready`, `error`, `stats`, `state()`, `race()`, `capture()`, `brightness()`, `advance(n)`, `newTrack()`, `newWorld()`, `patch()`, `cam()`,
+  `loseDevice()`, `bench`) is what tests and tools drive. `stats` carries the seeds (`seed`, `baseSeed`, `terrainSeed`) and the exact track request
+  that was built (`request`). With `hold=1` the loop does not start, but a lost device still shows the failure panel and Recover starts the loop.
 
 ## When things go wrong
 
@@ -253,7 +265,6 @@ measuring aid for the command-line runner only and has not been verified on real
 - Ray tracing is software-BVH based and covers terrain, gates, the quad and coarse tree proxies. Foliage, grass and boulders are not traced; reflections are
   traced only on High, Ultra and Performance 240.
 - The frame rate is capped by the display refresh; the frame cap can only lower it. A page opened in a background tab cannot measure the refresh and assumes 60 Hz as its default target.
-- Live switching of Performance 240 does not change the grass density until a reload.
 - Timestamp queries (per-pass times, GPU-driven dynamic resolution) need `timestamp-query`; without it the controller works from frame times.
 - Terrain generation is CPU work in a worker and takes from a few seconds (Low) to much longer (Ultra), longer still without a fast CPU.
 - The map is a bounded 2 to 4 km square; there is no mobile or touch control scheme and no VR.

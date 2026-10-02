@@ -1,8 +1,8 @@
 import type { ObstacleCollider, Vec3 } from '../../contracts';
 import type { FrameInfo, RenderContext, RenderModule, SceneData } from '../contracts';
 import { buildColliders, buildRtProxies } from './colliders';
-import { FarCanopy } from './farCanopy';
-import { GrassSystem } from './grass';
+import { FarCanopy, FarCanopyPipeline } from './farCanopy';
+import { GrassPipelines, GrassSystem } from './grass';
 import { packInstances } from './instanceData';
 import { FAR_TIER, FAR_UNCOVERED_NEAR, VEG_PARAM_BYTES, TREE_TIER, createParamViews, packVegParams } from './params';
 import { REGION_RADIUS, TIER_LIMITS, placeVegetation, type VegPlacement } from './placement';
@@ -68,9 +68,11 @@ export function createVegetationModule(): VegetationModule {
   let scene: SceneData | null = null;
   let paramsBuf: GPUBuffer | null = null;
   let grass: GrassSystem | null = null;
+  let grassPipes: GrassPipelines | null = null;
   let assets: TreeAssets | null = null;
   let trees: TreeSystem | null = null;
   let far: FarCanopy | null = null;
+  let farPipe: FarCanopyPipeline | null = null;
   let farUncovered = 0;
   let built: VegPlan | null = null;
   let place: VegPlacement | null = null;
@@ -81,7 +83,7 @@ export function createVegetationModule(): VegetationModule {
 
   function rebuildGrass(ctx: RenderContext): void {
     grass?.destroy();
-    grass = paramsBuf ? new GrassSystem(ctx, paramsBuf, devReadback) : null;
+    grass = paramsBuf && grassPipes ? new GrassSystem(ctx, grassPipes, paramsBuf, devReadback) : null;
   }
 
   function rebuildTrees(ctx: RenderContext): void {
@@ -105,7 +107,7 @@ export function createVegetationModule(): VegetationModule {
     far?.destroy();
     far = null;
     farUncovered = 0;
-    if (!paramsBuf || !place || !scene) return;
+    if (!paramsBuf || !farPipe || !place || !scene) return;
     const q = ctx.quality;
     const limits = TIER_LIMITS[q.tier];
     // The real trees are a nearest-first prefix: complete out to the walk ring of their last tree (or the whole region when the cap was not reached).
@@ -113,7 +115,7 @@ export function createVegetationModule(): VegetationModule {
     const coveredRing = n < limits.plants ? REGION_RADIUS : place.plantRing[n - 1] - COARSE;
     const forest = placeFarForest(scene.terrain, scene.track, { cap: FAR_TIER[q.tier].cards, radius: q.terrainViewDistance, coveredRing, uncoveredNear: FAR_UNCOVERED_NEAR });
     farUncovered = forest.uncovered;
-    far = new FarCanopy(ctx, paramsBuf, forest);
+    far = new FarCanopy(ctx, farPipe, paramsBuf, forest);
   }
 
   function currentQuad(f: FrameInfo): typeof quadUse | null {
@@ -140,9 +142,11 @@ export function createVegetationModule(): VegetationModule {
   const mod: VegetationModule = {
     name: 'vegetation',
 
-    init(ctx: RenderContext) {
+    async init(ctx: RenderContext) {
       paramsBuf = ctx.device.createBuffer({ label: 'vegetation-params', size: VEG_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      assets = new TreeAssets(ctx);
+      assets = await TreeAssets.create(ctx);
+      farPipe = new FarCanopyPipeline(ctx);
+      grassPipes = new GrassPipelines(ctx);
       built = vegPlan(ctx.quality);
       rebuildGrass(ctx);
     },
@@ -255,6 +259,8 @@ export function createVegetationModule(): VegetationModule {
       trees = null;
       far = null;
       assets = null;
+      farPipe = null;
+      grassPipes = null;
       paramsBuf = null;
     },
   };

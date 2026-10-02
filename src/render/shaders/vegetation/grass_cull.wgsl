@@ -143,6 +143,8 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
     default: { height = 0.04 + 0.08 * rH; widthMm = 12.0 + 10.0 * rW; }
   }
   height *= 0.85 + 0.35 * wetN;
+  // Tufts rise and fall over about a metre: the correlated height survives distance averaging, unlike per-blade height, and gives the mid-field relief.
+  if (sp <= 1u) { height *= 0.7 + 0.6 * smoothstep(0.3, 0.7, tnFbm(xz * 1.3 + vec2f(37.0, 91.0), 2)); }
 
   var code = 0u;
   if (sp != 3u) {

@@ -27,6 +27,8 @@ export interface AtmosParamInputs {
   historyBlend: number;
   historyValid: boolean;
   lightSteps: number;
+  /** Night-dome radiance (nits, rgb) for the world sky-view LUT (see nightDome.ts); stored in the free w lanes of the galactic axis rows. */
+  nightDome?: ArrayLike<number>;
 }
 
 /** World-space drift (metres, x east / z south) of a layer after `timeSeconds` of wind toward a compass bearing. */
@@ -81,6 +83,8 @@ export class AtmosUniforms {
     eclipticNorthWorld(p.equatorialToWorld, ECL);
     d[ROW.eclNorth] = ECL[0]; d[ROW.eclNorth + 1] = ECL[1]; d[ROW.eclNorth + 2] = ECL[2];
     d[ROW.eclNorth + 3] = (s.windDirectionDeg + 15) * DEG;
+    const dome = p.nightDome;
+    d[ROW.gal0 + 3] = dome ? dome[0] : 0; d[ROW.gal1 + 3] = dome ? dome[1] : 0; d[ROW.gal2 + 3] = dome ? dome[2] : 0;
     return d;
   }
 }

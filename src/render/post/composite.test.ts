@@ -12,7 +12,7 @@ const nums = (src: string, re: RegExp): number[] => (src.match(re)?.[1] ?? '').s
 // The mirrors below read the shader's own constants, so a retuned WGSL constant cannot silently diverge from the tested formula.
 const GRADE = nums(tonemapSrc, /const GRADE : Grade = Grade\(([^)]*)\)/);
 const SENSOR = nums(sensorSrc, /const SENSOR : SensorModel = SensorModel\(([^)]*)\)/);
-const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE, DAY_PRE_SCALE, DAY_TOE, DAY_GAIN_LO, DAY_GAIN_HI] = GRADE;
+const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE, DAY_PRE_SCALE, DAY_TOE, DAY_GAIN_LO, DAY_GAIN_HI, HL_SLOPE, HL_SOFT] = GRADE;
 const TOE_NIGHT = Number(tonemapSrc.match(/const TOE_NIGHT : f32 = ([^;]*);/)?.[1]);
 
 type V3 = [number, number, number];
@@ -41,10 +41,17 @@ function compressGamut(o: V3, y: number): V3 {
   return o.map((x) => y + (x - y) * k) as V3;
 }
 
-function tonemap(scene: V3, saturation = SATURATION, gainEv = Infinity): V3 {
+function compressHighlights(l: number, knee: number, roll: number): number {
+  if (l <= knee) return l;
+  const d = Math.log2(l / knee);
+  const p = 1 + (HL_SLOPE - 1) * roll;
+  return knee * 2 ** (p * d + (1 - p) * HL_SOFT * (1 - Math.exp(-d / HL_SOFT)));
+}
+
+function tonemap(scene: V3, saturation = SATURATION, gainEv = Infinity, knee = 1e12, roll = 1): V3 {
   const day = dayWeight(gainEv);
   const l = luma(scene);
-  const y = Math.min(filmicLuma(l, day), 1);
+  const y = Math.min(filmicLuma(compressHighlights(l, knee, roll), day), 1);
   const k = Math.abs(l) > 1e-6 ? y / l : (preScaleFor(day) * toeFor(day)) / 0.14;
   const w = smooth(DESAT_START, DESAT_END, l);
   let o = scene.map((x) => (1 - w) * x * k + w * y) as V3;
@@ -346,6 +353,81 @@ describe('daylight shadow lift', () => {
       expect(o).toBeGreaterThanOrEqual(prev);
       prev = o;
     }
+  });
+});
+
+describe('highlight roll-off', () => {
+  const KNEE = 0.12;
+  const stops = (a: number, b: number): number => Math.log2(b / a);
+  const dir = (o: V3): number => (o[2] - luma(o)) / (o[0] - luma(o));
+
+  it('is the identity with the roll-off at 0, below the knee and with the knee off', () => {
+    for (const l of [0.001, 0.05, KNEE, 3, 400]) expect(compressHighlights(l, 1e12, 1)).toBe(l);
+    for (const l of [0.001, 0.05, KNEE]) expect(compressHighlights(l, KNEE, 1)).toBe(l);
+    for (const l of [0.5, 3, 400]) expect(compressHighlights(l, KNEE, 0)).toBeCloseTo(l, 9);
+    const c: V3 = [0.9, 0.5, 0.2];
+    expect(tonemap(c, SATURATION, 0, KNEE, 0)).toEqual(tonemap(c, SATURATION, 0, 1e12, 1));
+  });
+
+  it('is continuous with slope 1 at the knee and tends to hlSlope stops per stop far above it', () => {
+    const h = 1e-5;
+    expect(stops(compressHighlights(KNEE * (1 + h), KNEE, 1), compressHighlights(KNEE, KNEE, 1)) / stops(KNEE * (1 + h), KNEE)).toBeCloseTo(1, 3);
+    expect(compressHighlights(KNEE * (1 + 1e-9), KNEE, 1)).toBeCloseTo(KNEE, 9);
+    const far = (d: number): number => Math.log2(compressHighlights(KNEE * 2 ** d, KNEE, 1) / KNEE);
+    expect(far(40) - far(39)).toBeCloseTo(HL_SLOPE, 3);
+    expect(far(6)).toBeLessThan(0.65 * 6);
+  });
+
+  it('is monotone and never darker than slope hlSlope allows', () => {
+    let prev = 0;
+    for (let ev = -6; ev <= 24; ev += 0.25) {
+      const l = KNEE * 2 ** ev;
+      const c = compressHighlights(l, KNEE, 1);
+      expect(c).toBeGreaterThanOrEqual(prev);
+      expect(c).toBeLessThanOrEqual(l * (1 + 1e-12));
+      if (ev > 0) expect(Math.log2(c / KNEE)).toBeGreaterThanOrEqual(HL_SLOPE * ev - 1e-9);
+      prev = c;
+    }
+  });
+
+  it('keeps the gradient of a sky 6 to 9 stops over the ground, where the plain curve has run into the clip', () => {
+    const sky: V3 = [0.5, 0.7, 1];
+    const rolled = (s: number): number => Math.round(255 * encode(luma(tonemap(sky.map((x) => x * s) as V3, SATURATION, 0, KNEE, 1))));
+    const plain = (s: number): number => Math.round(255 * encode(luma(tonemap(sky.map((x) => x * s) as V3, SATURATION, 0))));
+    expect(plain(32) - plain(4)).toBeLessThan(14);
+    expect(rolled(32) - rolled(4)).toBeGreaterThanOrEqual(25);
+    expect(rolled(32)).toBeLessThan(plain(32));
+    expect(rolled(4)).toBeLessThan(plain(4));
+  });
+
+  it('scales a colour, so a sky keeps its hue through the roll-off', () => {
+    const sky: V3 = [0.1, 0.25, 0.9];
+    const ref = dir(tonemap(sky.map((x) => x * 0.02) as V3, SATURATION, 0, 1e12));
+    for (const s of [0.2, 0.5, 1, 3]) {
+      const o = tonemap(sky.map((x) => x * s) as V3, SATURATION, 0, KNEE, 1);
+      expect(dir(o)).toBeCloseTo(ref, 6);
+      expect(o[2]).toBeGreaterThan(o[1]);
+      expect(o[1]).toBeGreaterThan(o[0]);
+    }
+  });
+
+  it('keeps a dusk horizon glow orange where the plain curve burned it to cream', () => {
+    const glow: V3 = [12.8, 7.2, 2.9];
+    const plain = tonemap(glow, SATURATION, 0);
+    const rolled = tonemap(glow, SATURATION, 0, KNEE, 1);
+    expect(rolled[0]).toBeGreaterThan(rolled[1]);
+    expect(rolled[1]).toBeGreaterThan(rolled[2]);
+    expect(rolled[2] / rolled[0]).toBeLessThan(0.7);
+    expect(plain[2] / plain[0]).toBeGreaterThan(rolled[2] / rolled[0] + 0.15);
+    expect(Math.max(...rolled)).toBeLessThan(0.97);
+  });
+
+  it('still burns the sun and its glare out to white', () => {
+    for (const l of [3000, 60000]) {
+      const o = tonemap([l * 1.6, l, l * 0.4], SATURATION, 0, KNEE, 1);
+      expect(Math.min(...o)).toBeGreaterThan(0.93);
+    }
+    expect(Math.min(...tonemap([96000, 60000, 24000], SATURATION, 0, KNEE, 1))).toBeGreaterThan(0.97);
   });
 });
 

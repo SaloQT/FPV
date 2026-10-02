@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ATLAS_H, ATLAS_MIPS, ATLAS_W, COLOUR_RANGE, TILE, TILES_X, TILES_Y, TILE_COUNT, TILE_SIZE, buildLeafAtlas, leafColour, tileCoverage, tileRect, type LeafAtlas } from './leafAtlas';
+import { ATLAS_H, ATLAS_MIPS, ATLAS_W, COLOUR_RANGE, TILE, TILES_X, TILES_Y, TILE_COUNT, TILE_SIZE, buildLeafAtlas, buildLeafAtlasSliced, leafColour, tileCoverage, tileRect, type LeafAtlas } from './leafAtlas';
 
 const CUT = 128;
 const TONE = [0.06, 0.125, 0.03];
@@ -137,5 +137,14 @@ describe('leaf atlas', () => {
     const firstDiff = (a: Uint8Array, b: Uint8Array): number => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return i; return -1; };
     again.colour.forEach((level, l) => expect(firstDiff(level, atlas().colour[l])).toBe(-1));
     again.data.forEach((level, l) => expect(firstDiff(level, atlas().data[l])).toBe(-1));
+  }, SLOW);
+
+  it('the time-sliced build yields many times and equals the synchronous atlas', async () => {
+    let hops = 0;
+    const sliced = await buildLeafAtlasSliced(2, async () => { hops++; });
+    expect(hops).toBeGreaterThan(50);
+    const same = (a: Uint8Array, b: Uint8Array): boolean => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
+    sliced.colour.forEach((level, l) => expect(same(level, atlas().colour[l])).toBe(true));
+    sliced.data.forEach((level, l) => expect(same(level, atlas().data[l])).toBe(true));
   }, SLOW);
 });

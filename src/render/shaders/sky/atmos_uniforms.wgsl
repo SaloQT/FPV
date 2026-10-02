@@ -27,8 +27,8 @@ struct AtmosParams {
   cloudC : vec4f,    // x = march steps, y = frame/jitter index, z,w = shadow-map centre (world x, z in m)
   cloudD : vec4f,    // x = history blend, y = 1 when history is valid, z = light march steps, w = shadow-map side length (m)
   eclNorth : vec4f,  // xyz = world-space ecliptic north pole, w = cirrus streak bearing (rad, compass, the upper wind's direction)
-  gal0 : vec4f,      // J2000 equatorial coordinates of the galactic axis l=0 b=0 (galactic centre)
-  gal1 : vec4f,      // ... l=90 b=0
-  gal2 : vec4f,      // ... north galactic pole
+  gal0 : vec4f,      // xyz = J2000 equatorial coordinates of the galactic axis l=0 b=0 (galactic centre), w = night-dome radiance red (nits)
+  gal1 : vec4f,      // ... l=90 b=0, w = night-dome green
+  gal2 : vec4f,      // ... north galactic pole, w = night-dome blue
   maria : array<vec4f, ${MARIA_ROWS}>, // row 2k: lon, lat, radius lon, radius lat (rad); row 2k+1: darkness, edge softness, rotation, 0
 };

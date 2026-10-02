@@ -1,5 +1,6 @@
 import type { Settings } from '../contracts';
 import { qualityProfile, type QualityProfile } from './contracts';
+import { probeLimits, probeStride } from './rt/probes';
 
 const MIN_STEPS = 32;
 const MIN_PROBE_RAYS = 24;
@@ -54,7 +55,8 @@ export function qualityCostIndex(q: QualityProfile, width = 1920, height = 1080)
   const shadow = rtPixels * walk * 0.5;
   const spec = q.rtSpecular ? rtPixels * walk : 0;
   const probeCount = q.probes.dim[0] * q.probes.dim[1] * q.probes.dim[2];
-  const stride = Math.min(16, Math.max(1, Math.ceil((probeCount * q.probes.raysPerProbe) / 150_000)));
+  const { rayBudget, maxStride } = probeLimits(q);
+  const stride = probeStride(probeCount, q.probes.raysPerProbe, rayBudget, maxStride);
   const probes = Math.ceil(probeCount / stride) * q.probes.raysPerProbe * walk;
   const clouds = (width * height) / 4 * q.cloudSteps * 2;
   const grass = Math.min(Math.PI * q.grassDistance * q.grassDistance * q.grassBladesPerM2, 4_000_000) * 6;

@@ -1,7 +1,9 @@
 // Auto-exposure metering on the resolved (pre-exposed) image.
-//  hist   : 64-bin log2-luminance histogram, weighted towards the centre and the ground, linear split between neighbouring bins.
-//  reduce : soft-clipped trimmed mean (dark shade tail cut) and bright-eighth EV -> scene-referred target exposure with highlight priority
-//           -> smoothed persistent state -> `ratioOut`.
+//  hist   : two 64-bin log2-luminance histograms (ground = depth > 0, sky = depth 0, the sky pass's pixels), weighted towards the centre and
+//           the ground, linear split between neighbouring bins.
+//  reduce : the sky bins above (the ground's metered mean + SKY_CAP_EV) are folded onto that level, then the soft-clipped trimmed mean (dark
+//           shade tail cut) and the bright-eighth EV -> scene-referred target exposure with highlight priority -> smoothed persistent state
+//           -> `ratioOut`. Mirrors skyCapLevelEv / foldSky / meterFrame in post/exposure.ts.
 // State is the TOTAL exposure in EV (pre-exposure * ratio), so CPU pre-exposure changes never look like a scene change.
 const BINS : u32 = 64u;
 const EV_MIN : f32 = ${EV_MIN};
@@ -29,6 +31,14 @@ const TRIM_LOW_NIGHT : f32 = ${TRIM_LOW_NIGHT};
 const TRIM_BLEND_LO_EV : f32 = ${TRIM_BLEND_LO_EV};
 const TRIM_BLEND_HI_EV : f32 = ${TRIM_BLEND_HI_EV};
 const TRIM_HIGH : f32 = ${TRIM_HIGH};
+const SKY_CAP_EV : f32 = ${SKY_CAP_EV};
+const HL_KNEE_EV : f32 = ${HL_KNEE_EV};
+const HL_TAU : f32 = ${HL_TAU};
+const HL_GAP_LO : f32 = ${HL_GAP_LO};
+const HL_GAP_HI : f32 = ${HL_GAP_HI};
+const SKY_GROUND_LO : f32 = ${SKY_GROUND_LO};
+const SKY_GROUND_HI : f32 = ${SKY_GROUND_HI};
+const SKY_UNCAPPED_EV : f32 = ${SKY_UNCAPPED_EV};
 const TAU_BRIGHTEN : f32 = ${TAU_BRIGHTEN};
 const TAU_DARKEN : f32 = ${TAU_DARKEN};
 const DEADBAND : f32 = ${DEADBAND};
@@ -42,15 +52,23 @@ const LOG2_KEY : f32 = log2(KEY);
 struct Params { pre : f32, dt : f32, frame : u32, reset : u32 };
 
 @group(0) @binding(0) var resolved : texture_2d<f32>;
-@group(0) @binding(1) var<storage, read_write> histogram : array<atomic<u32>, 64>;
+// [0, 64) ground bins, [64, 128) sky bins.
+@group(0) @binding(1) var<storage, read_write> histogram : array<atomic<u32>, 128>;
 @group(0) @binding(2) var<uniform> params : Params;
-// state[0] = smoothed total exposure (EV, log2 of pre-exposure * ratio), state[1] = 1 once initialised.
+// state[0] = smoothed total exposure (EV, log2 of pre-exposure * ratio), state[1] = 1 once initialised, state[2] = smoothed highlight knee (EV after the ratio), state[3] = smoothed roll-off strength.
 @group(0) @binding(3) var<storage, read_write> adapt : array<f32, 4>;
-// ratioOut = (ratio, sensor gain EV over the daylight reference, metered mean EV, total exposure EV).
-@group(0) @binding(4) var<storage, read_write> ratioOut : array<f32, 4>;
+// ratioOut = (ratio, sensor gain EV over the daylight reference, metered mean EV, total exposure EV), then (highlight knee, scene-linear after the ratio; roll-off strength 0..1).
+@group(0) @binding(4) var<storage, read_write> ratioOut : array<f32, 8>;
+@group(0) @binding(5) var depthTex : texture_depth_2d;
 
-var<workgroup> wgHist : array<atomic<u32>, 64>;
+var<workgroup> wgHist : array<atomic<u32>, 128>;
+// The histogram the metering functions below work on; reduce fills it from the ground and sky bins.
 var<workgroup> wgBins : array<f32, 64>;
+var<workgroup> wgGround : array<f32, 64>;
+var<workgroup> wgSky : array<f32, 64>;
+// The ground's metered mean (skyCapLevelEv) and the share of weight it is based on, for the highlight roll-off.
+var<workgroup> wgGroundMeanEv : f32;
+var<workgroup> wgHasGround : f32;
 
 fn softClipEv(ev : f32) -> f32 {
   let rel = ev - LOG2_KEY;
@@ -59,7 +77,7 @@ fn softClipEv(ev : f32) -> f32 {
 
 @compute @workgroup_size(16, 16)
 fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_index) li : u32) {
-  if (li < BINS) { atomicStore(&wgHist[li], 0u); }
+  if (li < 2u * BINS) { atomicStore(&wgHist[li], 0u); }
   workgroupBarrier();
   let dims = textureDimensions(resolved);
   let p = gid.xy * STRIDE + vec2u(params.frame % STRIDE, (params.frame / STRIDE) % STRIDE);
@@ -74,12 +92,16 @@ fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_in
       let pos = clamp((ev - EV_MIN) / (EV_MAX - EV_MIN) * f32(BINS) - 0.5, 0.0, f32(BINS - 1u));
       let i0 = u32(floor(pos));
       let w1 = u32(round(f32(wTotal) * (pos - floor(pos))));
-      atomicAdd(&wgHist[i0], wTotal - w1);
-      atomicAdd(&wgHist[min(i0 + 1u, BINS - 1u)], w1);
+      // The G-buffer is at render resolution, the resolved image at output resolution.
+      let dd = vec2u(textureDimensions(depthTex));
+      let dp = min(vec2u(vec2f(p) * vec2f(dd) / vec2f(dims)), dd - vec2u(1u));
+      let base = select(0u, BINS, textureLoad(depthTex, dp, 0) == 0.0);
+      atomicAdd(&wgHist[base + i0], wTotal - w1);
+      atomicAdd(&wgHist[base + min(i0 + 1u, BINS - 1u)], w1);
     }
   }
   workgroupBarrier();
-  if (li < BINS) {
+  if (li < 2u * BINS) {
     let v = atomicLoad(&wgHist[li]);
     if (v != 0u) { atomicAdd(&histogram[li], v); }
   }
@@ -144,16 +166,65 @@ fn meteredMeanEv(total : f32, preEv : f32) -> f32 {
   return select(night + w * (trimmedMeanEv(TRIM_LOW, total) - night), night, w <= 0.0);
 }
 
+// Cap level of the sky bins (skyCapLevelEv): the ground's metered mean plus SKY_CAP_EV, lifted away as the ground share of the weight falls.
+fn skyCapLevelEv(preEv : f32) -> f32 {
+  var tg = 0.0;
+  var ts = 0.0;
+  for (var k = 0u; k < BINS; k++) { tg += wgGround[k]; ts += wgSky[k]; }
+  wgHasGround = select(0.0, 1.0, tg > 1.0);
+  if (tg <= 1.0) { return SKY_UNCAPPED_EV; }
+  for (var k = 0u; k < BINS; k++) { wgBins[k] = wgGround[k]; }
+  let lift = 1.0 - smoothstep(SKY_GROUND_LO, SKY_GROUND_HI, tg / (tg + ts));
+  wgGroundMeanEv = meteredMeanEv(tg, preEv);
+  return wgGroundMeanEv + SKY_CAP_EV + lift * SKY_UNCAPPED_EV;
+}
+
+// highlightRoll: 0 while the sky median is within HL_GAP_LO EV of the ground's metered mean (daylight), 1 from HL_GAP_HI (dusk). Needs skyCapLevelEv's ground mean.
+fn highlightRoll(groundMeanEv : f32) -> f32 {
+  var ts = 0.0;
+  for (var k = 0u; k < BINS; k++) { ts += wgSky[k]; }
+  if (ts <= 1.0) { return 0.0; }
+  let width = (EV_MAX - EV_MIN) / f32(BINS);
+  var cum = 0.0;
+  var median = EV_MAX;
+  for (var k = BINS - 1u; k > 0u; k--) {
+    let h = wgSky[k];
+    if (cum + h >= 0.5 * ts) { median = binCenterEv(k) + (0.5 - (0.5 * ts - cum) / max(h, 1.0)) * width; break; }
+    cum += h;
+  }
+  return smoothstep(HL_GAP_LO, HL_GAP_HI, median - groundMeanEv);
+}
+
+// wgBins = ground + sky with every sky bin above capEv moved onto capEv, split between the two bins around it (foldSky).
+fn foldSky(capEv : f32) {
+  let pos = clamp((capEv - EV_MIN) / (EV_MAX - EV_MIN) * f32(BINS) - 0.5, 0.0, f32(BINS - 1u));
+  let kc = u32(floor(pos));
+  let frac = pos - floor(pos);
+  for (var k = 0u; k < BINS; k++) { wgBins[k] = wgGround[k]; }
+  for (var k = 0u; k < BINS; k++) {
+    if (k <= kc) { wgBins[k] += wgSky[k]; }
+    else {
+      wgBins[kc] += wgSky[k] * (1.0 - frac);
+      wgBins[kc + 1u] += wgSky[k] * frac;
+    }
+  }
+}
+
 @compute @workgroup_size(64)
 fn reduce(@builtin(local_invocation_index) i : u32) {
-  wgBins[i] = f32(atomicExchange(&histogram[i], 0u));
+  wgGround[i] = f32(atomicExchange(&histogram[i], 0u));
+  wgSky[i] = f32(atomicExchange(&histogram[BINS + i], 0u));
   workgroupBarrier();
   if (i != 0u) { return; }
+  let preEv = log2(max(params.pre, 1e-12));
+  let capEv = skyCapLevelEv(preEv);
+  foldSky(capEv);
   var total = 0.0;
   for (var k = 0u; k < BINS; k++) { total += wgBins[k]; }
-  let preEv = log2(max(params.pre, 1e-12));
   var total_ev = adapt[0];
   var meanEv = ratioOut[2];
+  var kneeEv = select(adapt[2], SKY_UNCAPPED_EV, adapt[1] < 0.5);
+  var roll = select(adapt[3], 0.0, adapt[1] < 0.5);
   if (adapt[1] < 0.5) { total_ev = preEv; }
   if (total > 1.0) {
     meanEv = meteredMeanEv(total, preEv);
@@ -166,12 +237,22 @@ fn reduce(@builtin(local_invocation_index) i : u32) {
       let tau = select(TAU_BRIGHTEN, TAU_DARKEN, err < 0.0);
       total_ev += eff * (1.0 - exp(-clamp(params.dt, 0.0, MAX_DT) / tau));
     }
+    // highlightKneeEv: the cap's ground mean plus HL_KNEE_EV (off in the dark), in EV after the exposure ratio so a pre-exposure change leaves it alone.
+    let kneeTarget = clamp(capEv - SKY_CAP_EV + HL_KNEE_EV + nightWeight(preEv) * SKY_UNCAPPED_EV + total_ev - preEv, -30.0, 40.0);
+    let rollTarget = select(0.0, highlightRoll(wgGroundMeanEv), wgHasGround > 0.5);
+    let blend = select(1.0 - exp(-clamp(params.dt, 0.0, MAX_DT) / HL_TAU), 1.0, adapt[1] < 0.5 || params.reset != 0u);
+    kneeEv += (kneeTarget - kneeEv) * blend;
+    roll += (rollTarget - roll) * blend;
   }
   adapt[0] = total_ev;
   adapt[1] = 1.0;
+  adapt[2] = kneeEv;
+  adapt[3] = roll;
   let ratioEv = clamp(total_ev - preEv, -MAX_RATIO_EV, MAX_RATIO_EV);
   ratioOut[0] = exp2(ratioEv);
   ratioOut[1] = preEv + ratioEv - DAY_TOTAL_EV;
   ratioOut[2] = meanEv;
   ratioOut[3] = preEv + ratioEv;
+  ratioOut[4] = exp2(clamp(kneeEv, -30.0, 40.0));
+  ratioOut[5] = roll;
 }

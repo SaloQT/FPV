@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { qualityProfile, type QualityProfile } from './contracts';
 import { performanceProfile, qualityCostIndex, resolveQuality, sameProfile } from './qualityPresets';
+import { probeLimits, probeStride } from './rt/probes';
 
 const TIERS = ['low', 'medium', 'high', 'ultra'] as const;
 
@@ -8,6 +9,20 @@ describe('quality tiers really differ in cost', () => {
   it('the cost index rises strictly from low to ultra', () => {
     const costs = TIERS.map((t) => qualityCostIndex(qualityProfile(t)));
     for (let i = 1; i < costs.length; i++) expect(costs[i]).toBeGreaterThan(costs[i - 1] * 1.15);
+  });
+
+  it('the probe term follows the profile-scaled ray budget and rotation limit, not a fixed 150k / 16', () => {
+    const probesOnly: QualityProfile = {
+      ...qualityProfile('high'), rtSpecular: false, cloudSteps: 0, grassBladesPerM2: 0, detailOctaves: 0,
+      giRays: 1, rtMaxSteps: 32, probes: { dim: [32, 16, 32], raysPerProbe: 64, spacing: 5 },
+    };
+    const { rayBudget, maxStride } = probeLimits(probesOnly);
+    expect(maxStride).toBeGreaterThan(16);
+    const stride = probeStride(32 * 16 * 32, 64, rayBudget, maxStride);
+    expect(stride).toBe(maxStride);
+    const expected = (Math.ceil((32 * 16 * 32) / stride) * 64 * 16) / 1e6;
+    // A zero-size frame leaves the probes as the only cost.
+    expect(qualityCostIndex(probesOnly, 0, 0)).toBeCloseTo(expected, 6);
   });
 
   it('every tier is distinct in at least four budget fields', () => {
@@ -63,7 +78,10 @@ describe('Performance 240', () => {
   });
 
   it('refreshes every probe more often than the tier it derives from (shorter rotation)', () => {
-    const rotation = (q: QualityProfile): number => Math.min(16, Math.max(1, Math.ceil((q.probes.dim[0] * q.probes.dim[1] * q.probes.dim[2] * q.probes.raysPerProbe) / 150_000)));
+    const rotation = (q: QualityProfile): number => {
+      const { rayBudget, maxStride } = probeLimits(q);
+      return probeStride(q.probes.dim[0] * q.probes.dim[1] * q.probes.dim[2], q.probes.raysPerProbe, rayBudget, maxStride);
+    };
     const base = qualityProfile('high');
     expect(rotation(performanceProfile(base))).toBeLessThan(rotation(base));
   });
