@@ -472,6 +472,17 @@ describe('display encode and dither', () => {
   });
 });
 
+const sat = (x: number): number => clamp(x, 0, 1);
+const lensMaskCpu = (u: number, v: number, w: number, h: number): number => sat((0.5 - Math.abs(u - 0.5)) * w + 0.5) * sat((0.5 - Math.abs(v - 0.5)) * h + 0.5);
+/** CPU mirror of the `edge` mask of lensCoords in lens.wgsl: per channel (r, g, b), from the UNSHIFTED lens position. */
+function edgeMask(px: number, py: number, w: number, h: number, lens: number, caEdgePx: number): V3 {
+  const k = lensCoefficients(lens);
+  const [ux, uy] = undistort(px, py, w, h, k.k1, k.k2, k.zoom);
+  const rad = Math.hypot((px / w - 0.5) * w, (py / h - 0.5) * h) / (0.5 * Math.hypot(w, h));
+  const s = ((caEdgePx * lens) / (0.5 * Math.hypot(w, h))) * rad * rad;
+  return [lensMaskCpu(0.5 + (ux - 0.5) * (1 + s), 0.5 + (uy - 0.5) * (1 + s), w, h), lensMaskCpu(ux, uy, w, h), lensMaskCpu(0.5 + (ux - 0.5) * (1 - s), 0.5 + (uy - 0.5) * (1 - s), w, h)];
+}
+
 describe('rolling shutter and jello', () => {
   const size: [number, number] = [1920, 1080];
   const focal = 0.5 * 1080 / Math.tan(0.5 * 2);
@@ -511,6 +522,48 @@ describe('rolling shutter and jello', () => {
     expect(jelloAmplitude(2500)).toBeCloseTo(COMPOSITE_TUNING.jelloPx, 12);
     expect(jelloAmplitude(1250)).toBeCloseTo(COMPOSITE_TUNING.jelloPx / 4, 12);
     expect(jelloAmplitude(9999)).toBeCloseTo(COMPOSITE_TUNING.jelloPx, 12);
+  });
+});
+
+describe('image edge under the rolling shutter', () => {
+  const [w, h] = [1920, 1080];
+  const focal = 0.5 * h / Math.tan(0.5 * 2);
+  const R = COMPOSITE_TUNING.readout;
+  const borderPixels = (): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let x = 0; x < w; x += 16) out.push([x + 0.5, 0.5], [x + 0.5, h - 0.5]);
+    for (let y = 0; y < h; y += 16) out.push([0.5, y + 0.5], [w - 0.5, y + 0.5]);
+    return out;
+  };
+
+  it('a clamped omega of 23 rad/s (the old cut leak) moves the top and bottom rows tens of pixels outside the frame, so the shifted mask would black them', () => {
+    const shiftY = rollingShift([0.5, 0.5 / h], [w, h], [-23, 0, 0], focal, R, [0, 0, 0, 0])[1];
+    expect(shiftY).toBeGreaterThan(10);
+    expect(lensMaskCpu(0.5, 0.5 / h - shiftY / h, w, h)).toBe(0);
+    expect(edgeMask(w / 2, 0.5, w, h, 0, 0)[1]).toBeCloseTo(1, 9);
+  });
+
+  it('keeps every border pixel of the identity lens at mask 1 whatever the shift, because the mask ignores it', () => {
+    for (const [px, py] of borderPixels()) for (const m of edgeMask(px, py, w, h, 0, 0)) expect(m).toBeCloseTo(1, 9);
+  });
+
+  it('with a lens only chromatic aberration at the rim darkens a border pixel, never the middle of an edge', () => {
+    for (const [px, py] of borderPixels()) {
+      const [r, g, b] = edgeMask(px, py, w, h, 1, COMPOSITE_TUNING.caEdgePx);
+      expect(g).toBeGreaterThan(0.99);
+      expect(Math.min(r, b)).toBeGreaterThan(0.2);
+    }
+    const mid = edgeMask(w / 2, 0.5, w, h, 1, COMPOSITE_TUNING.caEdgePx);
+    expect(Math.min(...mid)).toBeGreaterThan(0.99);
+  });
+
+  it('is wired in the shader: the mask comes from the unshifted lens position and composite multiplies by it', () => {
+    const lensCoordsBody = lensSrc.match(/fn lensCoords\([\s\S]*?\n}\n/)![0];
+    expect(lensCoordsBody).toMatch(/let g = u\.xy - shiftPx \/ size;/);
+    expect(lensCoordsBody.match(/lensMask\(/g)).toHaveLength(3);
+    expect(lensCoordsBody).not.toMatch(/lensMask\([^;]*\bg\b/);
+    expect(composite).toContain('c *= L.edge;');
+    expect(composite).not.toMatch(/lensMask\(/);
   });
 });
 
@@ -714,6 +767,52 @@ describe('composite stage motion state', () => {
     expect(params[17]).toBe(first.phase);
     run(frame(2, 0.04, 0.004, quad));
     expect(params[13]).toBeGreaterThan(first.omega);
+    vi.unstubAllGlobals();
+  });
+
+  const omegaOf = (p: Float32Array): number[] => [p[12], p[13], p[14]];
+
+  it.each([60, 240])('a camera cut at %i Hz resets the shutter omega to zero instead of leaking a low-passed 23 rad/s', (hz) => {
+    vi.stubGlobal('GPUShaderStage', { FRAGMENT: 2 });
+    vi.stubGlobal('GPUBufferUsage', { UNIFORM: 64, COPY_DST: 8 });
+    const { run, frame, params } = harness();
+    const dt = 1 / hz;
+    let yaw = 0;
+    let index = 0;
+    for (let i = 0; i < 4 * hz / 10; i++) run(frame(index++, yaw += 5 * dt, dt));
+    expect(Math.abs(params[13])).toBeGreaterThan(4);
+    const cutAngle = 94 * (1 / 60);
+    run(frame(index++, yaw += cutAngle, dt));
+    expect(omegaOf(params)).toEqual([0, 0, 0]);
+    run(frame(index++, yaw, dt));
+    expect(omegaOf(params)).toEqual([0, 0, 0]);
+    run(frame(index++, yaw += 5 * dt, dt));
+    expect(Math.abs(params[13])).toBeGreaterThan(0);
+    expect(Math.abs(params[13])).toBeLessThan(5);
+    vi.unstubAllGlobals();
+  });
+
+  it.each([60, 240])('still follows a fast but real turn (30 rad/s) at %i Hz', (hz) => {
+    vi.stubGlobal('GPUShaderStage', { FRAGMENT: 2 });
+    vi.stubGlobal('GPUBufferUsage', { UNIFORM: 64, COPY_DST: 8 });
+    const { run, frame, params } = harness();
+    const dt = 1 / hz;
+    let yaw = 0;
+    for (let i = 0; i < hz / 2; i++) run(frame(i, yaw += 30 * dt, dt));
+    expect(Math.abs(params[13])).toBeGreaterThan(29);
+    expect(Math.abs(params[13])).toBeLessThanOrEqual(30 + 1e-3);
+    vi.unstubAllGlobals();
+  });
+
+  it('treats a turn above maxOmega at any frame rate as a cut', () => {
+    vi.stubGlobal('GPUShaderStage', { FRAGMENT: 2 });
+    vi.stubGlobal('GPUBufferUsage', { UNIFORM: 64, COPY_DST: 8 });
+    const { run, frame, params } = harness();
+    run(frame(0, 0, 1 / 240));
+    run(frame(1, 0.99 * COMPOSITE_TUNING.maxOmega / 240, 1 / 240));
+    expect(params[13]).toBeGreaterThan(0);
+    run(frame(2, 0.99 * COMPOSITE_TUNING.maxOmega / 240 + 1.01 * COMPOSITE_TUNING.maxOmega / 240, 1 / 240));
+    expect(omegaOf(params)).toEqual([0, 0, 0]);
     vi.unstubAllGlobals();
   });
 });

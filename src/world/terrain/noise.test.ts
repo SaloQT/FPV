@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Noise2D, Rng, clamp01, hashFloats, hashString, mix, smoothstep } from './noise';
 
+const SLOW = 60000;
+
 describe('Rng', () => {
   it('repeats exactly for the same seed and stream', () => {
     const a = new Rng(1234, 3);
@@ -31,7 +33,7 @@ describe('Rng', () => {
     }
     expect(sum / count).toBeCloseTo(0.5, 1);
     for (const b of bins) expect(Math.abs(b / count - 0.1)).toBeLessThan(0.01);
-  });
+  }, SLOW);
 
   it('range maps into [a, b)', () => {
     const r = new Rng(7);

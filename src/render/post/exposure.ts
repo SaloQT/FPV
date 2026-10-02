@@ -20,7 +20,7 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
  * Night: below ~0.03 nits of CPU-estimated scene luminance the metered mean (black trees, a few stars) is replaced by that estimate, so the
- * exposure follows the astronomy (moonless: the full +20 EV of a starlight camera, a sky near black with stars and Milky Way readable; moon up:
+ * exposure follows the astronomy (moonless: the full +22.8 EV of a Starvis-class starlight camera, a grey card at about code 10 while the sky stays where the +20.3 EV exposure had it, near black with stars and Milky Way readable (nightSkyScale); moon up:
  * the same gain until the 0.18-card reaches its dusk display level, then it falls), and the key stays flat below keyNightKneeNits.
  */
 export const EXPOSURE_TUNING = {
@@ -94,8 +94,13 @@ export const EXPOSURE_TUNING = {
   maxDt: 0.25,
   /** Luminance of a 0.18 grey card at noon: the CPU pre-exposure there is 1 / (4 * dayReferenceNits). */
   dayReferenceNits: 5000,
-  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV). A starlight camera needs ~+20 EV; the key law keeps a moonless sky near black. */
-  maxGainEv: 20.3,
+  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV). A Starvis-class starlight camera runs ~+22.8 EV (optics, long integration and frame averaging past its ISO limit); the key law keeps a moonless sky near black. */
+  maxGainEv: 22.8,
+  /**
+   * Gain (EV over daylight) up to which the whole frame gains with the exposure. A camera past it (moonless night) lifts the ground by the extra EV while its
+   * highlight compensation holds the sky where the gain at this level had it, so the ground reads and the sky stays near black (see nightSkyScale).
+   */
+  skyHoldGainEv: 20.3,
   minGainEv: -6,
   /** Numeric guard only: a starlit pre-exposure is +10 EV and a bright day -14 EV, so the ratio legitimately spans 2^-24..2^+6. */
   maxRatioEv: 26,
@@ -279,6 +284,15 @@ export function targetTotalEv(meanEv: number, preExposure: number, highEv: numbe
   const floodlit = night * Math.max(meanEv - EXPECTED_MEAN_EV - T.nightMarginEv, 0);
   const gain = Math.max(Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV, T.minGainEv), T.maxGainEv) - floodlit, T.minGainEv);
   return preEv + Math.min(Math.max(DAY_TOTAL_EV + gain - preEv, -T.maxRatioEv), T.maxRatioEv);
+}
+
+/**
+ * Factor on the sky pixels of the resolved image (taau.wgsl) from the CPU pre-exposure alone: 2^-(gain the camera runs above skyHoldGainEv), 1 at any light
+ * level where it runs at or below it. The scene-linear sky is then what the exposure at skyHoldGainEv gave, and the ground gets the whole extra gain.
+ */
+export function nightSkyScale(preExposure: number): number {
+  const gain = targetTotalEv(EXPECTED_MEAN_EV, preExposure) - DAY_TOTAL_EV;
+  return 2 ** -Math.max(gain - T.skyHoldGainEv, 0);
 }
 
 /** One adaptation step of the total exposure state: dead band, then exponential approach with direction-dependent time constant. */

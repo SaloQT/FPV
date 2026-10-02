@@ -23,7 +23,8 @@ const DISOCC_HI : f32 = ${DISOCC_HI};
 struct TaaParams {
   histScale : f32, // preExposure / prevPreExposure
   reset : u32,     // 1 = ignore the history texture
-  pad : vec2u,
+  skyScale : f32,  // factor on the sky pixels of the resolved image (night highlight compensation, nightSkyScale in exposure.ts); the history keeps them unscaled
+  pad : u32,
 };
 
 @group(1) @binding(0) var<uniform> taa : TaaParams;
@@ -121,6 +122,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var bMax = vec3f(-1e9);
   var dMax = 0.0;
   var dPix = clamp(base, vec2i(0), rMax);
+  var skyKw = 0.0;
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let p = base + vec2i(i, j);
@@ -139,6 +141,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       bMax = max(bMax, q);
       let z = textureLoad(depthTex, t, 0);
       if (z > dMax) { dMax = z; dPix = t; }
+      if (z <= 0.0) { skyKw += w; }
     }
   }
   let cur = cSum / max(lSum, 1e-9);
@@ -182,7 +185,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     }
   }
   let outC = decompress(max(result, vec3f(0.0)));
-  textureStore(outResolved, gid.xy, vec4f(outC, 1.0));
+  textureStore(outResolved, gid.xy, vec4f(outC * mix(1.0, taa.skyScale, skyKw / max(wSum, 1e-9)), 1.0));
   textureStore(outHist, gid.xy, vec4f(outC, storeW));
 }
 
@@ -195,5 +198,6 @@ fn upsample(@builtin(global_invocation_id) gid : vec3u) {
   let uv = (vec2f(gid.xy) + 0.5) / vec2f(outSize);
   let jit = vec2f(frame.jitter.x, -frame.jitter.y) * 0.5 * rSize;
   let s = clamp(dropNan(textureSampleLevel(inputTex, linSamp, (uv * rSize + jit) / rSize, 0.0).rgb), vec3f(0.0), vec3f(HDR_MAX));
-  textureStore(outResolved, gid.xy, vec4f(s, 1.0));
+  let z = textureLoad(depthTex, clamp(vec2i(uv * rSize), vec2i(0), vec2i(rSize) - vec2i(1)), 0);
+  textureStore(outResolved, gid.xy, vec4f(s * select(1.0, taa.skyScale, z <= 0.0), 1.0));
 }

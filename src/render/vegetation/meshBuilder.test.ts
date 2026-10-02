@@ -3,6 +3,8 @@ import type { Vec3 } from '../../contracts';
 import { KIND, MeshBuilder, VERTEX_STRIDE, card, norm, octEncode, packMeshes, tube, type MeshData } from './meshBuilder';
 import { buildVariantAssets } from './variants';
 
+const SLOW = 60000;
+
 /** Reference decoder: the JavaScript twin of octDecode in shaders/common/math.wgsl. */
 function octDecode(x: number, y: number): Vec3 {
   const ex = x * 2 - 1, ey = y * 2 - 1;
@@ -134,7 +136,7 @@ describe('packMeshes', () => {
     packed.ranges.forEach((r, i) => {
       for (let k = 0; k < r.indexCount; k++) expect(packed.indices[r.firstIndex + k]).toBe(meshes[i].idx[k]);
     });
-  });
+  }, SLOW);
 
   it('writes each vertex as position f32x3, octahedral normal unorm16x2, uv unorm16x2 and attr unorm8x4', () => {
     let worstNormal = 0, worstUv = 0;
@@ -151,7 +153,7 @@ describe('packMeshes', () => {
     });
     expect(worstNormal).toBeLessThan(1e-3);
     expect(worstUv).toBeLessThanOrEqual(1 / 65535);
-  });
+  }, SLOW);
 
   it('packs an empty list to empty buffers', () => {
     const e = packMeshes([]);

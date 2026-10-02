@@ -94,7 +94,7 @@ fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32) -> vec3f {
   }
   c *= exposure.ratio.x * lensVignette(L.rad, P.look.x);
   if (P.look.w > 0.0) { c += sensorNoise(c, pix, frame, exposure.ratio.y, P.look.w); }
-  c *= vec3f(lensMask(L.r, size), lensMask(L.g, size), lensMask(L.b, size));
+  c *= L.edge;
 
   var e = gradeContrast(srgbEncode(tonemap(c, exposure.ratio.y, exposure.look.x, exposure.look.y)));
   if (debug == 2u) { e = mix(e, heatColor(exposure.ratio.y), 0.5); }

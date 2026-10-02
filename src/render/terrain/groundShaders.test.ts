@@ -4,6 +4,7 @@ import { FRAME_OFFSETS, FrameUniforms, type FrameUniformInput } from '../frameUn
 import { resolveShader } from '../shaderLib';
 import palette from '../shaders/terrain/ground_palette.wgsl?raw';
 import gbuffer from '../shaders/terrain/gbuffer.wgsl?raw';
+import grassTone from '../shaders/terrain/grass_tone.wgsl?raw';
 import grass from '../shaders/vegetation/grass.wgsl?raw';
 
 const lum = (c: number[]): number => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
@@ -125,6 +126,7 @@ describe('ground and grass shader assembly', () => {
     ['terrain/terrain.wgsl', {}],
     ['terrain/water.wgsl', {}],
     ['terrain/detail_gen.wgsl', {}],
+    ['terrain/grass_tone.wgsl', {}],
     ['vegetation/grass.wgsl', { NSEG: 7, HAS_TIP: true }],
     ['vegetation/grass.wgsl', { NSEG: 1, HAS_TIP: false }],
     ['vegetation/grass_cull.wgsl', {}],
@@ -136,5 +138,19 @@ describe('ground and grass shader assembly', () => {
     expect(src).not.toMatch(/^\s*#(include|ifdef|ifndef|else|endif)/m);
     const names = [...src.matchAll(/^fn\s+(\w+)/gm)].map((m) => m[1]);
     expect(names.filter((n, i) => names.indexOf(n) !== i)).toEqual([]);
+  });
+});
+
+describe('shared grass tone', () => {
+  it('has no bindings, so the vertex shader of the blades and the terrain fragment shader can both include it', () => {
+    expect(grassTone).not.toMatch(/@group|@binding|var</);
+    expect(resolveShader('terrain/grass_tone.wgsl')).toMatch(/^fn grassStreak/m);
+  });
+
+  it('is evaluated by the terrain shader once, for the grass and hay layers only', () => {
+    const terrain = resolveShader('terrain/terrain.wgsl');
+    expect(terrain.match(/= grassClumpTone\(/g)).toHaveLength(1);
+    expect(terrain).toContain('if (lid[k] <= GL_HAY)');
+    expect(terrain).toContain('tone *= turfTone * (1.0 + GT_STREAK_AMP * streak);');
   });
 });

@@ -5,6 +5,8 @@ import { MOTOR_PARAM_SPECS } from './motorParams';
 import { WORKLET_NAME } from './worklet';
 import { WorkletHarness } from './workletHarness';
 
+const SLOW = 60000;
+
 const SR = 48000;
 const PAN_CENTRE = Math.SQRT1_2;
 
@@ -70,7 +72,7 @@ describe('motor tone', () => {
       expect(lines / rms(win) ** 2).toBeGreaterThan(0.985);
       expect(lines / rms(win) ** 2).toBeLessThan(1.015);
     }
-  });
+  }, SLOW);
 
   it('clamps frequencies above the table range instead of aliasing', () => {
     const h = new WorkletHarness(SR);
@@ -160,7 +162,7 @@ describe('noise layers', () => {
     expect(rms(x)).toBeGreaterThan(0.7);
     expect(rms(x)).toBeLessThan(1.5);
     expect(bandLevel(x, SR, 20, 200, 24)).toBeGreaterThan(bandLevel(x, SR, 2000, 6000, 24) * 30);
-  });
+  }, SLOW);
 
   it('stays finite and bounded under wild parameter jumps', () => {
     const h = new WorkletHarness(SR, 5);

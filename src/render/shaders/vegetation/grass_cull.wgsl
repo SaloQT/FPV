@@ -89,7 +89,7 @@ fn flowerRate(xz : vec2f) -> f32 {
   return 0.00025 + 0.012 * drift * cluster;
 }
 
-// Mostly the drift's own colour (whites and yellows common, violet less, poppy red rare) with the odd stray from another species.
+// Mostly the drift's own colour (whites and yellows common, violet less, pink clover rare) with the odd stray from another species.
 fn flowerCode(clump : f32, r : u32) -> u32 {
   let c = select(clump, u01(r >> 4u), u01(r >> 12u) < 0.2);
   return select(select(select(4u, 3u, c < 0.9), 2u, c < 0.7), 1u, c < 0.35);

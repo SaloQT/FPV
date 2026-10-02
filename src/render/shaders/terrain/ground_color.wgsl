@@ -5,8 +5,10 @@
 //   groundBaseColor(xz)               macro albedo of the layered ground (no detail texture), any xz including outside the map
 //   groundBaseColorAt(xz, y, ny, maps, waterLevel)   same with caller-supplied height, normal.y and maps
 //   terrainLayerWeights(xz, y, ny, maps, waterLevel) affinity of the 8 ground layers (see GL_* in ground_palette.wgsl)
+// grass_tone.wgsl (included here) holds the blade tuft/swath tone and the streak field both the blades and the turf layer read.
 #include "common/world_bindings.wgsl"
 #include "terrain/noise.wgsl"
+#include "terrain/grass_tone.wgsl"
 #include "terrain/ground_palette.wgsl"
 #include "terrain/terrain_height.wgsl"
 

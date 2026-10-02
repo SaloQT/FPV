@@ -6,7 +6,7 @@ const TAU : f32 = 6.28318530717959;
 // shot: signal variance per unit signal at the reference gain (~3000 e- full well); read: read-noise sigma at unity gain.
 // Both scale with the ISO gain (shot as G, read as sqrt(G) after the analog stage), so the relative grain falls as the signal rises.
 // The exposure's gain EV is the whole brightening over noon; the first shutterEv of it is shutter time and aperture, not ISO. The ISO stage
-// stops at maxGainEv; the rest of a starlight exposure (up to +20 EV) is optics and frame integration, which add no noise of their own.
+// stops at maxGainEv; the rest of a starlight exposure (up to +22.8 EV) is optics and frame integration, which add no noise of their own.
 // nrFloor: the camera's temporal noise reduction cuts the noise amplitude to this share at the full ISO gain (1 = off), linearly in gain EV.
 // chroma: share of the noise variance that is independent per channel (the rest is one luma-correlated draw): a camera's colour
 // noise is weaker than its luma noise, and it does not grow towards the night.

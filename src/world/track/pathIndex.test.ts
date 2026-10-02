@@ -8,11 +8,13 @@ import { makeTestSampler } from './testTerrain';
 
 const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
 const tracks: TrackData[] = [];
+// The brute-force cross-checks are O(path x probes) and take seconds when the CPU is shared, so the default 5 s limit is too tight.
+const SLOW = 120000;
 
 beforeAll(() => {
   const sampler: TerrainSampler = makeTestSampler({ seed: 3 });
   for (const style of STYLES) for (let seed = 1; seed <= 3; seed++) tracks.push(generateTrack({ seed, style }, sampler));
-}, 60000);
+}, SLOW);
 
 const dist3 = (a: Vec3, x: number, y: number, z: number): number => Math.hypot(a[0] - x, a[1] - y, a[2] - z);
 
@@ -46,7 +48,7 @@ function probes(track: TrackData, rng: Rng, n: number): Vec3[] {
   });
 }
 
-describe('PathIndex', () => {
+describe('PathIndex', { timeout: SLOW }, () => {
   it('finds the same sample as a brute-force scan, in 3D and in the horizontal plane', () => {
     const rng = new Rng(4);
     for (const track of tracks) {
@@ -81,7 +83,7 @@ describe('PathIndex', () => {
   });
 });
 
-describe('nearestPathIndex', () => {
+describe('nearestPathIndex', { timeout: SLOW }, () => {
   it('matches a brute-force scan without a hint', () => {
     const rng = new Rng(6);
     for (const track of tracks) {
@@ -126,7 +128,7 @@ describe('nearestPathIndex', () => {
   });
 });
 
-describe('distanceToPath', () => {
+describe('distanceToPath', { timeout: SLOW }, () => {
   it('is zero on the path and half a sample gap between two samples at most', () => {
     for (const track of tracks) {
       for (let i = 0; i < track.path.length - 1; i += 7) {

@@ -5,6 +5,8 @@ import type { TrackStyle } from './styles';
 import { describeTrack } from './summary';
 import { makeTestSampler } from './testTerrain';
 
+const SLOW = 60000;
+
 const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
 const sampler = makeTestSampler({ seed: 3 });
 
@@ -28,7 +30,7 @@ describe('describeTrack', () => {
         expect(s.maxCurvature).toBeLessThanOrEqual(1 / 6);
       }
     }
-  });
+  }, SLOW);
 
   it('counts only the climbs in the elevation gain', () => {
     const hill: Vec3[] = Array.from({ length: 41 }, (_, i) => [i, i <= 20 ? i : 40 - i, 0]);

@@ -34,7 +34,7 @@ Open **http://localhost:5173** in a WebGPU browser and click "Click to fly".
 
 ### Production build
 
-`npm run build` writes `dist/`: `index.html`, six script chunks in `dist/assets/` (WGSL shader sources about 355 kB, renderer code about 240 kB,
+`npm run build` writes `dist/`: `index.html`, six script chunks in `dist/assets/` (WGSL shader sources about 360 kB, renderer code about 240 kB,
 world and physics code about 130 kB, UI and app code about 160 kB, a ~10 kB entry that holds only the failure screen, so a chunk that fails to load still
 shows the panel, and a 66-byte `app` file that only re-exports the UI chunk's entry), the 20 kB terrain worker (a seventh `.js` file), two stylesheets (the
 failure panel and the rest of the UI) and `data/stars.bin` (660 kB). No chunk is over Vite's 500 kB warning limit.
@@ -104,9 +104,9 @@ names the tier its terrain was built on.
   incision, grid refinement, Beyer droplet hydraulic erosion, thermal talus and soil creep, then material maps (flow, soil depth,
   sediment, wetness) and optional lakes. Map size 2 to 4 km by tier (512 x 512 at 4 m on Low up to 2048 x 2048 at 2 m on High), 220 m of
   relief. Rendered as a geometry clipmap with procedural micro-relief and ground materials driven by the maps.
-- **Vegetation**: GPU-driven grass blades with three LODs, wind and prop-wash, with meadow flowers (heads in four colours on a small share of the
-  blades, in drifts); procedurally grown trees and bushes with LODs and wind; boulders. Placement follows slope, soil depth and wetness (nothing
-  grows in rivers).
+- **Vegetation**: GPU-driven grass blades with three LODs, wind and prop-wash, with meadow flowers (round heads in four colours, white ox-eye
+  daisy, buttercup yellow, violet and pink clover, on a small share of the blades, in drifts); procedurally grown trees and bushes with LODs and
+  wind; boulders. Placement follows slope, soil depth and wetness (nothing grows in rivers).
 - **Track generator**: four styles (race, freestyle, mountain, sprint) with gate spacing, turn-radius, slope and clearance validation;
   gates with LEDs, flags, cones and obstacles; gate timing, laps and splits.
 - **Start screen and race flow**: the first screen has the big "Click to fly" button, the world card (a **seed** field that takes a number or any
@@ -116,12 +116,16 @@ names the tier its terrain was built on.
   **result card** shows the total time, the best lap, every lap against the best, the best lap's gate-to-gate bars and the buttons Restart (**R**), New track
   (**N**) and Menu. A **stick indicator** on the OSD (two boxes with roll, pitch, yaw and throttle; Settings, Camera, On-screen display) shows what you send.
 - **Sky and time**: Hillaire-style atmosphere (transmittance, multiple-scattering, sky-view and aerial-perspective tables), ray-marched clouds
-  with temporal accumulation, the Sun (Meeus), the Moon (full ELP truncation, phase and light) and Mercury to Saturn (JPL
-  elements). **Stars are real**: 41,487 stars to magnitude 8 from the HYG v4.1 catalogue (`public/data/stars.bin`), plus a baked Milky Way, airglow
-  and zodiacal light. **Cloud shadows**: the clouds bake a top-down transmittance map for the Sun and the Moon; the ray-traced key-light shadow and the
+  with temporal accumulation (default cover 0.40 cumulus and 0.30 cirrus, no menu field; through twilight the cumulus falls to 35 % of that), the Sun
+  (Meeus), the Moon (full ELP truncation, phase and light) and Mercury to Saturn (JPL elements). **Stars are real**: 41,487 stars to magnitude 8 from the
+  HYG v4.1 catalogue (`public/data/stars.bin`), plus a baked Milky Way, airglow and zodiacal light. At night the **ambient light** carries them too,
+  not only airglow: the zodiacal light, the Milky Way and the stars brighter than magnitude 6.5 are integrated over the sky dome
+  (`src/render/atmosphere/nightDome.ts`) into the sky-view table that lights the ground and the reflections (together about 35 % of a moonless
+  sky's illuminance). **Cloud shadows**: the clouds bake a top-down transmittance map for the Sun and the Moon; the ray-traced key-light shadow and the
   shading of ray hits (which feeds the GI and the probes) multiply it in, and the deferred pass reads the ray-traced shadow. The date and the hour are in the menu,
   and the clock can be fixed at an hour, follow the real time, or run as a day cycle at **1x to 1000x** (a day in 86 s at the top speed); the observer
-  (default 46 N, 8 E, 1200 m) is part of the saved settings but has no menu field. The light is physical (lux and nits) with a camera-style auto exposure.
+  (default 46 N, 8 E, 1200 m) is part of the saved settings but has no menu field. The light is physical (lux and nits) with a camera-style auto
+  exposure (see [Rendering pipeline](#rendering-pipeline)).
 - **FPV camera**: tilt, field of view, lens distortion, chromatic aberration, vignette, rolling-shutter lean, motor vibration ("jello"), physical
   motion blur (1/400 s exposure), sensor shot noise and an analogue/digital video-noise look, plus an OSD (battery, speed, altitude, timer, gate).
 - **Audio**: motor tones from the rotor speeds, wind, prop-wash, impacts and beeps, synthesised with Web Audio.
@@ -159,13 +163,25 @@ Per frame, in this order:
    grid of radiance probes (SH-L1) for multi-bounce light and rough surfaces; temporal accumulation and an a-trous denoiser. Run at full, half or
    quarter resolution depending on the tier.
 4. **Deferred lighting** (compute) into an HDR target, then **sky** and clouds and a forward pass (glow, translucent parts).
-5. **Post**: temporal anti-aliasing with upscaling (TAAU, render size to output size), bloom, motion blur, the camera model (lens, rolling shutter,
-   vibration, video noise), auto exposure, tonemap and sensor noise.
+5. **Post**: motion blur, temporal anti-aliasing with upscaling (TAAU, render size to output size), auto exposure and bloom on the resolved image, then
+   one composite pass: the camera model (lens, rolling shutter, vibration, video noise), tonemap and sensor noise.
+   - **Auto exposure** is depth-split: the stage keeps a log-luminance histogram of the resolved image for the sky pixels (G-buffer depth 0) and one
+     for the ground, weighted towards the centre and the ground, and the ground leads. A sky far brighter than the ground (dusk) is folded down to a
+     fixed margin above the ground's metered level before the trimmed mean is taken, so it cannot push the grass into black; a daylight sky is
+     metered as it is, and with the ground out of frame the sky is metered. The adapted state is the total exposure (CPU pre-exposure times a
+     GPU-computed ratio), so a pre-exposure change does not make it hunt. In the dark it follows the astronomy, up to a starlight-camera gain of
+     about +22.8 EV. The exposure ratio buffer is 32 bytes: ratio, sensor gain EV, metered mean EV, total EV, highlight knee, roll-off strength and two
+     spare floats.
+   - **Highlight roll-off** keeps hue: the tonemap curve acts on luminance and the colour keeps its chromaticity, with a smooth knee on chroma so the
+     brightest channel does not sit on white. Luminance far above the ground's metered level (a dusk sky, a sun-side horizon glow) is also compressed
+     by a knee the exposure stage reports (off when the camera looks up and in the dark), so the sky keeps its gradient and colour below the clip.
 
 **What is and is not ray traced.** The scene is a *software* BVH built on the CPU over analytic primitives (boxes, capsules, spheres, tori): the gates,
-the quad, and the trunk (capsule) and canopy (sphere) proxies of the 300 trees nearest the track start (a canopy sphere is not opaque: light
-crossing it is attenuated by a leaf-density extinction, so a crown casts a soft, partly transparent shadow). Terrain is ray marched through a
-height-field max pyramid. There is no hardware ray tracing (WebGPU has no such API) and it is not path tracing. **Foliage is not traced**:
+the quad, and the trunk (capsule) and canopy (sphere) proxies of the 300 trees nearest the track start. A canopy sphere is not opaque: light
+crossing it is attenuated by a leaf-density extinction (leaf area density times a clumping index of 0.8, with a noisy, fluffy rim and clump-scale
+gaps), so a crown casts a soft, partly transparent shadow, and a ray that ends inside a crown sees leaf scatter (leaves reflect and transmit, so a
+crown glows green with the single-scatter albedo, not the dark reflectance of the proxy) blended with the sky behind it. Terrain is ray marched
+through a height-field max pyramid. There is no hardware ray tracing (WebGPU has no such API) and it is not path tracing. **Foliage is not traced**:
 grass, bushes, boulders and individual leaves cast no ray-traced shadows or bounce light; the trees only through their coarse proxies.
 
 ### Quality tiers
@@ -185,7 +201,9 @@ number: it follows the profile's GI rays x ray steps (150,000 probe rays per fra
 fewer probe rays per frame and refreshes each probe less often (the longest rotation allowed is 16 frames at High's ray work, up to 32 for less). The tests
 check that every tier costs more than the one below it and that the preset costs clearly less than High, using an analytic proxy of the work each
 profile asks for (`qualityCostIndex`, which takes the same probe limits the ray-tracing module uses), which is not a GPU measurement. Switching the
-preset or the tier live changes ray, probe, cloud and grass budgets at once (the vegetation module rebuilds its grass when the budget changes).
+preset or the tier live changes the ray, probe, cloud and grass budgets at once. Performance 240 keeps the tier, so only the grass is rebuilt (thinner and
+nearer); a tier change also rebuilds the trees and the far-forest cards, while the terrain keeps the grid it was built with until the next world build (the start screen
+builds one in the background when the tier changes; in flight it is the next **N**).
 
 ## How 240 fps is pursued
 
@@ -238,7 +256,7 @@ measuring aid for the command-line runner only and has not been verified on real
 
 ## Testing
 
-- `npm test`: the vitest suite (over 160 files: physics against known values, terrain and track generators, input mapping, the astronomy against
+- `npm test`: the vitest suite (over 170 files: physics against known values, terrain and track generators, input mapping, the astronomy against
   worked examples from the astronomy literature, WGSL include resolution, CPU references of the ray tracer, the dynamic-resolution controller, settings, the failure and perf models).
 - `npm run typecheck`: strict TypeScript.
 - `node tools/shot.mjs --query "autostart=1&scenario=hover&cam=fpv&t=12&seed=1337&quality=low&dyn=0&scale=0.5" --out shots/x.png --size 960x540 --wait 300000`
@@ -262,10 +280,19 @@ measuring aid for the command-line runner only and has not been verified on real
 ## Known limitations
 
 - 240 fps is a target, not a result: no real-GPU timings exist for this build. Literal 1:1 realism and full path tracing at 240 fps are out of reach for current browser GPUs.
-- Ray tracing is software-BVH based and covers terrain, gates, the quad and coarse tree proxies. Foliage, grass and boulders are not traced; reflections are
-  traced only on High, Ultra and Performance 240.
+- The ray tracing is a software BVH on the CPU plus a ray-marched height field, not path tracing and not hardware ray tracing. It covers terrain, gates,
+  the quad and the 300 trees nearest the track start as trunk capsules and canopy spheres; **foliage, grass, bushes, boulders and individual leaves are not
+  traced**, and trees beyond those 300 and the far-forest cards cast no ray-traced shadow. A crown is a proxy sphere with a statistical leaf density (extinction,
+  clumping index, noisy rim), not real leaf geometry, so its shadow and glow are plausible, not exact. Reflections are traced only on High, Ultra and Performance 240.
+- The terrain is a height field: 4 m cells on Low, 3 m on Medium, 2 m on High and 1.5 m on Ultra. Relief finer than a cell is shading only (detail normal, albedo
+  and cavity textures), and there are no overhangs or caves; collisions use the height field.
+- One airframe exists: the 5 inch 6S quad (`src/sim/presets.ts`). There is no other size or build to choose (the menu shows the airframe as fixed).
+- Night is a camera model: the auto exposure runs up to about +22.8 EV of gain (a Starvis-class starlight camera, which reaches it with long integration and
+  frame averaging), the ISO-style gain stops at +10 EV and the rest adds no noise of its own, and the noise is a Poisson-Gaussian model with a temporal
+  noise-reduction floor. The grain and the brightness of a moonless night are plausible but not calibrated against a real camera or a real night.
 - The frame rate is capped by the display refresh; the frame cap can only lower it. A page opened in a background tab cannot measure the refresh and assumes 60 Hz as its default target.
 - Timestamp queries (per-pass times, GPU-driven dynamic resolution) need `timestamp-query`; without it the controller works from frame times.
 - Terrain generation is CPU work in a worker and takes from a few seconds (Low) to much longer (Ultra), longer still without a fast CPU.
 - The map is a bounded 2 to 4 km square; there is no mobile or touch control scheme and no VR.
-- Tested in headless Chromium on SwiftShader and in unit tests; other browsers and GPUs have not been exercised.
+- Everything was verified in headless Chromium on SwiftShader (software WebGPU, about 1 fps) and in unit tests. The exposure, colour, noise and shadow tuning
+  was judged on those software frames; no real GPU, no real display and no other browser has been exercised.

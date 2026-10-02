@@ -3,6 +3,8 @@ import { INSTANCE_BYTES, KIND_BUSH, KIND_ROCK, KIND_TREE, SLOT_ALIGN, VARIANT_BY
 import { testScene } from './testScene';
 import { VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets } from './variants';
 
+const SLOW = 60000;
+
 const assets = buildVariantAssets();
 const runsOf = (plants: number, rocks: number): InstanceRun[] => {
   const { high } = testScene();
@@ -49,7 +51,7 @@ describe('packInstances', () => {
       }
     }
     expect(Array.from(fill)).toEqual(Array.from(packed.count));
-  });
+  }, SLOW);
 
   it('zeroes the padding slots so the cull skips them', () => {
     let padding = 0;

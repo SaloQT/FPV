@@ -5,6 +5,7 @@
 #include "vegetation/veg_wind.wgsl"
 #include "vegetation/grass_blade.wgsl"
 #include "terrain/gbuffer.wgsl"
+#include "terrain/grass_tone.wgsl"
 
 @group(2) @binding(1) var<storage, read> blades : array<Blade>;
 
@@ -44,14 +45,6 @@ fn headRadius(code : u32, u : f32) -> f32 {
     case 3u: { return 0.006 + 0.005 * u; }
     default: { return 0.008 + 0.006 * u; }
   }
-}
-
-fn grassNoise2(p : vec2f) -> f32 {
-  let i = floor(p);
-  let f = p - i;
-  let u = f * f * (3.0 - 2.0 * f);
-  let b = bitcast<vec2u>(vec2i(i));
-  return mix(mix(hash21(b), hash21(b + vec2u(1u, 0u)), u.x), mix(hash21(b + vec2u(0u, 1u)), hash21(b + vec2u(1u, 1u)), u.x), u.y);
 }
 
 // Petal colours are muted reflectances (white petals about 0.6, not paper white); `keep` 0 cuts the gaps between petals once the head
@@ -242,10 +235,7 @@ fn vs(@builtin(vertex_index) vid : u32, @builtin(instance_index) iid : u32) -> V
   base *= mix(mix(vec3f(0.88, 1.04, 1.05), vec3f(1.22, 1.08, 0.62), smoothstep(0.5, 1.0, r2)), vec3f(1.0), calm);
   if (species == 3u) { base *= vec3f(0.9, 1.0, 0.9); }
   if (species == 4u) { base *= vec3f(0.82, 1.0, 0.78); }
-  let tuftTone = grassNoise2(b.pos.xz * 2.2);
-  let swathTone = grassNoise2(b.pos.xz * 0.55 + vec2f(17.0, 5.0));
-  let toneAll = (0.7 + 0.6 * tuftTone) * mix(vec3f(0.96, 0.99, 1.07), vec3f(1.04, 1.01, 0.92), swathTone);
-  base *= toneAll;
+  base *= grassClumpTone(b.pos.xz, 0.0);
   var col = base * mix(mix(0.35, 1.4, gt), 0.93, 0.5 * thinV) * mix(vec3f(1.0), vec3f(1.06, 1.02, 0.8), gt);
   var strawMix = 0.45 * smoothstep(0.6, 1.0, t) * smoothstep(0.3, 0.9, fract(r2 * 9.7));
   if (r2 < 0.06 + 0.35 * dry) { strawMix = 0.85; }

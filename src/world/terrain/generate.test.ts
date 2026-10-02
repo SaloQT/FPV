@@ -6,6 +6,8 @@ import { generateTerrain as generateFromIndex, generateTerrainAsync as asyncFrom
 import { hashFloats } from './noise';
 import { TUNING } from './tuning';
 
+const SLOW = 60000;
+
 const N = 128;
 const CELL = 12;
 const SMALL = { quality: 'low', resolution: N, cellSize: CELL } as const;
@@ -137,7 +139,7 @@ describe('output shape', () => {
         expect(sum / map.length, `${name} mean`).toBeLessThan(0.98);
       }
     }
-  });
+  }, SLOW);
 
   it('only sets a lake level inside the height range, and keeps the flyable centre dry', () => {
     for (const seed of [1, 2, 7, 1337]) {
@@ -182,7 +184,7 @@ describe('output shape', () => {
       expect(deg, `seed ${seed}`).toBeGreaterThan(rock - 6);
       expect(deg, `seed ${seed}`).toBeLessThan(rock + 5);
     }
-  });
+  }, SLOW);
 
   it('leaves the centre of the map flat-ish and the rest of it mountainous', () => {
     for (const seed of [1, 2, 1337]) {

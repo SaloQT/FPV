@@ -7,14 +7,14 @@ import type { CompositeInput, CompositeStage, OutSize, PostParams } from './type
  * Constants of the FPV camera model. The shader carries the display-side constants (GRADE, SENSOR) itself, see tonemap.wgsl / sensor.wgsl.
  * readout: full-frame sensor readout time; a typical FPV CMOS/analog camera scans top to bottom in about 8 ms, which is what makes fast yaw lean the image.
  * omegaTau: low-pass on the angular velocity estimate (finite differences of the camera quaternion are noisy at 240 fps).
- * cutOmega: an estimate above this is a camera cut or teleport, not motion.
+ * maxOmega: no FPV camera turns faster (2300 deg/s), so an estimate above this is a camera cut or teleport, not motion; it resets the estimate to zero
+ * (a clamped 94 rad/s cut at 60 Hz used to leave ~23 rad/s in the low-pass and lean the next frames).
  * jello: vibration amplitude in pixels at `jelloRefOmega` (mean motor speed, rad/s); it grows with the square of the motor speed.
  */
 export const COMPOSITE_TUNING = {
   readout: 0.008,
   omegaTau: 0.02,
   maxOmega: 40,
-  cutOmega: 200,
   k1: -0.25,
   k2: 0.05,
   caEdgePx: 0.8,
@@ -140,12 +140,11 @@ export function createCompositeStage(): CompositeStage {
         angularVelocity(rawOmega, prevQuat, q, f.dt);
         speed = Math.hypot(rawOmega[0], rawOmega[1], rawOmega[2]);
       }
-      if (speed > T.cutOmega || !havePrev || f.dt <= 1e-6) {
+      if (speed > T.maxOmega || !havePrev || f.dt <= 1e-6) {
         omega[0] = omega[1] = omega[2] = 0;
       } else {
         const a = 1 - Math.exp(-f.dt / T.omegaTau);
-        const lim = speed > T.maxOmega ? T.maxOmega / speed : 1;
-        for (let i = 0; i < 3; i++) omega[i] += (rawOmega[i] * lim - omega[i]) * a;
+        for (let i = 0; i < 3; i++) omega[i] += (rawOmega[i] - omega[i]) * a;
       }
       prevQuat[0] = q[0]; prevQuat[1] = q[1]; prevQuat[2] = q[2]; prevQuat[3] = q[3];
       havePrev = true;

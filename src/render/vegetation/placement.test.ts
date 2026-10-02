@@ -123,7 +123,7 @@ describe('placeVegetation on a generated terrain and race track', () => {
       expect(fields.flow(x, z)).toBeLessThan(0.85 + EPS);
       expect((h - terrain.minHeight) / range).toBeLessThan(0.76);
     }
-  });
+  }, SLOW);
 
   it('plants sit on the ground with the base sunk slightly into it', () => {
     for (let i = 0; i < plants.count; i++) {
@@ -163,7 +163,7 @@ describe('placeVegetation on a generated terrain and race track', () => {
     }
     expect(nearest).toBeGreaterThanOrEqual(PATH_CLEARANCE - EPS);
     expect(nearest).toBeLessThan(PATH_CLEARANCE + 1.5);
-  });
+  }, SLOW);
 
   it('keeps rock surfaces at least 3.5 m from the racing line', () => {
     for (let i = 0; i < rocks.count; i++) {

@@ -29,7 +29,7 @@ every bind group that references `rc.gbuf`. Never cache `rc.world.group`, `rc.gb
 ## Units and exposure
 
 Lights are physical: `frame.sunIrradiance` is top-of-atmosphere lux (127000), multiply by `sampleTransmittance(r, sunDir.y)`; sky LUT
-is in nits. Every value written to an HDR-domain target is multiplied by pre-exposure `frame.params.y`. `frame.misc.w` is the key-light
+is in nits. Every value written to an HDR-domain target is multiplied by pre-exposure `frame.params.y` (the CPU's astronomical estimate; the Post exposure stage adds a GPU ratio, see Post). `frame.misc.w` is the key-light
 flag (0 = sun shadow texture, 1 = moon). `frame.sky` = (planetKm, topKm, camHeightKm, nightScale).
 
 ## G-buffer (contracts.ts: `FORMATS`, `GBUFFER_TARGETS`, `DEPTH_STATE`)
@@ -88,6 +88,25 @@ Do not read `GPUTextureUsage`/`GPUShaderStage`/`GPUBufferUsage` at module top le
 Register static geometry proxies with `rc.rt.setStatic(groupId, prims)`, moving ones with `setDynamic` (<= 64 primitives).
 `createDefaultModules()` (`modules.ts`) lists the factories (`create*Module` in the `index.ts` of atmosphere, terrain, vegetation, objects and rt) in the
 order the hooks run. No placeholder module ships; the dev pages only treat a module whose name ends in `-stub` as one to swap for a dev stand-in.
+
+## Post (post/index.ts)
+
+`PostProcessor.encode` runs: motion blur, TAAU (render size to output size, with history), exposure (histogram + reduce on the resolved image), bloom
+(resolved image), then one composite pass into the swapchain (lens and rolling-shutter resample, chromatic aberration, bloom mix, exposure ratio,
+vignette, sensor noise, tonemap, grade, video-link artifacts, dither, display encode). All cross-frame state lives in the stages; the orchestrator only
+decides whether history is valid (output resize, camera cut, a `capture()` re-encode of the same frame).
+
+- **Exposure** (`exposure.ts`, `shaders/post/histogram.wgsl`): two 64-bin log2-luminance histograms, ground (G-buffer depth > 0) and sky (depth 0, the
+  sky pass's pixels), weighted towards the centre and the ground. The sky bins above the ground's metered mean plus a margin are folded onto that level
+  before the trimmed mean and the highlight quantile are taken, so a dusk sky cannot set the exposure; with the ground out of frame the cap is off. The
+  persistent state is the total exposure in EV (pre-exposure x ratio), so a CPU pre-exposure change never looks like a scene change, and the metering
+  never sees the ratio it produces. In the dark the CPU's astronomical luminance estimate replaces the metered mean.
+- **Exposure ratio buffer**: 32 bytes, 8 floats, `STORAGE | UNIFORM | COPY_SRC`: `[0]` ratio (multiplies the resolved image), `[1]` sensor gain over the
+  daylight reference in EV (drives sensor noise and the tonemap's day or night toe), `[2]` metered mean EV, `[3]` total exposure EV, `[4]` highlight knee
+  (scene-linear after the ratio, 1e12 = off), `[5]` roll-off strength 0..1, `[6..7]` spare. Composite binds it as a 32-byte uniform.
+- **Tonemap** (`tonemap.wgsl`): a filmic curve on luminance only, so the colour keeps its chromaticity (hue-preserving), with a hyperbolic knee on
+  chroma that stops the brightest channel sitting on white, and `compressHighlights`: luminance above the reported knee loses stops, so a dusk sky keeps
+  its gradient below the clip. The knee follows the sky-over-ground gap (none under a daylight sky) and is off in the dark and when the camera looks up.
 
 ## Dev entries and screenshots
 

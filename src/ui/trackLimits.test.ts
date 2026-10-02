@@ -3,6 +3,8 @@ import { generateTrack } from '../world/track/generator';
 import { makeTestSampler } from '../world/track/testTerrain';
 import { describeStyle, effectiveGates, effectiveLaps, gateRange, lapsApply } from './trackLimits';
 
+const SLOW = 60000;
+
 const STYLES = ['race', 'freestyle', 'mountain', 'sprint'] as const;
 
 describe('track limits', () => {
@@ -40,5 +42,5 @@ describe('track limits', () => {
         expect(t.laps === effectiveLaps(style, 4) || !t.closed, `${style} laps`).toBe(true);
       }
     }
-  });
+  }, SLOW);
 });

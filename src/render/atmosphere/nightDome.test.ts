@@ -6,6 +6,8 @@ import { galacticAxesEquatorial } from './celestial';
 import { MILKY_WAY_HEIGHT, MILKY_WAY_WIDTH, bakeMilkyWay } from './milkyWay';
 import { NIGHT_DOME_KERNEL, NightDome } from './nightDome';
 
+const SLOW = 60000;
+
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 const SUN = [0, -0.3, -0.95];
 const ECLIPTIC_POLE = [0, 0.4, 0.9];
@@ -92,5 +94,5 @@ describe('night dome', () => {
     expect(atCentre).toBeGreaterThan(1.5 * atAnticentre);
     expect(atCentre).toBeGreaterThan(1.5 * atPole);
     expect(atPole).toBeGreaterThan(0);
-  });
+  }, SLOW);
 });

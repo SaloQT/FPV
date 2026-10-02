@@ -3,8 +3,12 @@
  * Headless verification harness: starts Vite (unless --url is given), opens the app in Chromium with software
  * WebGPU (SwiftShader), waits for window.__fpv.ready, prints console errors and a JSON stats report, saves a PNG.
  *
- *   node tools/shot.mjs --query "seed=7&t=12" --out shots/noon.png --size 960x540 --wait 20000
+ *   node tools/shot.mjs --query "seed=7&t=12" --out shots/noon.png --size 960x540 --wait 300000
  *   node tools/shot.mjs --eval "window.__fpv.stats" --keys "w:1500,d:500"   (hold keys for ms while running)
+ *
+ * Options: --query <params> app query string   --out <png>   --size WxH   --wait <ms> time to reach __fpv.ready (default 60000; software WebGPU
+ *          needs minutes at 960x540, so pass 300000)   --settle <ms> pause before the screenshot (default 1500)   --url <base> use a running server
+ *          --port <n> Vite port   --verbose also print console logs   Environment: CHROME_BIN is the browser executable (default: the container's Chromium).
  *
  * Exit code 1 if the page throws, logs console.error, or never becomes ready. SwiftShader is ~1000x slower than a
  * real GPU: judge correctness and image content here, never performance.

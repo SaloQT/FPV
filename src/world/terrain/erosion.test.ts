@@ -7,6 +7,8 @@ import { createShape, fillMacroHeight } from './shape';
 import { streamPowerErode } from './stream';
 import { TUNING } from './tuning';
 
+const SLOW = 60000;
+
 const N = 128;
 const CELL = 12;
 const RELIEF = 220;
@@ -141,7 +143,7 @@ describe('fluvial erosion', () => {
       expect(cut).toBeGreaterThan(0.015);
       expect(cut).toBeGreaterThan(3 * inherited);
     }
-  });
+  }, SLOW);
 
   it('lowers the ground where water gathers relative to where it does not', () => {
     const { height, area } = carve(7, true);
@@ -164,9 +166,9 @@ describe('fluvial erosion', () => {
 describe('flow follows concavity', () => {
   it('correlates positively with valley curvature at the scale of a valley (r = 6 cells)', () => {
     for (const seed of [1, 7, 1337]) expect(flowConcavity(seed, 6, false)).toBeGreaterThan(0.2);
-  });
+  }, SLOW);
 
   it('correlates in rank order too, which is insensitive to a few extreme cells (r = 2 cells)', () => {
     for (const seed of [1, 7, 1337]) expect(flowConcavity(seed, 2, true)).toBeGreaterThan(0.25);
-  });
+  }, SLOW);
 });

@@ -31,7 +31,7 @@ struct Grade {
 // day*: the camera's wide-dynamic-range shadow lift. With the sensor gain under dayGainLo (EV over the daylight reference) the toe of the curve
 // is dayToe instead of 0.03 (deep shade reads about 2x brighter) and preScale falls to dayPreScale so the mid-tones and the sky stay put (grass at
 // 0.26 scene-linear lands on the same code with either pair); it fades out by dayGainHi, because lifting shadows amplifies noise and a night camera
-// (up to +20 EV) keeps the curve it was tuned with. The fade is long (4.5 to 16 EV) so that civil twilight (gain ~9-11) keeps a good part of the lift
+// (up to +22.8 EV) keeps the curve it was tuned with. The fade is long (4.5 to 16 EV) so that civil twilight (gain ~9-11) keeps a good part of the lift
 // where the key falls and the ground is dim; a full moon (gain ~15) is already back on the night curve.
 // hl*: the highlight roll-off of a wide-dynamic-range camera. Luminance above the knee (given per frame, see `tonemap`) loses stops: the slope is 1 at
 // the knee and falls to hlSlope over about hlSoft stops, so a dusk sky 6 stops over the ground keeps its gradient and its hue below the clip.

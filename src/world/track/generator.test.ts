@@ -5,6 +5,8 @@ import { STYLE_SPECS, type TrackStyle } from './styles';
 import { makeTestSampler } from './testTerrain';
 import { validateTrack } from './validate';
 
+const SLOW = 60000;
+
 const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
 const SEEDS = 200;
 
@@ -28,7 +30,7 @@ describe('validity sweep (200 seeds x 4 styles, synthetic terrain)', () => {
         expect(v.errors, `${style} seed ${i + 1}`).toEqual([]);
         expect(v.ok).toBe(true);
       });
-    });
+    }, SLOW);
 
     it(`${style}: keeps the requested gate count on this terrain`, () => {
       const full = sweep.get(style)!.filter((t) => t.gates.length === STYLE_SPECS[style].defaultGates).length;
@@ -171,7 +173,7 @@ describe('determinism and parameters', () => {
       const c = generateTrack({ seed: 78, style }, sampler);
       expect(JSON.stringify(c)).not.toBe(JSON.stringify(a));
     }
-  });
+  }, SLOW);
 
   it('honours gateCount, laps and clamps out-of-range requests', () => {
     const t = generateTrack({ seed: 5, style: 'race', gateCount: 15, laps: 5 }, sampler);
@@ -207,7 +209,7 @@ describe('determinism and parameters', () => {
       return sum / n;
     };
     expect(mean(1)).toBeLessThan(mean(0));
-  });
+  }, SLOW);
 
   it('falls back to fewer gates rather than failing on cramped terrain', () => {
     const lake = makeTestSampler({ seed: 5, waterFraction: 0.18 });

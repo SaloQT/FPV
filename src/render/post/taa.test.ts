@@ -98,6 +98,13 @@ describe('taa pure maths', () => {
     expect(taauSrc).toContain('dropNan(textureSampleLevel(inputTex, linSamp');
     expect(taauSrc).toContain('0x7fffffffu');
   });
+
+  it('scales only the sky pixels of the resolved image by skyScale and keeps the history unscaled, so the blend never mixes two scales', () => {
+    expect(taauSrc).toMatch(/textureStore\(outResolved, gid\.xy, vec4f\(outC \* mix\(1\.0, taa\.skyScale, skyKw \/ max\(wSum, 1e-9\)\), 1\.0\)\);/);
+    expect(taauSrc).toContain('textureStore(outHist, gid.xy, vec4f(outC, storeW));');
+    expect(taauSrc).toContain('select(1.0, taa.skyScale, z <= 0.0)');
+    expect(taauSrc.match(/skyScale/g)!.length).toBe(3);
+  });
 });
 
 /** CPU mirror of the shader's 3x3 gather along one axis / two axes (weights only depend on the sample-to-pixel distance). */
@@ -244,6 +251,7 @@ describe('createTaaStage (recorded fake device)', () => {
     expect(resetFlag(0)).toBe(1);
     expect(resetFlag(1)).toBe(0);
     expect(new Float32Array(rec.writes[1].data.buffer)[0]).toBe(2);
+    expect(new Float32Array(rec.writes[1].data.buffer)[2]).toBe(1);
     expect(rec.pipelines).toEqual(['main', 'main']);
     expect(rec.dispatches[0]).toEqual([8, 4]);
   });

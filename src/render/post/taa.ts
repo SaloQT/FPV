@@ -1,4 +1,5 @@
 import type { FrameInfo, RenderContext } from '../contracts';
+import { nightSkyScale } from './exposure';
 import type { OutSize, PostFlags, PostParams, TaaStage } from './types';
 
 /**
@@ -157,6 +158,7 @@ export function createTaaStage(): TaaStageDev {
       const temporal = useHistory(flags, historyValid);
       uniformF32[0] = historyRescale(p.preExposure, p.prevPreExposure);
       uniformU32[1] = temporal ? 0 : 1;
+      uniformF32[2] = nightSkyScale(p.preExposure);
       device.queue.writeBuffer(uniform, 0, uniformBytes);
       const pass = enc.beginComputePass({ label: flags.taa ? 'taau' : 'taa off upsample' });
       pass.setPipeline(flags.taa ? taaPipeline : upsamplePipeline);

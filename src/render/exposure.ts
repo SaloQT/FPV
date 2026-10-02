@@ -3,8 +3,11 @@ import type { AstroState } from '../contracts';
 export const SUN_TOA_LUX = 1.27e5;
 export const STARLIGHT_FLOOR_NITS = 3e-5;
 const MIN_PRE = 1e-6;
-/** A starlit night needs a total exposure of ~50 per nit, so the clamp sits at 1 / (4 * 2.5e-4 nits); fp16 holds 60000 / 1000 nits of HDR. */
-export const MAX_PRE = 1e3;
+/**
+ * The clamp must sit above the pre-exposure of the starlight floor (0.25 / 3e-5 nits = 8300): the post exposure derives the scene luminance from it, so a lower
+ * clamp makes every moonless night look 2.5e-4 nits bright to the camera and caps its gain there. The HDR targets are guarded against fp16 overflow (60000).
+ */
+export const MAX_PRE = 1e4;
 /** The scene-linear value the CPU pre-exposure gives a surface of the estimated luminance (a 0.18 grey card under the estimated light). */
 export const CPU_EXPOSURE_KEY = 0.25;
 

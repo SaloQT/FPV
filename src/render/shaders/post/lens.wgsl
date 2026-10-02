@@ -31,20 +31,31 @@ fn rollingShift(uv : vec2f, size : vec2f, omega : vec3f, focalPx : f32, readout 
   return clamp(d, vec2f(-lim), vec2f(lim));
 }
 
+// One-pixel anti-aliased edge of the image; 1 everywhere inside, so the identity lens never darkens a border pixel.
+fn lensMask(uv : vec2f, size : vec2f) -> f32 {
+  let d = (vec2f(0.5) - abs(uv - 0.5)) * size + 0.5;
+  return saturate(d.x) * saturate(d.y);
+}
+
 struct LensCoords {
   g : vec2f,
   r : vec2f,
   b : vec2f,
   rad : f32,
+  edge : vec3f,
 };
 
 // Lateral chromatic aberration: red magnified and blue shrunk about the centre, growing with r^3 so it is zero on axis.
 // caRel = edge displacement in pixels / half diagonal in pixels.
+// `edge` (the per-channel image-edge mask) is taken before the rolling-shutter and jello shift: that shift only slides the edge-clamped image,
+// so a fast turn can never bring in black rows or columns, and only the lens itself (chromatic aberration at the rim) can darken a border pixel.
 fn lensCoords(uv : vec2f, size : vec2f, k : vec3f, shiftPx : vec2f, caRel : f32) -> LensCoords {
   let u = lensUndistort(uv, size, k.x, k.y, k.z);
   let g = u.xy - shiftPx / size;
   let s = caRel * u.z * u.z;
-  return LensCoords(g, vec2f(0.5) + (g - 0.5) * (1.0 + s), vec2f(0.5) + (g - 0.5) * (1.0 - s), u.z);
+  let c = u.xy - 0.5;
+  let edge = vec3f(lensMask(vec2f(0.5) + c * (1.0 + s), size), lensMask(u.xy, size), lensMask(vec2f(0.5) + c * (1.0 - s), size));
+  return LensCoords(g, vec2f(0.5) + (g - 0.5) * (1.0 + s), vec2f(0.5) + (g - 0.5) * (1.0 - s), u.z, edge);
 }
 
 // cos^4 natural falloff (a = tan of the field angle, roughly r / 2 for a wide FPV lens) times a mechanical barrel cut-off.
@@ -55,8 +66,3 @@ fn lensVignette(rad : f32, strength : f32) -> f32 {
   return mix(1.0, nat * mech, strength);
 }
 
-// One-pixel anti-aliased edge of the image; 1 everywhere inside, so the identity lens never darkens a border pixel.
-fn lensMask(uv : vec2f, size : vec2f) -> f32 {
-  let d = (vec2f(0.5) - abs(uv - 0.5)) * size + 0.5;
-  return saturate(d.x) * saturate(d.y);
-}

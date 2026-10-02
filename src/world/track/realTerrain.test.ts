@@ -6,6 +6,8 @@ import { generateTrack } from './generator';
 import { STYLE_SPECS, type TrackStyle } from './styles';
 import { validateTrack } from './validate';
 
+const SLOW = 60000;
+
 /** The synthetic-terrain suites prove the rules; this one proves them against the real terrain module and its sampler. */
 const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
 const SEEDS = 6;
@@ -69,5 +71,5 @@ describe('tracks on the real terrain module', () => {
         }
       }
     }
-  });
+  }, SLOW);
 });

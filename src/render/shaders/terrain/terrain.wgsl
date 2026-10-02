@@ -91,6 +91,15 @@ fn fs(in : VsOut) -> FsOut {
   ctx.footprint = max(length(dx), length(dy));
   ctx.planes = (tp.flags & 1u) != 0u && ts.normal.y < 0.85;
 
+  // Turf: the blades' own tuft and swath tone plus a streak field, both world-anchored and filtered by the pixel footprint (fades to the
+  // mean as a feature nears a pixel), so the sward keeps its tone and sheen past the last blade and cannot shimmer.
+  var turfTone = vec3f(1.0);
+  var streak = 0.0;
+  if (lw.lo.x + lw.lo.y > 0.03 * total) {
+    turfTone = grassClumpTone(w.xz, fpXZ);
+    streak = grassStreak(w.xz, dx.xz, dy.xz);
+  }
+
   var albedo = vec3f(0.0);
   var rough = 0.0;
   var cavity = 0.0;
@@ -104,8 +113,14 @@ fn fs(in : VsOut) -> FsOut {
       let d = dsLayerDetail(lid[k], ctx);
       let p = lwt[k] * (0.45 + 1.1 * d.height);
       let b = p * p * p;
-      albedo += b * layerMacroColor(lid[k], w.xz, w.y, maps) * d.tone;
-      rough += b * d.rough;
+      var tone = d.tone;
+      var r = d.rough;
+      if (lid[k] <= GL_HAY) {
+        tone *= turfTone * (1.0 + GT_STREAK_AMP * streak);
+        r -= 0.07 * streak;
+      }
+      albedo += b * layerMacroColor(lid[k], w.xz, w.y, maps) * tone;
+      rough += b * r;
       cavity += b * d.ao;
       dn += b * d.dn;
       bsum += b;

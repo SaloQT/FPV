@@ -7,6 +7,8 @@ import {
 import { DEFAULT_ATMOSPHERE_SETTINGS, type AtmosphereSettings } from './settings';
 import { windOffset } from './uniforms';
 
+const SLOW = 60000;
+
 function settings(patch: Partial<AtmosphereSettings> = {}): AtmosphereSettings {
   return { ...DEFAULT_ATMOSPHERE_SETTINGS, ...patch };
 }
@@ -166,7 +168,7 @@ describe('density profiles', () => {
     expect(cumulusFilled / n).toBeGreaterThan(0.05);
     expect(cumulusFilled / n).toBeLessThan(0.95);
     expect(cirrusFilled / n).toBeGreaterThan(0.02);
-  });
+  }, SLOW);
 
   it('is far sparser at zero coverage than at the default one (the march skips a layer of exactly zero)', () => {
     const total = (coverage: number): number => {

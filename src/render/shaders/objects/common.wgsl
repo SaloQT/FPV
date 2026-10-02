@@ -21,7 +21,7 @@ struct Surf {
 };
 
 // Total exposure (pre-exposure x exposure ratio) at the camera's full night gain: 2^(maxGainEv + DAY_TOTAL_EV) in post/exposure.ts, kept equal by a test.
-const NIGHT_TOTAL_EXPOSURE : f32 = 64.0;
+const NIGHT_TOTAL_EXPOSURE : f32 = 365.1;
 
 // Display level (after exposure, 1 = clipping) the core of an LED glow may reach for an emissive strength; mirrored in objects/ledGlow.ts.
 fn ledDisplay(strength : f32) -> f32 {
