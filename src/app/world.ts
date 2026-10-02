@@ -30,8 +30,9 @@ export interface TrackRequest {
 }
 
 export interface WorldRequest extends TrackRequest {
-  /** Seed of the terrain; the track seed is `seed` too on a fresh world. */
   quality: RenderQuality;
+  /** Seed of the terrain when it is not the track seed (a share link to a track that came from the N key); default `seed`. */
+  terrainSeed?: number;
 }
 
 export interface TrackResult {
@@ -41,6 +42,8 @@ export interface TrackResult {
   style: TrackStyle;
   /** Generator calls made, including the successful one. */
   attempts: number;
+  /** The exact parameters the generator was called with for `track` (after the retries): what a share link must carry to rebuild it. */
+  request: TrackRequest;
 }
 
 export interface World extends TrackResult {
@@ -77,7 +80,7 @@ export function buildTrack(sampler: TerrainSampler, req: TrackRequest, deps: Pic
       const made = deps.generateTrack({ seed: a.seed, style: a.style, gateCount: req.gateCount, laps: req.laps, difficulty: req.difficulty }, sampler);
       // The laps setting is for circuits: on a point-to-point track the timer would send the pilot back to gate 0 for every extra lap.
       const track = made.closed || made.laps <= 1 ? made : { ...made, laps: 1 };
-      return { track, seed: a.seed, style: a.style, attempts };
+      return { track, seed: a.seed, style: a.style, attempts, request: { seed: a.seed, style: a.style, gateCount: req.gateCount, laps: req.laps, difficulty: req.difficulty } };
     } catch (e) {
       failures.push(`${a.style}/${a.seed}: ${(e as Error).message}`);
     }
@@ -90,14 +93,15 @@ export function buildTrack(sampler: TerrainSampler, req: TrackRequest, deps: Pic
 /** Terrain (worker-generated, main-thread fallback inside `generateTerrain`) plus track, with fallbacks down to a new terrain. */
 export async function buildWorld(req: WorldRequest, deps: WorldDeps, onProgress?: ProgressFn): Promise<World> {
   let lastError: unknown = null;
+  const baseSeed = req.terrainSeed ?? req.seed;
   for (let t = 0; t < TERRAIN_ATTEMPTS; t++) {
-    const terrainSeed = req.seed + t * TERRAIN_SEED_STEP;
+    const terrainSeed = baseSeed + t * TERRAIN_SEED_STEP;
     const terrain = await deps.generateTerrain({ seed: terrainSeed, quality: req.quality }, (stage, f) => onProgress?.(stage, f * 0.9));
     const sampler = deps.createSampler(terrain);
     try {
       onProgress?.('Placing track', 0.92);
       const res = buildTrack(sampler, { ...req, seed: req.seed + t * TERRAIN_SEED_STEP }, deps);
-      return { ...res, terrain, sampler, terrainSeed, baseSeed: req.seed, quality: req.quality };
+      return { ...res, terrain, sampler, terrainSeed, baseSeed, quality: req.quality };
     } catch (e) {
       lastError = e;
       console.warn(`world: terrain ${terrainSeed} has no valid track, regenerating terrain`, e);

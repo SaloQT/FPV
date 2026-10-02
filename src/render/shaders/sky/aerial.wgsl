@@ -33,7 +33,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       lum += thr * dL;
       thr *= sun.trans;
     }
-    textureStore(outTex, vec3i(i32(gid.x), i32(gid.y), i32(k)), vec4f(lum, (thr.x + thr.y + thr.z) * (1.0 / 3.0)));
+    textureStore(outTex, vec3i(i32(gid.x), i32(gid.y), i32(k)), vec4f(min(lum, vec3f(FP16_STORE_MAX)), (thr.x + thr.y + thr.z) * (1.0 / 3.0)));
     dPrev = d;
   }
 }

@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "stars": "python3 tools/build_stars.py $HYG_CSV public/data/stars.bin 8.0",
-    "shot": "node tools/shot.mjs"
+    "shot": "node tools/shot.mjs",
+    "bench": "node tools/bench.mjs"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.74",

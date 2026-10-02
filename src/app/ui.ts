@@ -32,8 +32,6 @@ export interface AppUi {
   onFinish: ((choice: FinishChoice) => void) | null;
   /** A short message (world rebuild failed, ...); replaces the previous one and fades after a few seconds. */
   notice(text: string, isError?: boolean): void;
-  /** A fatal panel: the app stopped and says why. */
-  fatal(title: string, detail: string): void;
 }
 
 export interface UiHandlers {
@@ -51,25 +49,6 @@ export function menuPresets(): MenuPreset[] {
 }
 
 const NOTICE_MS = 5000;
-/** No `display` here: an inline display would override the `hidden` attribute; `fillMessage` sets it when the panel is shown. */
-const FATAL_CSS = 'position:fixed;inset:0;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;font:16px system-ui,sans-serif;color:#fff;background:rgba(10,12,16,.92);pointer-events:auto;z-index:60';
-
-function fillMessage(panel: HTMLElement, title: string, detail: string): void {
-  const t = document.createElement('h2');
-  t.textContent = title;
-  const p = document.createElement('p');
-  p.textContent = detail;
-  p.style.cssText = 'max-width:640px;opacity:.85;white-space:pre-wrap';
-  panel.replaceChildren(t, p);
-  panel.style.display = 'flex';
-  panel.hidden = false;
-}
-
-/** A full-screen message for problems before the UI exists (no WebGPU, the renderer could not start). */
-export function showMessage(root: HTMLElement, title: string, detail: string): void {
-  const panel = (root.querySelector('#fpv-fatal') as HTMLElement | null) ?? box(root, 'fpv-fatal', FATAL_CSS);
-  fillMessage(panel, title, detail);
-}
 
 function box(root: HTMLElement, id: string, css: string): HTMLDivElement {
   const d = document.createElement('div');
@@ -87,8 +66,7 @@ export function createUi(root: HTMLElement, osdCanvas: HTMLCanvasElement, settin
   const menu = new MenuUI({ root, settings, presets: menuPresets(), gamepad, onChange: h.onChange, onAction: h.onAction, options });
   const help = new HelpOverlay({ root });
   const perf = new PerfOverlay({ root, source: h.perfSource });
-  const toast = box(root, 'fpv-notice', 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(90vw,720px);padding:8px 14px;border-radius:6px;font:14px system-ui,sans-serif;color:#fff;background:rgba(20,24,30,.85);pointer-events:none;z-index:40');
-  const fatal = box(root, 'fpv-fatal', FATAL_CSS);
+  const toast = box(root, 'fpv-notice', 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(90vw,720px);padding:8px 14px;border-radius:6px;font:14px system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.7);background:rgba(20,24,30,.85);pointer-events:none;z-index:40');
   let timer = 0;
   const hud = createHudModel();
   hud.sticksEnabled = options.get().showSticks;
@@ -106,9 +84,6 @@ export function createUi(root: HTMLElement, osdCanvas: HTMLCanvasElement, settin
       toast.hidden = false;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => { toast.hidden = true; }, NOTICE_MS);
-    },
-    fatal(title, detail) {
-      fillMessage(fatal, title, detail);
     },
   };
   return ui;

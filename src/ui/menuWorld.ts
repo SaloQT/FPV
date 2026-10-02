@@ -4,14 +4,13 @@ import { ControlGroup, rowFor, type BuiltControl, type ControlHost } from './men
 import { slider, percent, type Control } from './menuSchema';
 import { buildOptionToggle } from './menuExtras';
 import { TRACK_SETUP } from './menuTabs';
-import { parseSeed, randomSeed, shareUrl } from './seedModel';
+import { parseSeed, randomSeed, seedFieldText, seedNumberNote } from './seedModel';
+import { shareButton } from './shareLink';
 import type { AppSettings } from './settingsSchema';
 import { describeStyle, effectiveGates, effectiveLaps, gateRange, lapsApply } from './trackLimits';
 import { TrackPreview } from './trackPreview';
 import type { PreviewState } from './trackPreviewModel';
 import './flow.css';
-
-const COPIED_MS = 1600;
 
 /** Same text field the world seed has always been, but it takes words too, and sits next to the buttons that pick or share one. */
 function seedRow(host: ControlHost): BuiltControl {
@@ -29,18 +28,26 @@ function seedRow(host: ControlHost): BuiltControl {
   const dice = el('button', 'fpv-btn fpv-btn--small', 'Random');
   dice.type = 'button';
   dice.setAttribute('aria-label', 'Random seed');
-  const copy = el('button', 'fpv-btn fpv-btn--small', 'Copy link');
-  copy.type = 'button';
-  copy.title = 'Copies a link that opens this exact world';
-  const hint = el('p', 'fpv-hint', 'The same seed builds the same terrain and track.');
+  const note = el('output', 'fpv-seed-number', '');
+  note.htmlFor = id;
+  const hint = el('p', 'fpv-hint', note, 'The same seed builds the same terrain and track.');
   hint.id = `${id}-hint`;
-  const root = el('div', 'fpv-world-seed', el('div', 'fpv-world-line', label, input, dice, copy), hint);
-  let timer = 0;
+  const root = el('div', 'fpv-world-seed', el('div', 'fpv-world-line', label, input, dice, shareButton(host, 'Copy link')), hint);
+  // The settings only hold the number; the word that produced it stays in the field while it still names that seed.
+  let typed = '';
 
-  const show = (): void => { input.value = String(host.settings().seed); };
+  const show = (): void => {
+    const seed = host.settings().seed;
+    input.value = seedFieldText(typed, seed);
+    const n = seedNumberNote(input.value, seed);
+    setText(note, n.length > 0 ? `${n}. ` : '');
+  };
   input.addEventListener('change', () => {
     const seed = parseSeed(input.value);
-    if (seed !== null) host.change({ seed });
+    if (seed !== null) {
+      typed = input.value;
+      host.change({ seed });
+    }
     show();
   });
   input.addEventListener('keydown', (e) => {
@@ -50,37 +57,7 @@ function seedRow(host: ControlHost): BuiltControl {
     host.change({ seed: randomSeed() });
     show();
   });
-  copy.addEventListener('click', () => {
-    const url = shareUrl(host.shareBase(), host.settings());
-    void copyText(url).then((ok) => {
-      setText(copy, ok ? 'Copied' : 'Copy failed');
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => setText(copy, 'Copy link'), COPIED_MS);
-    });
-  });
   return { root, sync: () => { if (document.activeElement !== input) show(); } };
-}
-
-/** The clipboard API needs a secure page; the textarea route covers plain http on a LAN. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const area = el('textarea');
-    area.value = text;
-    area.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    return ok;
-  }
 }
 
 /** A slider whose range and availability follow the track style: the generator clamps gates per style and flies laps only on circuits. */

@@ -50,6 +50,15 @@ describe('buildTrack', () => {
     expect(r.track.gates).toHaveLength(9);
   });
 
+  it('records the exact parameters of the layout that fit, for a share link to rebuild it', () => {
+    const g = generator((_p, call) => call >= 3);
+    const r = buildTrack(sampler, REQ, { generateTrack: g.fn });
+    expect(r.request).toEqual({ seed: 102, style: 'race', gateCount: 9, laps: 2, difficulty: 0.4 });
+    const again = buildTrack(sampler, r.request, { generateTrack: generator(() => true).fn });
+    expect(again.attempts).toBe(1);
+    expect(again.track.seed).toBe(102);
+  });
+
   it('keeps the lap count on a circuit and runs a point-to-point track once', () => {
     const laps = (closed: boolean) => buildTrack(sampler, REQ, { generateTrack: (p) => makeTrack(4, { seed: p.seed, style: p.style, laps: p.laps ?? 1, closed }) }).track.laps;
     expect(laps(true)).toBe(2);
@@ -145,6 +154,17 @@ describe('buildWorld', () => {
     expect(w.seed).toBe(100 + 1000003);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it('builds the track seed on a terrain seed of its own (a link to an N-key track)', async () => {
+    const { deps, terrains, gen } = makeDeps(() => true);
+    const w = await buildWorld({ ...REQ, seed: 105, terrainSeed: 100, quality: 'low' }, deps);
+    expect(terrains).toEqual([{ seed: 100, quality: 'low' }]);
+    expect(gen[0].seed).toBe(105);
+    expect(w.terrainSeed).toBe(100);
+    expect(w.baseSeed).toBe(100);
+    expect(w.seed).toBe(105);
+    expect(w.request.seed).toBe(105);
   });
 
   it('gives up with the last error after TERRAIN_ATTEMPTS terrains', async () => {

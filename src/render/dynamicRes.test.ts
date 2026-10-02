@@ -7,6 +7,9 @@ function run(c: DynamicResolutionController, frames: number, gpuMs: number | nul
   return s;
 }
 
+/** A failed up-probe may cost at most this many missed refreshes: PROBE_MISSES of the first few frames, plus a frame or two of lag. */
+const PROBE_FRAME_BUDGET = 8;
+
 describe('DisplayPeriodEstimator', () => {
   it('recovers the refresh period despite occasional short catch-up frames and long hitches', () => {
     const e = new DisplayPeriodEstimator();
@@ -18,6 +21,12 @@ describe('DisplayPeriodEstimator', () => {
     }
     expect(e.periodMs).toBeGreaterThan(6.9);
     expect(e.periodMs).toBeLessThan(7.3);
+  });
+
+  it('does not mistake a struggling device for a slow display: frames slower than 10 Hz are no estimate', () => {
+    const e = new DisplayPeriodEstimator();
+    for (let i = 0; i < 400; i++) e.push(300);
+    expect(e.periodMs).toBe(0);
   });
 
   it('ignores absurd samples (tab switch)', () => {
@@ -102,10 +111,101 @@ describe('DynamicResolutionController', () => {
     expect(c.scale).toBe(1);
   });
 
-  it('ignores invalid frame times', () => {
+  it('ignores frame times that are not positive numbers', () => {
     const c = new DynamicResolutionController();
     run(c, 100, 50, 0, 240);
-    run(c, 100, 50, 5000, 240);
+    run(c, 100, 50, -3, 240);
+    run(c, 100, 50, NaN, 240);
+    expect(c.scale).toBe(1);
+  });
+});
+
+describe('DynamicResolutionController stalls (frames longer than a second)', () => {
+  it('a tab that was in the background for a minute (one huge frame) does not move the scale', () => {
+    const gpu = new DynamicResolutionController();
+    run(gpu, 400, 2, 4.17, 240);
+    gpu.update(2, 60000, 240, true);
+    run(gpu, 400, 2, 4.17, 240);
+    expect(gpu.scale).toBe(1);
+    const frame = new DynamicResolutionController();
+    run(frame, 400, null, 4.17, 240);
+    frame.update(null, 60000, 240, true);
+    run(frame, 400, null, 4.17, 240);
+    expect(frame.scale).toBe(1);
+  });
+
+  it('a device under 1 fps still reduces the resolution, with GPU timing', () => {
+    const c = new DynamicResolutionController();
+    let frames = 0;
+    while (c.scale > SCALE_STEPS[SCALE_STEPS.length - 1] && frames < 200) {
+      c.update(900 * c.scale * c.scale, 1300 * c.scale * c.scale, 60, true);
+      frames++;
+    }
+    expect(c.scale).toBe(SCALE_STEPS[SCALE_STEPS.length - 1]);
+    // About a second a frame: it has to get there in minutes, not hours.
+    expect(frames).toBeLessThan(60);
+  });
+
+  it('a device under 1 fps still reduces the resolution, from frame times alone', () => {
+    const c = new DynamicResolutionController();
+    let frames = 0;
+    while (c.scale > SCALE_STEPS[SCALE_STEPS.length - 1] && frames < 200) {
+      c.update(null, 1200 + 400 * c.scale, 60, true);
+      frames++;
+    }
+    expect(c.scale).toBe(SCALE_STEPS[SCALE_STEPS.length - 1]);
+    expect(frames).toBeLessThan(60);
+  });
+
+  it('a very long GPU time is capped, not trusted blindly: it still steps down but never past the last step', () => {
+    const c = new DynamicResolutionController();
+    run(c, 500, 600000, 700000, 60);
+    expect(c.scale).toBe(SCALE_STEPS[SCALE_STEPS.length - 1]);
+  });
+});
+
+describe('DynamicResolutionController frame-time probing', () => {
+  /** Full resolution cannot make the refresh (9.5 ms of GPU work vs a 6.94 ms period); every step below it can. */
+  function failingProbes(seconds: number): { probes: number; missedFrames: number; missedPerProbe: number[] } {
+    const c = new DynamicResolutionController();
+    c.setMeasuredRefreshHz(144);
+    const period = 1000 / 144;
+    let t = 0, last = c.scale, probes = 0, missedFrames = 0, missesThisProbe = 0;
+    const missedPerProbe: number[] = [];
+    while (t < seconds * 1000) {
+      const frame = Math.max(period, 9.5 * c.scale * c.scale);
+      t += frame;
+      if (frame > period * 1.3) { missedFrames++; missesThisProbe++; }
+      const s = c.update(null, frame, 144, true);
+      if (s < last && last === 1 && probes > 0) { missedPerProbe.push(missesThisProbe); }
+      if (s === 1 && last < 1) { probes++; missesThisProbe = 0; }
+      last = s;
+    }
+    return { probes, missedFrames, missedPerProbe };
+  }
+
+  it('a probe of a step that keeps failing is abandoned within a few frames', () => {
+    const r = failingProbes(1200);
+    expect(r.missedPerProbe.length).toBeGreaterThan(3);
+    for (const n of r.missedPerProbe) expect(n).toBeLessThanOrEqual(PROBE_FRAME_BUDGET);
+  });
+
+  it('the back-off grows: twenty minutes of a failing full resolution hold a handful of probes, not one a minute', () => {
+    const r = failingProbes(1200);
+    expect(r.probes).toBeLessThanOrEqual(10);
+    expect(r.probes).toBeGreaterThanOrEqual(5);
+    // Under a tenth of a percent of the frames missed (172,800 frames at 144 Hz).
+    expect(r.missedFrames / (1200 * 144)).toBeLessThan(0.001);
+  });
+
+  it('a probe that works is kept, and the back-off is forgotten after a quiet spell', () => {
+    const c = new DynamicResolutionController();
+    c.setMeasuredRefreshHz(144);
+    const period = 1000 / 144;
+    // Heavy scene first (full resolution fails), then a light one (everything fits).
+    for (let i = 0; i < 40 * 144; i++) c.update(null, Math.max(period, 9.5 * c.scale * c.scale), 144, true);
+    expect(c.scale).toBeLessThan(1);
+    for (let i = 0; i < 600 * 144; i++) c.update(null, period, 144, true);
     expect(c.scale).toBe(1);
   });
 });

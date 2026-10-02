@@ -19,7 +19,8 @@ const FIXED_DT = 1 / 60;
  * Sky dev page. Query: t=<ISO date-time, local clock unless it carries Z or an offset> tz=<hours east of UTC, default 2> lat lon alt(m)
  * az=<bearing deg from north> el=<deg> fov=<vertical deg> clouds=<0..1 cumulus cover> cirrus=<0..1> quality=low|medium|high|ultra
  * look=sun|moon|<planet name>|<star name: polaris dubhe sirius betelgeuse ...> (aims at that body instead of az/el) stars=0 mw=0 seed frames=<N or inf, default 8> scale=<render scale>
- * st=<start sim seconds> ev=<stops of exposure compensation> osd=0
+ * st=<start sim seconds> ev=<stops of exposure compensation> osd=0 sunel=<morning sun elevation deg, overrides t>
+ * __fpv.probeSky(elDeg, azFromSunDeg) renders looking there and returns the sky luminance [nits] and rgb [nits] at the image centre.
  */
 function readParams() {
   const q = new URLSearchParams(location.search);
@@ -37,6 +38,7 @@ function readParams() {
     quality: (quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high') as Settings['quality'],
     stars: q.get('stars') !== '0', mw: q.get('mw') !== '0', seed: num('seed', DEFAULT_SETTINGS.seed), frames, scale: num('scale', 1),
     startTime: num('st', 1000), osd: q.get('osd') !== '0', look: (q.get('look') ?? '').toLowerCase(), ev: num('ev', 0),
+    sunel: q.has('sunel') && q.get('sunel') !== '' && Number.isFinite(Number(q.get('sunel'))) ? Number(q.get('sunel')) : null,
   };
 }
 
@@ -58,6 +60,20 @@ function bodyDirection(name: string, astro: AstroState): Vec3 | null {
     return [m[0] * eq[0] + m[1] * eq[1] + m[2] * eq[2], m[3] * eq[0] + m[4] * eq[1] + m[5] * eq[2], m[6] * eq[0] + m[7] * eq[1] + m[8] * eq[2]];
   }
   return astro.planets.find((b) => b.name.toLowerCase() === name)?.dir ?? null;
+}
+
+/** Local time (ms) in the morning of the same solar day at which the sun stands `elDeg` above the horizon (bisection on the rising sun). */
+function timeForSunElevation(settings: Settings, elDeg: number): number {
+  const clock = new SimClock(settings);
+  const at = (hours: number): number => { clock.setTimeOfDay(hours); return clock.state().sunDir[1]; };
+  const target = Math.sin(elDeg * DEG);
+  let lo = 2, hi = 11.5;
+  for (let i = 0; i < 40; i++) {
+    const mid = 0.5 * (lo + hi);
+    if (at(mid) < target) lo = mid; else hi = mid;
+  }
+  clock.setTimeOfDay(0.5 * (lo + hi));
+  return clock.timeMs;
 }
 
 /** Rotation whose body -Z axis points along (target - pos) with world +Y as the up hint. */
@@ -193,6 +209,7 @@ export default async function run(canvas: HTMLCanvasElement): Promise<void> {
     ...DEFAULT_SETTINGS, quality: p.quality, dynamicResolution: false, renderScale: p.scale, timeMs: p.timeMs, timeScale: 0, seed: p.seed,
     observer: { latitudeDeg: p.lat, longitudeDeg: p.lon, altitudeM: p.alt },
   };
+  if (p.sunel !== null) settings.timeMs = timeForSunElevation(settings, p.sunel);
   const sky: Partial<AtmosphereSettings> = { starsEnabled: p.stars, milkyWayEnabled: p.mw };
   if (p.clouds !== null) sky.cloudCoverage = p.clouds;
   if (p.cirrus !== null) sky.cirrusCoverage = p.cirrus;
@@ -213,12 +230,27 @@ export default async function run(canvas: HTMLCanvasElement): Promise<void> {
   lookAtQuat(camera.quat, pos, target);
   const input: FrameInput = { dt: FIXED_DT, time: p.startTime, camera, astro, quad: null };
 
+  const sunAzDeg = Math.atan2(astro.sunDir[0], -astro.sunDir[2]) / DEG;
+  const probeSky = async (elDeg: number, azFromSunDeg: number): Promise<{ nits: number; rgb: number[]; preExposure: number }> => {
+    const a = (sunAzDeg + azFromSunDeg) * DEG, e = elDeg * DEG;
+    lookAtQuat(camera.quat, pos, [pos[0] + Math.sin(a) * Math.cos(e), pos[1] + Math.sin(e), pos[2] - Math.cos(a) * Math.cos(e)]);
+    await probe.read(renderer.device, renderer.stats.renderWidth, renderer.stats.renderHeight, () => renderer.render(input));
+    const cx = Math.floor(renderer.stats.renderWidth / 2), cy = Math.floor(renderer.stats.renderHeight / 2);
+    const rgb = [0, 0, 0];
+    let n = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++, n++) { const px = probe.pixel(cx + dx, cy + dy); for (let c = 0; c < 3; c++) rgb[c] += px[c]; }
+    const pre = renderer.stats.preExposure;
+    const nitsRgb = rgb.map((v) => v / n / pre);
+    return { nits: 0.2126 * nitsRgb[0] + 0.7152 * nitsRgb[1] + 0.0722 * nitsRgb[2], rgb: nitsRgb, preExposure: pre };
+  };
+
   let frame = 0;
   const publish = (): void => {
     window.__fpv = {
       ready: true, stats: renderer.stats, errors: renderer.errors, params: p, astro, atmosphere: atmosphere.getSettings(),
       hdrStats: () => probe.read(renderer.device, renderer.stats.renderWidth, renderer.stats.renderHeight, () => renderer.render(input)),
-      hdrPixel: probe.pixel,
+      hdrPixel: probe.pixel, probeSky,
+      sun: { elevationDeg: Math.asin(astro.sunDir[1]) / DEG, azimuthDeg: sunAzDeg },
       setAtmosphere: (s: Partial<AtmosphereSettings>) => atmosphere.setSettings(s),
     };
   };

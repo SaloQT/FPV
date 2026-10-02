@@ -7,7 +7,7 @@ import type { ProgressFn, TrackData } from '../contracts';
 import { generateTerrainAsync, createTerrainSampler } from '../world/terrain';
 import { generateTrack, trackColliders } from '../world/track';
 import type { AppSettings } from '../ui/settingsSchema';
-import { reportError, type AppCtx } from './state';
+import type { AppCtx } from './state';
 import type { PadGround } from './padGround';
 import type { WorldSettings } from './preview';
 import { buildTrack, buildWorld, type TrackRequest, type World, type WorldDeps } from './world';
@@ -20,8 +20,11 @@ export function sessionTrack(ground: PadGround, track: TrackData): TrackData {
   return { ...track, start: { pos: [track.start.pos[0], ground.padTop, track.start.pos[2]], yaw: track.start.yaw } };
 }
 
+/** Difficulty in whole percent, as a share link carries it, so a link rebuilds exactly the track that was generated. */
+const wholePercent = (d: number): number => Math.round(d * 100) / 100;
+
 export function trackRequest(s: Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty'>, seed: number = s.seed): TrackRequest {
-  return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: s.difficulty };
+  return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: wholePercent(s.difficulty) };
 }
 
 /** Wind from the settings into the model, then to physics and the render modules (objects and vegetation keep the arrays). */
@@ -125,12 +128,12 @@ export async function newWorld(ctx: AppCtx, fresh = false): Promise<boolean> {
 /** Same terrain, a track for the settings: waits one task first so a progress bar can paint before the generator runs. */
 export async function buildTrackOnly(world: World, s: WorldSettings): Promise<World> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  return { ...world, ...buildTrack(world.sampler, trackRequest(s), worldDeps) };
+  return { ...world, ...buildTrack(world.sampler, trackRequest(s, s.trackSeed ?? s.seed), worldDeps) };
 }
 
 /** New terrain and track for the settings, in the background: no overlay, the frame loop keeps running on the old world. */
 export function buildWorldQuietly(s: WorldSettings, progress: ProgressFn): Promise<World> {
-  return buildWorld({ ...trackRequest(s), quality: s.quality }, worldDeps, progress);
+  return buildWorld({ ...trackRequest(s, s.trackSeed ?? s.seed), terrainSeed: s.seed, quality: s.quality }, worldDeps, progress);
 }
 
 /** Puts a background-built world on screen between two frames; false (nothing done) while another rebuild owns the app. */
@@ -143,12 +146,4 @@ export function landWorld(ctx: AppCtx, world: World): boolean {
     ctx.busy = false;
   }
   return true;
-}
-
-/** Reports a boot-time or loop failure through every channel. */
-export function fail(ctx: AppCtx | null, title: string, e: unknown): void {
-  const msg = e instanceof Error ? `${e.message}` : String(e);
-  reportError(`${title}: ${msg}`);
-  if (e instanceof Error && e.stack) console.error(e.stack);
-  ctx?.ui.fatal(title, msg);
 }

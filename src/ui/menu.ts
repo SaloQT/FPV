@@ -7,6 +7,7 @@ import type { MenuAction, MenuPreset, TabId } from './menuSchema';
 import { SettingsPanel, type SettingsOrigin } from './menuSettings';
 import { StartPanel } from './menuStart';
 import { buildTabs } from './menuTabs';
+import { shareUrl, shareWorld, type ShareWorld } from './seedModel';
 import { PilotOptionsStore } from './pilotOptions';
 import { sanitizeSettings, type AppSettings } from './settingsSchema';
 import type { PreviewState } from './trackPreviewModel';
@@ -49,6 +50,7 @@ export class MenuUI {
   private origin: SettingsOrigin = 'pause';
   private frame = 0;
   private live: (() => LiveSky | null) | null = null;
+  private sharing: (() => ShareWorld | null) | null = null;
   private readonly options: PilotOptionsStore;
   private readonly clock = el('div', 'fpv-menu-clock');
   private readonly clockWhen = el('strong', 'fpv-menu-clock-time', '');
@@ -66,7 +68,7 @@ export class MenuUI {
       patchOptions: (patch) => this.options.patch(patch),
       onOptions: (fn) => this.options.subscribe(fn),
       live: () => this.live?.() ?? null,
-      shareBase: opts.shareBase ?? (() => location.href),
+      shareLink: () => shareUrl((opts.shareBase ?? (() => location.href))(), shareWorld(this.settings, this.sharing?.() ?? null)),
     };
     this.start = new StartPanel(host, opts.bindings ?? DEFAULT_BINDINGS, () => opts.onAction('start'), () => this.openSettings('start'));
     this.panel = new SettingsPanel(extendTabs(buildTabs(opts.presets), opts.presets), host, () => this.back());
@@ -95,6 +97,11 @@ export class MenuUI {
   /** Connects the running sim: the clock readouts and the time controls read the live sim time and sky from it. */
   setLive(live: (() => LiveSky | null) | null): void {
     this.live = live;
+  }
+
+  /** The world share links describe (terrain seed, the track's own seed and request); null falls back to the settings. */
+  setSharedWorld(world: (() => ShareWorld | null) | null): void {
+    this.sharing = world;
   }
 
   /** The track the start screen's map shows, or how far the next one is. */

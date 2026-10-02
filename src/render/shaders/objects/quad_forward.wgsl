@@ -2,7 +2,6 @@
 #include "objects/quad_bindings.wgsl"
 #include "common/atmosphere_sample.wgsl"
 
-const GLOW_MAX_DISPLAY : f32 = 1.2;
 const DISC_R : f32 = ${PROP_R} * 1.04;
 const DISC_ALBEDO : vec3f = vec3f(0.06, 0.057, 0.055);
 
@@ -95,8 +94,7 @@ fn lensGlint(dirCam : vec3f) -> f32 {
   if (in.id < 4u) {
     let led = quad.led[in.id];
     colour = led.rgb;
-    // Capped after pre-exposure: in the dark the exposure is huge, and an uncapped halo would clip to white instead of showing the LED colour.
-    shown = min(led.a * EMISSIVE_MAX_NITS * 0.35 * frame.params.y, GLOW_MAX_DISPLAY);
+    shown = glowShown(led.a, 1.0);
   } else {
     shown = lensGlint(normalize(frame.camPos.xyz - (quad.model * vec4f(quad.sprite[4].xyz, 1.0)).xyz));
   }

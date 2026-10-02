@@ -36,7 +36,7 @@ const LEAF_TRANSMIT : f32 = 2.2;
 // Light a leaf passes is shifted yellow-green: chlorophyll takes out blue and more red than green, so the transmitted spectrum is narrower than the reflected one.
 const TRANSMIT_TINT : vec3f = vec3f(1.1, 1.03, 0.78);
 // The lowest ambient factor of a leaf deep in a crown: sky light scattered and transmitted by the neighbouring leaves keeps shade foliage coloured, never black.
-const LEAF_AO_FLOOR : f32 = 0.6;
+const LEAF_AO_FLOOR : f32 = 0.7;
 const BARK_AO_FLOOR : f32 = 0.4;
 // Far-LOD canopy cards only show their sunlit faces, so they are painted a little darker to match the average of the full-detail crown.
 const BLOB_DARKEN : f32 = 0.78;
@@ -196,7 +196,7 @@ fn fs(in : VsOut) -> FsOut {
     translucency = min(v.leafTone.a * d.b * LEAF_TRANSMIT, 1.0);
     let occ = saturate1(in.shade.x * (0.55 + 0.45 * d.a));
     ao = mix(LEAF_AO_FLOOR, 1.0, occ);
-    col *= mix(vec3f(1.0), TRANSMIT_TINT, translucency * 0.5) * mix(0.8, 1.0, occ) * select(1.0, BLOB_DARKEN, cls >= CLASS_BLOB);
+    col *= mix(vec3f(1.0), TRANSMIT_TINT, translucency * 0.5) * mix(0.85, 1.0, occ) * select(1.0, BLOB_DARKEN, cls >= CLASS_BLOB);
   } else {
     let twig = in.shade.z > 0.004;
     let tan = uvTangents(dlx, dly, dux, duy);

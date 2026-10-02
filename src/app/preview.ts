@@ -8,6 +8,7 @@ import type { AppSettings } from '../ui/settingsSchema';
 import { effectiveGates, effectiveLaps } from '../ui/trackLimits';
 import { idlePreview, type PreviewState } from '../ui/trackPreviewModel';
 import type { ProgressFn } from '../contracts';
+import type { ShareWorld } from '../ui/seedModel';
 import type { World, WorldRequest } from './world';
 
 /** Settings that decide what world is built. */
@@ -17,11 +18,24 @@ export const WORLD_KEYS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSetti
 export const PREVIEW_DEBOUNCE_MS = 350;
 const RETRY_MS = 500;
 
-export type WorldSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'>;
+export type WorldSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'> & {
+  /** The track's own seed when it is not `seed` (a link to an N-key track); the terrain is always `seed`'s. */
+  trackSeed?: number;
+};
 
 /** Identifies the world a set of settings builds: a count or lap setting the style ignores does not make another world. */
 export function worldKey(s: WorldSettings): string {
-  return [s.seed, s.trackStyle, effectiveGates(s.trackStyle, s.gateCount), effectiveLaps(s.trackStyle, s.laps), s.difficulty.toFixed(3), s.quality].join('|');
+  return [s.seed, s.trackStyle, effectiveGates(s.trackStyle, s.gateCount), effectiveLaps(s.trackStyle, s.laps), s.difficulty.toFixed(3), s.quality, s.trackSeed ?? ''].join('|');
+}
+
+/**
+ * The world a share link describes, or null while the start screen is still building the one its settings ask for (the link then
+ * follows the settings). From the first flight on it is always the world on screen: the settings can be edited without rebuilding.
+ */
+export function shareableWorld(world: World, preview: PreviewState['status'], started: boolean): ShareWorld | null {
+  if (!started && (preview === 'working' || preview === 'error')) return null;
+  const r = world.request;
+  return { terrainSeed: world.terrainSeed, trackSeed: r.seed, style: r.style, gateCount: r.gateCount, laps: r.laps, difficulty: r.difficulty, quality: world.quality };
 }
 
 export interface PreviewDeps {
@@ -46,6 +60,7 @@ export class WorldPreview {
   private token = 0;
   private timer = -1;
   private state: PreviewState;
+  private trackSeed: number | undefined;
   /** Builds run one after another: a terrain worker cannot be cancelled, so a newer request waits for it instead of piling on. */
   private chain: Promise<void> = Promise.resolve();
 
@@ -61,7 +76,23 @@ export class WorldPreview {
   /** Call for every settings change; only the keys that decide the world start a build. */
   settingsChanged(changed: readonly (keyof AppSettings)[]): void {
     if (this.deps.locked() || !changed.some((k) => WORLD_KEYS.has(k))) return;
-    const s = this.deps.settings();
+    this.trackSeed = undefined;
+    this.schedule();
+  }
+
+  /** The page was opened from a share link whose track is not the one the world seed builds first: build that track on the same terrain. */
+  launch(trackSeed: number): void {
+    if (this.deps.locked()) return;
+    this.trackSeed = trackSeed;
+    this.schedule();
+  }
+
+  private settings(): WorldSettings {
+    return this.trackSeed === undefined ? this.deps.settings() : { ...this.deps.settings(), trackSeed: this.trackSeed };
+  }
+
+  private schedule(): void {
+    const s = this.settings();
     this.token++;
     this.cancelTimer();
     if (worldKey(s) === this.builtKey) {
@@ -78,7 +109,11 @@ export class WorldPreview {
 
   private async run(token: number): Promise<void> {
     if (token !== this.token) return;
-    const s = this.deps.settings();
+    if (this.deps.locked()) {
+      this.publish(idlePreview(this.deps.world().track));
+      return;
+    }
+    const s = this.settings();
     const key = worldKey(s);
     const current = this.deps.world();
     const sameTerrain = s.seed === current.baseSeed && s.quality === current.quality;

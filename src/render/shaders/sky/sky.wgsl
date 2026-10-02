@@ -13,7 +13,7 @@
 // MOON_REFERENCE_NITS highland patch ends at MOON_SCENE_PEAK in scene-linear units (a local-adaptation stand-in; all ratios inside the
 // disc, and so the maria, are preserved).
 //
-// Group 2: 0 AtmosParams, 1 sky-view (sun + night), 2 sky-view (moon only), 3 Milky Way map, 4 clouds (rgb nits / CLOUD_STORE_SCALE, a transmittance).
+// Group 2: 0 AtmosParams, 1 sky-view (sun + night, nits / skySunStoreScale()), 2 sky-view (moon only), 3 Milky Way map, 4 clouds (rgb nits / CLOUD_STORE_SCALE, a transmittance).
 #include "common/world_bindings.wgsl"
 #include "common/atmosphere_sample.wgsl"
 #include "sky/atmos_params.wgsl"
@@ -57,7 +57,7 @@ fn azimuthCosTo(dir : vec3f, light : vec3f) -> f32 {
 
 // Sun and moon scattering plus airglow from the LUTs. The moon's LUT is folded around the moon's own azimuth.
 fn skyLuts(dir : vec3f, r : f32) -> vec3f {
-  var c = textureSampleLevel(skySunTex, linearClamp, skyViewUv(dir, r), 0.0).rgb;
+  var c = textureSampleLevel(skySunTex, linearClamp, skyViewUv(dir, r), 0.0).rgb * skySunStoreScale();
   if (ap.flags.x > 0.5) {
     let uv = skyViewUvCos(dir.y, azimuthCosTo(dir, frame.moonDir.xyz), r);
     c += textureSampleLevel(skyMoonTex, linearClamp, uv, 0.0).rgb;

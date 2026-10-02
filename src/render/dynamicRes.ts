@@ -14,12 +14,24 @@ const MISS_RATE_DOWN = 0.15;
 const OVERSHOOT_TWO_STEPS = 1.6;
 const MIN_FRAMES_BETWEEN_DOWN = 20;
 const MIN_FRAMES_BETWEEN_DOWN_FRAME_MODE = 30;
+/** On a device under ~5 fps those frame counts take half a minute per step, so a step down is also allowed after this much time... */
+const SLOW_SETTLE_MS = 4000;
+/** ...once at least this many frames have been seen at the new step. */
+const SLOW_SETTLE_FRAMES = 4;
 const MIN_MS_BETWEEN_UP = 3000;
 /** A step that was left again soon after reaching it is not tried again for this long; the wait doubles with every such failure. */
 const FAIL_MEMORY_MS = 8000;
-const MAX_FAIL_DOUBLINGS = 3;
-const QUIET_RESET_MS = 60000;
-const MAX_VALID_SAMPLE_MS = 1000;
+/** 8 s, 16, 32, 64, 128, 256 s between probes of a step that keeps failing: each failed probe costs a burst of missed refreshes. */
+const MAX_FAIL_DOUBLINGS = 5;
+/** Longer than the widest back-off, so the back-off is forgotten only after a really quiet spell (a lighter scene), not between probes. */
+const QUIET_RESET_MS = 300000;
+/** A fresh up-step is judged on this many frames: this many misses among them end the probe at once instead of after a full window. */
+const PROBE_MIN_FRAMES = 6;
+const PROBE_MISSES = 3;
+/** A frame longer than this is a stall (a device under 1 fps, a tab that was in the background): it counts, but advances the clock by no more. */
+const STALL_MS = 1000;
+/** The longest refresh period the display estimate accepts (10 Hz): slower frames are a struggling device, not a display. */
+const MAX_VALID_SAMPLE_MS = 100;
 const BUCKET_MS = 250;
 const BUCKETS = 12;
 
@@ -77,6 +89,7 @@ export class DynamicResolutionController {
   private index = 0;
   private clock = 0;
   private sinceChangeFrames = 0;
+  private sinceChangeMs = 0;
   private lastChangeMs = 0;
   private lastUpMs = -Infinity;
   private cleanMs = 0;
@@ -130,8 +143,9 @@ export class DynamicResolutionController {
       if (this.index !== 0) this.reset();
       return 1;
     }
-    if (!(frameMs > 0) || frameMs > MAX_VALID_SAMPLE_MS) return this.scale;
-    this.clock += frameMs;
+    if (!(frameMs > 0)) return this.scale;
+    const dt = Math.min(frameMs, STALL_MS);
+    this.clock += dt;
     this.display.push(frameMs);
     const gpu = gpuMs !== null && gpuMs > 0;
     if (gpu !== this.usingGpu) {
@@ -139,10 +153,11 @@ export class DynamicResolutionController {
       this.clearWindows();
     }
     this.sinceChangeFrames++;
+    this.sinceChangeMs += dt;
     const budget = this.budgetMs(targetFps);
     if (this.clock - this.lastChangeMs >= QUIET_RESET_MS) this.failDoublings = 0;
-    if (gpu) this.updateGpu(Math.min(gpuMs as number, MAX_VALID_SAMPLE_MS), budget);
-    else this.updateFrameTime(frameMs, budget);
+    if (gpu) this.updateGpu(Math.min(gpuMs as number, STALL_MS), budget);
+    else this.updateFrameTime(frameMs, dt, budget);
     return this.scale;
   }
 
@@ -150,7 +165,7 @@ export class DynamicResolutionController {
     this.fast.push(gpuMs);
     this.slow.push(gpuMs);
     const last = SCALE_STEPS.length - 1;
-    if (this.index < last && this.sinceChangeFrames >= MIN_FRAMES_BETWEEN_DOWN && this.fast.full && this.fast.mean > budget * DOWN_FACTOR) {
+    if (this.index < last && this.settled(MIN_FRAMES_BETWEEN_DOWN) && this.fast.full && this.fast.mean > budget * DOWN_FACTOR) {
       this.stepDown(this.fast.mean > budget * OVERSHOOT_TWO_STEPS ? 2 : 1);
       return;
     }
@@ -159,16 +174,23 @@ export class DynamicResolutionController {
     if (this.slow.mean * ratio * ratio < budget * UP_PREDICT_FACTOR) this.stepUp();
   }
 
-  private updateFrameTime(frameMs: number, budget: number): void {
+  /** Enough frames at this step to judge it: the usual count, or on a very slow device a few frames over several seconds. */
+  private settled(minFrames: number): boolean {
+    return this.sinceChangeFrames >= minFrames || (this.sinceChangeMs >= SLOW_SETTLE_MS && this.sinceChangeFrames >= SLOW_SETTLE_FRAMES);
+  }
+
+  /** A stall counts as a miss however long it was; `dtMs` is the same frame capped for the clock. */
+  private updateFrameTime(frameMs: number, dtMs: number, budget: number): void {
     const miss = frameMs > budget * MISS_FACTOR ? 1 : 0;
     if (this.missFill === MISS_WINDOW) this.missCount -= this.misses[this.missHead]; else this.missFill++;
     this.misses[this.missHead] = miss;
     this.missCount += miss;
     this.missHead = (this.missHead + 1) % MISS_WINDOW;
-    this.cleanMs = miss ? 0 : this.cleanMs + frameMs;
+    this.cleanMs = miss ? 0 : this.cleanMs + dtMs;
     const rate = this.missCount / this.missFill;
     const last = SCALE_STEPS.length - 1;
-    if (this.index < last && this.sinceChangeFrames >= MIN_FRAMES_BETWEEN_DOWN_FRAME_MODE && rate > MISS_RATE_DOWN) {
+    const probeFailed = this.clock - this.lastUpMs < FAIL_MEMORY_MS && this.sinceChangeFrames >= PROBE_MIN_FRAMES && this.missCount >= PROBE_MISSES;
+    if (this.index < last && (probeFailed || (this.settled(MIN_FRAMES_BETWEEN_DOWN_FRAME_MODE) && rate > MISS_RATE_DOWN))) {
       this.stepDown(rate > 0.5 ? 2 : 1);
       return;
     }
@@ -201,6 +223,7 @@ export class DynamicResolutionController {
 
   private clearWindows(): void {
     this.sinceChangeFrames = 0;
+    this.sinceChangeMs = 0;
     this.cleanMs = 0;
     this.fast.clear();
     this.slow.clear();

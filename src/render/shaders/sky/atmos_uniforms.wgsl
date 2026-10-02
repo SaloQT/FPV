@@ -5,6 +5,19 @@
 // several 1e5 nits toward the eye.
 const CLOUD_STORE_SCALE : f32 = 32.0;
 
+// rgba16float holds finite values up to 65504 and overflows to Inf, which then poisons every bilinear tap, blend and history that touches it
+// (Inf * 0 = NaN). Every LUT or target that can see the aureole beside the sun is clamped to this before the store.
+const FP16_STORE_MAX : f32 = 65000.0;
+
+// The sun-pass sky-view LUT (skySun, read only by sky.wgsl) stores nits / skySunStoreScale(): the aureole peaks near 4e5 nits at the sun (sun
+// at 12 degrees), above fp16's range, and the sky pass keeps the physical value by multiplying back. The world sky-view LUT keeps plain nits for
+// its many consumers and is clamped instead. A night sky sits at fp16's smallest normal value (6.1e-5) already, so the scale applies only
+// while the sun is above SKY_SUN_SCALE_MIN_MU (about -5.7 degrees), where no aureole is left and the whole sky is brighter than a nit.
+const SKY_SUN_STORE_SCALE : f32 = 16.0;
+const SKY_SUN_SCALE_MIN_MU : f32 = -0.1;
+
+fn skySunStoreScale() -> f32 { return select(1.0, SKY_SUN_STORE_SCALE, frame.sunDir.y > SKY_SUN_SCALE_MIN_MU); }
+
 struct AtmosParams {
   flags : vec4f,     // x = moonlight scattering active (0/1), y = night-sky scale, z = star brightness, w = twinkle amount 0..1
   sky2 : vec4f,      // x = Milky Way brightness, y = stars enabled, z = clouds enabled, w = star magnitude limit

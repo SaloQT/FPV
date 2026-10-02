@@ -2,6 +2,7 @@
  * Query-string parameters of the app (test hooks and quick overrides). Pure: no DOM, no GPU.
  *
  *   seed=<int>            world seed (terrain and track)
+ *   tseed=<int>           the track's own seed when it is not the world seed (share links to an N-key track)
  *   style=race|freestyle|mountain|sprint
  *   t=<hour>              local solar hour at the observer, 0..24 (converted to settings.timeMs)
  *   cam=fpv|chase|free    camera mode once flying
@@ -30,6 +31,8 @@ const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 
 export interface AppParams {
   seed?: number;
+  /** Seed the track is generated from, on the terrain of `seed`. */
+  trackSeed?: number;
   style?: TrackData['style'];
   /** Local solar hour at the observer. */
   hours?: number;
@@ -85,6 +88,7 @@ export function parseParams(search: string): AppParams {
     return v === null ? undefined : v !== '0' && v !== 'false';
   };
   const seed = num(q, 'seed');
+  const trackSeed = num(q, 'tseed');
   const advance = num(q, 'advance');
   const scenario = pick(q, 'scenario', SCENARIOS);
   const autostart = flag('autostart') ?? false;
@@ -96,6 +100,7 @@ export function parseParams(search: string): AppParams {
   const agl = num(q, 'agl');
   return {
     seed: seed === undefined ? undefined : Math.max(0, Math.floor(seed)) >>> 0,
+    trackSeed: trackSeed === undefined ? undefined : Math.max(0, Math.floor(trackSeed)) >>> 0,
     style: pick(q, 'style', STYLES),
     hours: num(q, 't'),
     cam: pick(q, 'cam', CAMS),

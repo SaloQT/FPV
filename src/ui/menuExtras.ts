@@ -6,6 +6,7 @@ import { el } from './dom';
 import { rowFor, type BuiltControl, type ControlHost } from './menuHost';
 import type { Control, CustomControl, MenuPreset, MenuSection, MenuTab } from './menuSchema';
 import { buildTimeControl } from './menuTime';
+import { shareButton } from './shareLink';
 import type { PilotOptions } from './pilotOptions';
 
 type ToggleKey = { [K in keyof PilotOptions]: PilotOptions[K] extends boolean ? K : never }[keyof PilotOptions];
@@ -45,6 +46,18 @@ export function airframeRow(preset: MenuPreset): CustomControl {
   };
 }
 
+const SHARE_HINT = 'A link that opens this exact terrain and track, including a track made with the N key.';
+
+/** The world link, for the pause dialog: once the flight has begun the start screen with its Copy link button is gone. */
+export const SHARE_LINK: CustomControl = {
+  kind: 'custom', id: 'shareLink', label: 'World link', hint: SHARE_HINT,
+  build(host) {
+    const r = rowFor({ label: 'World link', hint: SHARE_HINT }, 'button');
+    r.ctl.append(shareButton(host, 'Copy link', 'fpv-btn fpv-btn--default'));
+    return { root: r.root, sync: () => {} };
+  },
+};
+
 export const TIME_CONTROL: CustomControl = { kind: 'custom', id: 'time', label: 'Time of day', build: buildTimeControl };
 
 const TIME_IDS: ReadonlySet<string> = new Set(['timeOfDay', 'date', 'timeScale']);
@@ -77,7 +90,11 @@ export function extendTabs(tabs: readonly MenuTab[], presets: readonly MenuPrese
     if (t.id === 'simulation') {
       return {
         ...t,
-        sections: t.sections.map((s) => (s.title === 'Environment' ? mapSection(s, withTime) : s.title === 'Flight' ? mapSection(s, (c) => withAirframe(c, presets)) : s)),
+        sections: t.sections.map((s) => {
+          if (s.title === 'Environment') return mapSection(s, withTime);
+          if (s.title === 'Flight') return mapSection(s, (c) => withAirframe(c, presets));
+          return s.title === 'Track' ? mapSection(s, (c) => [...c, SHARE_LINK]) : s;
+        }),
       };
     }
     if (t.id === 'camera') {

@@ -2,8 +2,9 @@
 // phase[1/sr] * T_light * ds[km]) = radiance in nits, NOT pre-exposed (pre-exposure is applied only when writing the HDR target).
 // The map folds the view azimuth around the SUN (common/atmosphere_sample.wgsl), so two passes build it:
 //   MOON_PASS defined : moonlight scattering, folded around the MOON, into skyMoon (exact for the moon; the sky pass samples it directly).
-//   otherwise         : sun scattering + night airglow + starlight floor into skySun, and world.skyView = skySun + the moon's map
-//                       symmetrised over the two possible view sides (accurate for the low-frequency consumers: ambient and reflections).
+//   otherwise         : sun scattering + night airglow + starlight floor into skySun (stored as nits / skySunStoreScale()), and world.skyView
+//                       (plain nits, clamped to FP16_STORE_MAX) = that + the moon's map symmetrised over the two possible view sides
+//                       (accurate for the low-frequency consumers: ambient and reflections).
 #include "sky/lut_common.wgsl"
 #include "sky/atmos_uniforms.wgsl"
 #include "sky/night_light.wgsl"
@@ -65,7 +66,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let mu = clamp(frame.sunDir.y, -1.0, 1.0);
   let light = vec3f(sqrt(max(1.0 - mu * mu, 0.0)), mu, 0.0);
   let sky = marchSky(dir, r, light, frame.sunIrradiance.rgb) + nightSky(cosZ, r);
-  textureStore(outTex, vec2i(gid.xy), vec4f(sky, 1.0));
+  textureStore(outTex, vec2i(gid.xy), vec4f(min(sky / skySunStoreScale(), vec3f(FP16_STORE_MAX)), 1.0));
 
   var world = sky;
   if (ap.flags.x > 0.5) {
@@ -80,6 +81,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let b = textureSampleLevel(skyMoon, linearClamp, skyViewUvCos(cosZ, cosB, r), 0.0).rgb;
     world += 0.5 * (a + b);
   }
-  textureStore(outWorld, vec2i(gid.xy), vec4f(world, 1.0));
+  textureStore(outWorld, vec2i(gid.xy), vec4f(min(world, vec3f(FP16_STORE_MAX)), 1.0));
 #endif
 }

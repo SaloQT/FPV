@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StarCatalog } from '../../contracts';
 import { DEG } from './julian';
-import { bvToLinearRGB, galacticToEquatorial, magToIlluminance, milkyWayModel, parseStarCatalog, starDirectionEq } from './stars';
+import { STAR_CATALOG_URL, bvToLinearRGB, galacticToEquatorial, loadStarCatalog, magToIlluminance, milkyWayModel, parseStarCatalog, starDirectionEq } from './stars';
 
 /** The repo has no @types/node, so node:fs comes through the process global like in sim/perf.test.ts. */
 const nodeFs = (globalThis as unknown as { process: { getBuiltinModule(id: string): unknown } }).process
@@ -134,5 +134,26 @@ describe('galactic frame', () => {
     const [px, py, pz] = milkyWayModel.poleDirEq;
     expect(((Math.atan2(py, px) / DEG) + 360) % 360).toBeCloseTo(192.85948, 4);
     expect(Math.asin(pz) / DEG).toBeCloseTo(27.12825, 4);
+  });
+});
+
+describe('loadStarCatalog', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('fetches the catalogue under the app base path, never from the host root', async () => {
+    expect(STAR_CATALOG_URL).toBe(`${import.meta.env.BASE_URL}data/stars.bin`);
+    expect(STAR_CATALOG_URL.endsWith('data/stars.bin')).toBe(true);
+    const b = nodeFs.readFileSync(new URL('../../../public/data/stars.bin', import.meta.url));
+    const body = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => body }));
+    vi.stubGlobal('fetch', fetchMock);
+    const cat = await loadStarCatalog();
+    expect(fetchMock).toHaveBeenCalledWith(STAR_CATALOG_URL);
+    expect(cat.count).toBeGreaterThan(40000);
+  });
+
+  it('reports a missing file with its URL and status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
+    await expect(loadStarCatalog('/sub/data/stars.bin')).rejects.toThrow('/sub/data/stars.bin responded 404');
   });
 });

@@ -9,9 +9,11 @@ export const MULTI_SCATTER_LUT_SIZE = { width: 32, height: 32 } as const;
 export const SKY_VIEW_LUT_SIZE = { width: 192, height: 108 } as const;
 export const AERIAL_PERSPECTIVE_LUT_SIZE = { width: 32, height: 32, depth: 32 } as const;
 
-const STAGES = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE;
-const LUT_USAGE = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-const DATA_USAGE = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
+// Numeric flag values (WebGPU spec) instead of the GPUShaderStage/GPUTextureUsage globals: those do not exist on a browser without
+// WebGPU, and reading them at module load would blank the page before the failure panel can show.
+const STAGES = 1 | 2 | 4; // VERTEX | FRAGMENT | COMPUTE
+const LUT_USAGE = 4 | 8 | 16 | 2 | 1; // TEXTURE_BINDING | STORAGE_BINDING | RENDER_ATTACHMENT | COPY_DST | COPY_SRC
+const DATA_USAGE = 4 | 2 | 1; // TEXTURE_BINDING | COPY_DST | COPY_SRC
 
 type TerrainTextures = Pick<WorldBindings['tex'], 'terrainHeight' | 'terrainMaxPyr' | 'terrainNormal' | 'terrainMaps'>;
 

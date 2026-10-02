@@ -17,7 +17,10 @@ export function parseStarCatalog(buf: ArrayBuffer): StarCatalog {
   return { count, data: new Float32Array(buf, HEADER_BYTES, count * FLOATS_PER_STAR) };
 }
 
-export async function loadStarCatalog(url = '/data/stars.bin'): Promise<StarCatalog> {
+/** Where the catalogue is served: under the app's base path, so a build hosted in a subdirectory still finds it. */
+export const STAR_CATALOG_URL = `${import.meta.env.BASE_URL}data/stars.bin`;
+
+export async function loadStarCatalog(url = STAR_CATALOG_URL): Promise<StarCatalog> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`star catalogue: ${url} responded ${res.status}`);
   return parseStarCatalog(await res.arrayBuffer());

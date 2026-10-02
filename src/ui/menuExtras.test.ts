@@ -42,8 +42,8 @@ describe('extendTabs', () => {
     for (const id of ['graphics', 'controls', 'audio']) expect(tabOf(tabs, id)).toBe(tabOf(base, id));
   });
 
-  it('does not touch the track controls the start screen and the Simulation tab share', () => {
+  it('keeps the shared track controls and adds the world link after them, for the pause dialog', () => {
     const tabs = extendTabs(buildTabs(ONE), ONE);
-    expect(ids(tabOf(tabs, 'simulation'), 'Track')).toEqual(ids(tabOf(buildTabs(ONE), 'simulation'), 'Track'));
+    expect(ids(tabOf(tabs, 'simulation'), 'Track')).toEqual([...ids(tabOf(buildTabs(ONE), 'simulation'), 'Track'), 'shareLink']);
   });
 });

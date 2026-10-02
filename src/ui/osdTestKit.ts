@@ -38,6 +38,7 @@ export class RecordingContext implements OsdContext {
   clearRect(): void {
     this.clears++;
     this.texts = [];
+    this.strokes = [];
     this.lines = [];
     this.rects = [];
   }
@@ -50,7 +51,11 @@ export class RecordingContext implements OsdContext {
     this.texts.push({ text, x, y, align: this.textAlign, color: String(this.fillStyle), font: this.font, alpha: this.globalAlpha });
   }
 
-  strokeText(): void {}
+  strokes: { text: string; style: string; width: number }[] = [];
+
+  strokeText(text: string): void {
+    this.strokes.push({ text, style: String(this.strokeStyle), width: this.lineWidth });
+  }
 
   measureText(text: string): TextMetrics {
     const px = Number(/(\d+(?:\.\d+)?)px/.exec(this.font)?.[1] ?? 10);

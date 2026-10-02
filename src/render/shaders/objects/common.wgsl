@@ -20,6 +20,21 @@ struct Surf {
   material : u32,
 };
 
+// Total exposure (pre-exposure x exposure ratio) at the camera's full night gain: 2^(maxGainEv + DAY_TOTAL_EV) in post/exposure.ts, kept equal by a test.
+const NIGHT_TOTAL_EXPOSURE : f32 = 64.0;
+
+// Display level (after exposure, 1 = clipping) the core of an LED glow may reach for an emissive strength; mirrored in objects/ledGlow.ts.
+fn ledDisplay(strength : f32) -> f32 {
+  return clamp(strength * 4.0, 0.15, 2.2);
+}
+
+// Glow level in pre-exposed units: the physical value while it stays under the cap, which holds the display level near ledDisplay (an uncapped
+// halo clips to white, losing the LED colour, and overflows fp16 under the night pre-exposure). The exposure ratio is at most NIGHT_TOTAL_EXPOSURE / pre.
+fn glowShown(strength : f32, energy : f32) -> f32 {
+  let pre = frame.params.y;
+  return min(strength * EMISSIVE_MAX_NITS * 0.35 * energy * pre, ledDisplay(strength) * max(1.0, pre / NIGHT_TOTAL_EXPOSURE));
+}
+
 fn uvOfClip(clip : vec4f) -> vec2f {
   let ndc = clip.xy / clip.w;
   return vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);

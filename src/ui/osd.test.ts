@@ -66,6 +66,43 @@ describe('OsdRenderer canvas handling', () => {
   });
 });
 
+describe('OSD text legibility', () => {
+  it('draws every string with a faint wide halo, then a tight dark edge, before the fill', () => {
+    const { g, osd } = setup(1920, 1080);
+    osd.draw(model(), 0);
+    const [halo, edge] = g.strokes;
+    expect(halo.text).toBe(edge.text);
+    expect(halo.width).toBeGreaterThan(edge.width * 2);
+    expect(halo.style).toMatch(/rgba\(0,0,0,0\.[1-5]\)/);
+    expect(edge.style).toMatch(/rgba\(0,0,0,0\.[89]/);
+    expect(g.strokes.length).toBe(g.texts.length * 2);
+  });
+
+  it('snaps text to whole device pixels so centred lines do not land on a half pixel', () => {
+    const { g, osd } = setup(1279, 719, 1);
+    osd.draw(model(), 0);
+    expect(g.texts.length).toBeGreaterThan(5);
+    for (const t of g.texts) {
+      expect(Number.isInteger(t.x), `${t.text} x`).toBe(true);
+      expect(Number.isInteger(t.y), `${t.text} y`).toBe(true);
+    }
+  });
+
+  it('keeps small fonts readable on a small canvas', () => {
+    const { g, osd } = setup(640, 360);
+    osd.draw(model(), 0);
+    for (const t of g.texts) expect(Number(/(\d+)px/.exec(t.font)?.[1]), t.text).toBeGreaterThanOrEqual(11);
+  });
+
+  it('scales the edge with the font on a high-density display', () => {
+    const lo = setup(1280, 720, 1);
+    const hi = setup(1280, 720, 2);
+    lo.osd.draw(model(), 0);
+    hi.osd.draw(model(), 0);
+    expect(hi.g.strokes[1].width).toBeGreaterThan(lo.g.strokes[1].width);
+  });
+});
+
 describe('OSD readouts', () => {
   it('draws the battery, timer, arm state, mode and motion values', () => {
     const { g, osd } = setup();

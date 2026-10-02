@@ -31,8 +31,8 @@ export interface ControlHost {
   onOptions(fn: (o: PilotOptions) => void): () => void;
   /** Live sim clock and sky, or null while the app has not connected it. */
   live(): LiveSky | null;
-  /** The page address share links are built on. */
-  shareBase(): string;
+  /** A link that opens the world the pilot is looking at: the same terrain and the same track. */
+  shareLink(): string;
 }
 
 export interface BuiltControl {

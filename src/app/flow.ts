@@ -6,7 +6,7 @@ import type { FinishChoice } from '../ui/finish';
 import { bootTime, hourOf, skyReadout } from '../ui/clockModel';
 import type { LiveSky } from '../ui/menuHost';
 import type { GameState } from '../game/stateMachine';
-import { WorldPreview } from './preview';
+import { WorldPreview, shareableWorld } from './preview';
 import { buildTrackOnly, buildWorldQuietly, landWorld, newTrack } from './scene';
 import type { AppCtx } from './state';
 
@@ -132,5 +132,9 @@ export function createPreview(ctx: AppCtx): WorldPreview {
     ctx.store.get(),
   );
   ctx.ui.menu.setPreview(preview.current());
+  ctx.ui.menu.setSharedWorld(() => shareableWorld(ctx.world, preview.current().status, ctx.session.started));
+  // A link to an N-key track: the boot world is built from the seed, so the link's own track replaces it before the first flight.
+  const link = ctx.params.trackSeed;
+  if (link !== undefined && link !== ctx.world.seed) preview.launch(link);
   return preview;
 }

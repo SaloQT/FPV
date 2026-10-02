@@ -72,10 +72,6 @@ function createStore(search: string, perf: PerfParams): { store: SettingsStore; 
 export default async function boot(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement): Promise<void> {
   const root = document.getElementById('ui') ?? document.body;
   installGlobalErrorHandlers(root);
-  if (!('gpu' in navigator) || !navigator.gpu) {
-    failApp(root, 'no-webgpu', `navigator.gpu is ${typeof navigator.gpu}; isSecureContext = ${window.isSecureContext}; ${navigator.userAgent}`);
-    return;
-  }
   const loading = new LoadingOverlay(root);
   loading.setProgress('Starting', 0);
   const perf = parsePerfParams(location.search);
@@ -127,9 +123,11 @@ async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, ro
     worldFrac = f;
     bar(stage);
   });
-  // If one side fails the other must not become an unhandled rejection.
-  const [renderer, world] = await Promise.all([rendererP, worldP]).catch(async (e) => {
-    await Promise.allSettled([rendererP, worldP]);
+  // The first failure shows at once (a missing GPU must not wait for the terrain to finish); the other side is abandoned: its outcome
+  // is swallowed and a renderer that still got built is released.
+  const [renderer, world] = await Promise.all([rendererP, worldP]).catch((e) => {
+    void rendererP.then((r) => r.destroy(), () => undefined);
+    worldP.catch(() => undefined);
     throw e;
   });
 

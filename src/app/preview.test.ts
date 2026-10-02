@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { TrackData } from '../contracts';
 import { makeTrack } from '../game/testKit';
 import type { PreviewState } from '../ui/trackPreviewModel';
-import { PREVIEW_DEBOUNCE_MS, WorldPreview, worldKey, type PreviewDeps, type WorldSettings } from './preview';
+import { PREVIEW_DEBOUNCE_MS, WorldPreview, shareableWorld, worldKey, type PreviewDeps, type WorldSettings } from './preview';
 import type { World } from './world';
 
 const BASE: WorldSettings = { seed: 1337, trackStyle: 'race', gateCount: 12, laps: 3, difficulty: 0.4, quality: 'high' };
 
 function fakeWorld(seed: number, quality: World['quality'] = 'high', track: TrackData = makeTrack(3, { seed })): World {
-  return { track, seed, style: 'race', attempts: 1, terrain: {} as World['terrain'], sampler: {} as World['sampler'], terrainSeed: seed, baseSeed: seed, quality };
+  const request = { seed, style: 'race' as const, gateCount: 12, laps: 3, difficulty: 0.4 };
+  return { track, seed, style: 'race', attempts: 1, request, terrain: {} as World['terrain'], sampler: {} as World['sampler'], terrainSeed: seed, baseSeed: seed, quality };
 }
 
 interface Rig {
@@ -44,9 +45,9 @@ function rig(): Rig {
     world: () => r.world,
     locked: () => r.locked,
     async buildTrack(current, s) {
-      r.calls.push(`track:${s.seed}:${s.trackStyle}:${s.gateCount}`);
+      r.calls.push(`track:${s.trackSeed ?? s.seed}:${s.trackStyle}:${s.gateCount}`);
       if (r.failNext !== null) throw new Error(r.failNext);
-      return { ...current, track: makeTrack(s.gateCount, { seed: s.seed }), style: s.trackStyle };
+      return { ...current, track: makeTrack(s.gateCount, { seed: s.trackSeed ?? s.seed }), seed: s.trackSeed ?? s.seed, style: s.trackStyle };
     },
     async buildWorld(s, progress) {
       r.calls.push(`world:${s.seed}`);
@@ -83,7 +84,7 @@ function rig(): Rig {
 describe('worldKey', () => {
   it('differs for every setting that decides the world and nothing else', () => {
     const k = worldKey(BASE);
-    for (const patch of [{ seed: 2 }, { trackStyle: 'sprint' as const }, { gateCount: 16 }, { laps: 1 }, { difficulty: 0.9 }, { quality: 'low' as const }]) {
+    for (const patch of [{ seed: 2 }, { trackSeed: 5 }, { trackStyle: 'sprint' as const }, { gateCount: 16 }, { laps: 1 }, { difficulty: 0.9 }, { quality: 'low' as const }]) {
       expect(worldKey({ ...BASE, ...patch })).not.toBe(k);
     }
     expect(worldKey({ ...BASE })).toBe(k);
@@ -213,5 +214,57 @@ describe('WorldPreview', () => {
     r.advance(600);
     expect(r.calls.filter((c) => c.startsWith('apply'))).toHaveLength(3);
     expect(r.states.at(-1)?.status).toBe('ready');
+  });
+});
+
+describe('WorldPreview.launch', () => {
+  it('builds the link\'s own track on the same terrain, and a later change of the settings forgets it', async () => {
+    const r = rig();
+    r.preview.launch(1340);
+    r.advance(PREVIEW_DEBOUNCE_MS);
+    await r.flush();
+    expect(r.calls).toEqual(['track:1340:race:12', 'apply:1340']);
+    expect(r.world.seed).toBe(1340);
+    expect(r.world.baseSeed).toBe(1337);
+    r.settings = { ...BASE, gateCount: 9 };
+    r.preview.settingsChanged(['gateCount']);
+    r.advance(PREVIEW_DEBOUNCE_MS);
+    await r.flush();
+    expect(r.calls.at(-2)).toBe('track:1337:race:9');
+  });
+
+  it('does nothing once the flight has begun', async () => {
+    const r = rig();
+    r.locked = true;
+    r.preview.launch(1340);
+    r.advance(5000);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+  });
+
+  it('drops a build that finishes after the first flight started', async () => {
+    const r = rig();
+    r.preview.launch(1340);
+    r.locked = true;
+    r.advance(PREVIEW_DEBOUNCE_MS);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+  });
+});
+
+describe('shareableWorld', () => {
+  const world = { ...fakeWorld(1337), terrainSeed: 1337, request: { seed: 1340, style: 'freestyle' as const, gateCount: 14, laps: 1, difficulty: 0.35 } };
+
+  it('describes the world on screen with the exact request that built its track', () => {
+    expect(shareableWorld(world, 'ready', false)).toEqual({ terrainSeed: 1337, trackSeed: 1340, style: 'freestyle', gateCount: 14, laps: 1, difficulty: 0.35, quality: 'high' });
+  });
+
+  it('follows the settings while the start screen is still building another world', () => {
+    expect(shareableWorld(world, 'working', false)).toBeNull();
+    expect(shareableWorld(world, 'error', false)).toBeNull();
+  });
+
+  it('is the world on screen once flying, whatever the preview says', () => {
+    expect(shareableWorld(world, 'working', true)).not.toBeNull();
   });
 });

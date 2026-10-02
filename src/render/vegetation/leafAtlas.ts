@@ -111,10 +111,11 @@ export function tileCoverage(colour: Uint8Array, width: number, height: number, 
 function downsample(src: Level, w: number, h: number, target: readonly number[]): Level {
   const hw = w >> 1, hh = h >> 1;
   const dst: Level = { colour: new Uint8Array(hw * hh * 4), data: new Uint8Array(hw * hh * 4) };
+  const acc = new Float64Array(7);
   for (let y = 0; y < hh; y++) {
     for (let x = 0; x < hw; x++) {
       let a = 0, weight = 0;
-      const acc = [0, 0, 0, 0, 0, 0, 0];
+      acc.fill(0);
       for (let k = 0; k < 4; k++) {
         const o = ((2 * y + (k >> 1)) * w + 2 * x + (k & 1)) * 4;
         const al = src.colour[o + 3] + 0.5;

@@ -5,6 +5,9 @@
  *
  *   node tools/bench.mjs                          software WebGPU (SwiftShader): proves the pipeline runs, says nothing about speed
  *   node tools/bench.mjs --gpu                    the machine's real GPU (needs a Chromium/Chrome with WebGPU; set CHROME_BIN)
+ *
+ * CHROME_BIN is the path of the browser executable. Without it the software run falls back to the Chromium of the development container
+ * (/opt/pw-browsers/chromium-1194), which exists nowhere else, and --gpu has no browser at all unless Playwright installed one.
  *   node tools/bench.mjs --gpu --uncapped         also lifts Chrome's frame-rate limit and v-sync so avgFps shows what the GPU can do
  *                                                 beyond the display refresh (a measuring aid; a normal page can never do this)
  *
@@ -49,7 +52,15 @@ query.set('benchSeconds', String(args.seconds ?? 20));
 query.set('benchWarmup', String(args.warmup ?? 2));
 if (args.uncapped && !query.has('refresh')) query.set('refresh', '1000');
 
-const browser = await chromium.launch({ executablePath: exe, headless: !args.headed, args: launchArgs });
+const stopServer = () => { if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } } };
+let browser;
+try {
+  browser = await chromium.launch({ executablePath: exe, headless: !args.headed, args: launchArgs });
+} catch (e) {
+  stopServer();
+  console.error(`bench: could not start a browser (${exe ?? 'playwright default'}): ${e.message.split('\n')[0]}\nSet CHROME_BIN to a Chrome or Chromium executable${args.gpu ? ' with a working GPU and WebGPU' : ''}.`);
+  process.exit(2);
+}
 const errors = [];
 let code = 0;
 try {
@@ -73,6 +84,6 @@ try {
   code = 1;
 } finally {
   await browser.close();
-  if (server) { try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill('SIGTERM'); } }
+  stopServer();
 }
 process.exit(code);

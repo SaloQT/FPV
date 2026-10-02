@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashSeed, MAX_SEED, parseSeed, randomSeed, RANDOM_SEED_RANGE, shareUrl } from './seedModel';
+import { hashSeed, MAX_SEED, parseSeed, randomSeed, RANDOM_SEED_RANGE, seedFieldText, seedNumberNote, shareUrl, shareWorld, type ShareWorld } from './seedModel';
 
 describe('parseSeed', () => {
   it('reads plain numbers as written', () => {
@@ -43,12 +43,58 @@ describe('randomSeed', () => {
   });
 });
 
+describe('seedFieldText', () => {
+  it('keeps the typed word while it names the current seed', () => {
+    const seed = parseSeed('Alpine Lake') ?? -1;
+    expect(seedFieldText('Alpine Lake', seed)).toBe('Alpine Lake');
+    expect(seedFieldText('  alpine lake ', seed)).toBe('alpine lake');
+  });
+
+  it('falls back to the number when the seed no longer matches the typed text', () => {
+    expect(seedFieldText('Alpine Lake', 12)).toBe('12');
+    expect(seedFieldText('', 77)).toBe('77');
+  });
+
+  it('shows plain numbers as written', () => {
+    expect(seedFieldText('1337', 1337)).toBe('1337');
+  });
+});
+
+describe('seedNumberNote', () => {
+  it('shows the numeric seed beside a word and nothing beside a number', () => {
+    const seed = parseSeed('Alpine Lake') ?? -1;
+    expect(seedNumberNote('Alpine Lake', seed)).toBe(`= ${seed}`);
+    expect(seedNumberNote('1337', 1337)).toBe('');
+  });
+});
+
 describe('shareUrl', () => {
-  it('carries the world settings and drops everything else', () => {
-    const url = shareUrl('https://x.test/play/?quality=low&cam=free#top', { seed: 42, trackStyle: 'sprint', gateCount: 9, laps: 2, difficulty: 0.35 });
+  const world: ShareWorld = { terrainSeed: 42, trackSeed: 42, style: 'sprint', gateCount: 9, laps: 2, difficulty: 0.35, quality: 'high' };
+
+  it('carries the world and drops everything else', () => {
+    const url = shareUrl('https://x.test/play/?quality=low&cam=free#top', world);
     const u = new URL(url);
     expect(u.pathname).toBe('/play/');
     expect(u.hash).toBe('');
-    expect(Object.fromEntries(u.searchParams)).toEqual({ seed: '42', style: 'sprint', gates: '9', laps: '2', diff: '35' });
+    expect(Object.fromEntries(u.searchParams)).toEqual({ seed: '42', style: 'sprint', gates: '9', laps: '2', diff: '35', quality: 'high' });
+  });
+
+  it('adds the track seed when the track came from the N key or a retry', () => {
+    const u = new URL(shareUrl('https://x.test/', { ...world, trackSeed: 45 }));
+    expect(u.searchParams.get('seed')).toBe('42');
+    expect(u.searchParams.get('tseed')).toBe('45');
+  });
+});
+
+describe('shareWorld', () => {
+  const s = { seed: 7, trackStyle: 'race' as const, gateCount: 12, laps: 3, difficulty: 0.5, quality: 'low' as const };
+
+  it('describes the settings when no built world matches them', () => {
+    expect(shareWorld(s, null)).toEqual({ terrainSeed: 7, trackSeed: 7, style: 'race', gateCount: 12, laps: 3, difficulty: 0.5, quality: 'low' });
+  });
+
+  it('prefers the world on screen', () => {
+    const w: ShareWorld = { terrainSeed: 7, trackSeed: 10, style: 'freestyle', gateCount: 12, laps: 1, difficulty: 0.5, quality: 'low' };
+    expect(shareWorld(s, w)).toBe(w);
   });
 });

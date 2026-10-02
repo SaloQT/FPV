@@ -77,6 +77,7 @@
   background: rgba(15, 18, 25, 0.78);
   border: 1px solid var(--fpv-line);
   font-size: 13px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -106,6 +107,7 @@
 .fpv-world-line { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; align-items: center; gap: 6px 8px; }
 .fpv-world-line .fpv-label { font-size: 13px; }
 .fpv-seed { font-family: var(--fpv-mono); letter-spacing: 0.02em; }
+.fpv-seed-number { font-family: var(--fpv-mono); font-weight: 600; color: var(--fpv-text, inherit); }
 .fpv-world-seed .fpv-hint { margin: 3px 0 0; }
 .fpv-start .fpv-hint, .fpv-world .fpv-hint { font-size: 12px; }
 

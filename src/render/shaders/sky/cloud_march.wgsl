@@ -152,7 +152,8 @@ fn withAerial(layer : Layer, uv : vec2f, dir : vec3f) -> vec4f {
   let metres = layer.dist * 1000.0;
   let near = sampleAerialPerspective(uv, min(metres, AP_MAX_DISTANCE_M));
   let far = 1.0 - exp(-max(metres - AP_MAX_DISTANCE_M, 0.0) / (FAR_HAZE_KM * 1000.0));
-  let haze = mix(near.rgb, sampleSkyView(dir), far);
+  var haze = near.rgb;
+  if (far > 0.0) { haze = mix(near.rgb, sampleSkyView(dir), far); }
   let fade = 1.0 - smoothstep(CLOUD_FADE_KM, CLOUD_MAX_KM, layer.dist);
   let a = mix(1.0, layer.a, fade);
   return vec4f((layer.lum * (near.a * (1.0 - far)) + haze * (1.0 - layer.a)) * fade, a);
@@ -182,5 +183,5 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (ap.cloudA.y > 0.0) { cir = marchCirrus(o, dir, fract(jitter + 0.61803), lights, amb); }
   let c = withAerial(cum, uv, dir);
   let i = withAerial(cir, uv, dir);
-  textureStore(outTex, texel, vec4f((c.rgb + c.a * i.rgb) / CLOUD_STORE_SCALE, c.a * i.a));
+  textureStore(outTex, texel, vec4f(min((c.rgb + c.a * i.rgb) / CLOUD_STORE_SCALE, vec3f(FP16_STORE_MAX)), c.a * i.a));
 }

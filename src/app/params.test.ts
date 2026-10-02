@@ -132,12 +132,23 @@ describe('world share links', () => {
   });
 
   it('opens the same world the link was made from', async () => {
-    const { shareUrl } = await import('../ui/seedModel');
+    const { shareUrl, shareWorld } = await import('../ui/seedModel');
     const s = { ...defaultAppSettings(), seed: 482913, trackStyle: 'mountain' as const, gateCount: 17, laps: 2, difficulty: 0.65 };
-    const url = new URL(shareUrl('https://sim.example/fly/', s));
-    const patch = settingsPatch(parseParams(url.search), defaultAppSettings());
-    expect(patch).toMatchObject({ seed: 482913, trackStyle: 'mountain', gateCount: 17, laps: 2 });
+    const url = new URL(shareUrl('https://sim.example/fly/', shareWorld(s, null)));
+    const p = parseParams(url.search);
+    const patch = settingsPatch(p, defaultAppSettings());
+    expect(patch).toMatchObject({ seed: 482913, trackStyle: 'mountain', gateCount: 17, laps: 2, quality: s.quality });
     expect(patch.difficulty).toBeCloseTo(0.65, 12);
+    expect(p.trackSeed).toBeUndefined();
     expect(hasPersistentOverrides(patch)).toBe(true);
+  });
+
+  it('reads the track seed of a link to a track that came from the N key', async () => {
+    const { shareUrl } = await import('../ui/seedModel');
+    const w = { terrainSeed: 1337, trackSeed: 1340, style: 'race' as const, gateCount: 12, laps: 3, difficulty: 0.35, quality: 'medium' as const };
+    const p = parseParams(new URL(shareUrl('https://sim.example/', w)).search);
+    expect(p).toMatchObject({ seed: 1337, trackSeed: 1340, style: 'race', gates: 12, laps: 3, quality: 'medium' });
+    expect(parseParams('?tseed=-3').trackSeed).toBe(0);
+    expect(parseParams('?tseed=zz').trackSeed).toBeUndefined();
   });
 });

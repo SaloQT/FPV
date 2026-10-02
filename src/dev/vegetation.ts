@@ -9,7 +9,7 @@
  *   ?derive=1 feeds the wash quad through FrameInfo instead of setQuad.
  *   ?perf240=1 after the first frame switches the Performance 240 preset on live (same tier, thinner and nearer grass); window.__fpv.switched
  *   keeps the vegetation stats from before the switch, vegetation() the ones after: the grass buffers must have been rebuilt.
- * window.__fpv carries { ready, stats, errors, vegetation(): VegetationStats, spot, probe }.
+ * window.__fpv carries { ready, stats, errors, vegetation(): VegetationStats, spot, probe, capture() } (capture: RGBA of the last frame, for frame-to-frame stability measures with ?freeze=1).
  */
 import { DEFAULT_SETTINGS, type CameraState, type QuadState, type Settings, type TerrainData, type TerrainSampler, type Vec3 } from '../contracts';
 import { createDefaultModules } from '../render/modules';
@@ -152,7 +152,7 @@ export default async function run(canvas: HTMLCanvasElement, osdCanvas: HTMLCanv
   const startNow = lastNow;
 
   const publish = (): void => {
-    window.__fpv = { ready: true, stats: renderer.stats, errors: renderer.errors, vegetation: () => veg.stats(), switched, spot: { x, z, ground }, probe: () => probeImage(renderer) };
+    window.__fpv = { ready: true, stats: renderer.stats, errors: renderer.errors, vegetation: () => veg.stats(), switched, spot: { x, z, ground }, probe: () => probeImage(renderer), capture: () => renderer.capture() };
   };
   const resize = (): void => {
     const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight), dpr = window.devicePixelRatio || 1;

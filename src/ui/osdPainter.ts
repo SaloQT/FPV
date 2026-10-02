@@ -7,6 +7,11 @@ export const COLOR_RED = '#ff5252';
 export const COLOR_AMBER = '#ffc233';
 export const COLOR_GREEN = '#62f58a';
 
+/** Dark edge hugging the glyphs, and a wider faint one behind it: text stays readable on a white cloud and on bright foliage alike. */
+const EDGE_STYLE = 'rgba(0,0,0,0.92)';
+const HALO_STYLE = 'rgba(0,0,0,0.3)';
+const HALO_WIDTH = 2.6;
+
 /** Font sizes in pixels at 1080p; everything scales with the canvas height. */
 const SIZE_MAIN = 28;
 const SIZE_SMALL = 19;
@@ -33,7 +38,9 @@ export class Painter {
   private fontBig = '';
   private fontHuge = '';
   private scale = NaN;
-  private baseLine = 3;
+  private baseLine = 2;
+  /** Width of the dark edge for the current font. */
+  private edge = 2;
 
   constructor(private readonly g: OsdContext) {}
 
@@ -45,9 +52,9 @@ export class Painter {
     this.scale = osdScale;
     const u = Math.max(0.35, (height / 1080) * osdScale);
     this.unit = u;
-    this.main = Math.max(10, Math.round(SIZE_MAIN * u));
-    this.small = Math.max(8, Math.round(SIZE_SMALL * u));
-    this.big = Math.max(14, Math.round(SIZE_BIG * u));
+    this.main = Math.max(13, Math.round(SIZE_MAIN * u));
+    this.small = Math.max(11, Math.round(SIZE_SMALL * u));
+    this.big = Math.max(18, Math.round(SIZE_BIG * u));
     this.huge = Math.max(40, Math.round(SIZE_HUGE * u));
     this.line = Math.round(this.main * 1.25);
     this.marginX = Math.round(width * 0.03);
@@ -67,41 +74,52 @@ export class Painter {
     const g = this.g;
     g.lineJoin = 'round';
     g.lineCap = 'round';
-    g.strokeStyle = 'rgba(0,0,0,0.9)';
-    this.baseLine = Math.max(3, Math.round(this.main * 0.22));
+    g.strokeStyle = EDGE_STYLE;
+    this.baseLine = Math.max(2, Math.round(this.main * 0.14));
+    this.edge = this.baseLine;
     g.lineWidth = this.baseLine;
     g.globalAlpha = 1;
   }
 
   useMain(): void {
     this.g.font = this.fontMain;
-    this.g.lineWidth = this.baseLine;
+    this.edge = this.baseLine;
   }
 
   useSmall(): void {
     this.g.font = this.fontSmall;
-    this.g.lineWidth = this.baseLine;
+    this.edge = this.baseLine;
   }
 
   useBig(): void {
     this.g.font = this.fontBig;
-    this.g.lineWidth = this.baseLine;
+    this.edge = this.baseLine;
   }
 
   /** The countdown digits: the outline grows with the glyph. */
   useHuge(): void {
     this.g.font = this.fontHuge;
-    this.g.lineWidth = Math.max(this.baseLine, Math.round(this.huge * 0.045));
+    this.edge = Math.max(this.baseLine, Math.round(this.huge * 0.04));
   }
 
-  /** White-on-black outlined text in the current font; `y` is the baseline. */
+  /**
+   * Text in the current font with a dark edge and a faint halo; `y` is the baseline. Positions snap to whole device pixels
+   * (a centred line at a half pixel would be resampled and look soft), so the glyph stems land on the pixel grid.
+   */
   text(s: string, x: number, y: number, align: CanvasTextAlign, color: string = COLOR_WHITE): void {
     if (s.length === 0) return;
     const g = this.g;
+    const px = Math.round(x);
+    const py = Math.round(y);
     g.textAlign = align;
-    g.strokeText(s, x, y);
+    g.strokeStyle = HALO_STYLE;
+    g.lineWidth = this.edge * HALO_WIDTH;
+    g.strokeText(s, px, py);
+    g.strokeStyle = EDGE_STYLE;
+    g.lineWidth = this.edge;
+    g.strokeText(s, px, py);
     g.fillStyle = color;
-    g.fillText(s, x, y);
+    g.fillText(s, px, py);
   }
 
   /** Small caption followed by a main-size value, laid out from `x` towards the right ('left') or towards the left ('right'). */
