@@ -15,6 +15,10 @@ const args = Object.fromEntries(process.argv.slice(2).filter((_, i) => i % 2 ===
 if (!args.baseline) throw new Error('Pass --baseline /path/to/pristine/baseline-checkout');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const base = resolve(args.baseline);
+for (const dir of [base, root]) {
+  const dirty = execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).trim();
+  if (dirty) throw new Error(`Benchmark requires clean tracked/untracked source in ${dir}:\n${dirty}`);
+}
 registerHooks({
   resolve(specifier, context, next) {
     if (specifier.startsWith('.') && context.parentURL?.startsWith('file:') && !extname(specifier)) {
@@ -40,23 +44,25 @@ const n = 64, cell = 2, height = Float32Array.from({ length: n * n }, (_, i) => 
 const data = { seed: 42, resolution: n, cellSize: cell, origin: [-64, -64], height, maps: {}, minHeight: -.08, maxHeight: .08, waterLevel: -Infinity };
 const dt = 1 / 4000;
 const input = { throttle: 0, roll: 0, pitch: 0, yaw: 0, armed: true, mode: 'acro', turtle: false };
-function make(mod, ground) {
+const denseColliders = Array.from({ length: 1024 }, (_, i) => ({ kind: 'box', center: [(i % 32 - 16) * 8 + 4, 1.5, (Math.floor(i / 32) - 16) * 8 + 4], half: [1, 1.5, 1], yaw: i * .37 }));
+function make(mod, ground, dense = false) {
   const q = new mod.QuadPhysics(mod.QUAD_5IN_6S, ground ? mod.createTerrainSampler(data) : null, 42);
-  q.reset([0, ground ? .06 : 300, 0], 0);
+  if (dense) q.setColliders(denseColliders);
+  q.reset([0, ground ? .06 : dense ? 3 : 300, 0], 0);
   q.step(dt, { ...input, throttle: 0 });
   ok(q.state.armed, 'benchmark must really arm at zero throttle');
   return q;
 }
 let comparedStates = 0;
-for (const ground of [false, true]) {
-  const a = make(before, ground), b = make(after, ground);
+for (const [ground, dense] of [[false, false], [true, false], [false, true], [true, true]]) {
+  const a = make(before, ground, dense), b = make(after, ground, dense);
   for (let i = 0; i < 24000; i++) {
     input.throttle = ground ? .18 : .38;
     input.roll = Math.sin(i * .0004) * .3;
     input.pitch = Math.cos(i * .0003) * .2;
     input.yaw = Math.sin(i * .0002) * .1;
     a.step(dt, input); b.step(dt, input);
-    deepStrictEqual(b.state, a.state, `quad state differs at step ${i}, ground=${ground}`);
+    deepStrictEqual(b.state, a.state, `quad state differs at step ${i}, ground=${ground}, dense=${dense}`);
     comparedStates++;
   }
 }
@@ -66,8 +72,8 @@ for (let i = 0; i < 20000; i++) {
   const x = Math.sin(i * .01) * 80, z = Math.cos(i * .012) * 80;
   deepStrictEqual(bNormal.normalAt(x, z, vb), aNormal.normalAt(x, z, va));
 }
-function flight(mod, ground) {
-  const q = make(mod, ground), cmd = { ...input, throttle: ground ? .18 : .38, roll: .3, pitch: .2, yaw: .1 };
+function flight(mod, ground, dense = false) {
+  const q = make(mod, ground, dense), cmd = { ...input, throttle: ground ? .18 : .38, roll: .3, pitch: .2, yaw: .1 };
   const start = performance.now();
   for (let i = 0; i < 4000; i++) q.step(dt, cmd);
   const ms = performance.now() - start;
@@ -82,7 +88,7 @@ function normals(mod) {
 }
 function median(v) { const x = [...v].sort((a, b) => a - b); return (x[5] + x[6]) / 2; }
 const results = {};
-for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['same_cell_200000_normals', normals]]) {
+for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['dense_flight_4000_steps_1024_boxes', m => flight(m, false, true)], ['dense_ground_4000_steps_1024_boxes', m => flight(m, true, true)], ['same_cell_200000_normals', normals]]) {
   for (let i = 0; i < 6; i++) { fn(before); fn(after); }
   const oldMs = [], newMs = [];
   for (let i = 0; i < 12; i++) {
