@@ -107,6 +107,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 #endif
   var wSum = 0.0;
   for (var j = -2; j <= 2; j++) {
+    // tapWeight(j) is the same for all five taps of a row, so it is computed once per row instead of
+    // once per tap: five times fewer evaluations over the 5x5 kernel. Bit-identical - it is the same
+    // function on the same argument, just not recomputed 25 times for 5 distinct values.
+    let twj = tapWeight(j);
     for (var i = -2; i <= 2; i++) {
       let q = px + vec2i(i, j) * stepPx;
       if (any(q < vec2i(0)) || any(q >= dims)) { continue; }
@@ -118,7 +122,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let wz = exp(-abs(dot(n, pq - pos)) / zTol);
       let wn = pow(max(dot(n, nq), 0.0), 16.0);
       let wl = exp(-abs(lc - tapLuma(s)) / sigmaL);
-      let w = tapWeight(i) * tapWeight(j) * wz * wn * wl;
+      let w = tapWeight(i) * twj * wz * wn * wl;
 #ifdef SHADOW
       sum += s.x * w;
 #else
