@@ -74,6 +74,15 @@ export class Biquad {
     this.a2 = (1 - alpha) * a0;
   }
 
+  /** Reuse a filter design without copying either axis's independent delay state. */
+  copyCoefficientsFrom(other: Biquad): void {
+    this.b0 = other.b0;
+    this.b1 = other.b1;
+    this.b2 = other.b2;
+    this.a1 = other.a1;
+    this.a2 = other.a2;
+  }
+
   setLowpass(freqHz: number, q: number, dt: number): void {
     const omega = TWO_PI * freqHz * dt;
     const sn = Math.sin(omega);
@@ -156,7 +165,9 @@ export class RpmFilterBank {
         for (let a = 0; a < this.axes; a++) {
           const n = this.notch[idx * this.axes + a];
           if (wasIdle) n.reset();
-          n.setNotch(f, this.cfg.q, dt);
+          // All axes have the same design; keep the arithmetic and each axis's delay state unchanged.
+          if (a === 0) n.setNotch(f, this.cfg.q, dt);
+          else n.copyCoefficientsFrom(this.notch[idx * this.axes]);
         }
       }
     }

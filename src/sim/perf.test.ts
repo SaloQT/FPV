@@ -18,7 +18,10 @@ function steps(q: QuadPhysics, input: StickInput, n: number): void {
 /** Wall-clock milliseconds for one simulated second at 4 kHz, best of `trials` after a warm-up. */
 function msPerSimSecond(make: () => QuadPhysics, input: StickInput, trials = 6): number {
   const q = make();
+  steps(q, inp(), 1); // Arm below armThrottleMax before applying the benchmark throttle.
+  expect(q.state.armed).toBe(true);
   steps(q, input, 8000);
+  expect(q.state.motorOmega.some((omega) => omega > 100)).toBe(true);
   let best = Infinity;
   for (let t = 0; t < trials; t++) {
     const start = performance.now();
@@ -72,6 +75,8 @@ describe('allocation', () => {
 
   it.skipIf(gc === null || !proc)('steady-state stepping creates no objects or arrays (heap growth per step stays in the number-boxing range)', () => {
     const q = flying();
+    steps(q, inp(), 1);
+    expect(q.state.armed).toBe(true);
     const input = cruise;
     steps(q, input, 40000);
     gc!();
