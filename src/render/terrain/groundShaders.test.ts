@@ -154,3 +154,44 @@ describe('shared grass tone', () => {
     expect(terrain).toContain('tone *= turfTone * (1.0 + GT_STREAK_AMP * streak);');
   });
 });
+
+// Body of the WGSL function `name` in a resolved module, with line comments stripped, so a call count
+// is scoped to one entry point and cannot be satisfied by prose that names the function.
+function fnBody(module: string, name: string): string {
+  const start = module.indexOf(`fn ${name}(`);
+  expect(start, `${name} not found`).toBeGreaterThan(-1);
+  const end = module.indexOf('\n}\n', start);
+  expect(end, `${name} unterminated`).toBeGreaterThan(start);
+  return module.slice(start, end).replace(/^\s*\/\/.*$/gm, '');
+}
+
+describe('ground dryness is evaluated once per point', () => {
+  // glDryness is two 3-octave gradient-noise FBMs, the single most expensive helper in the terrain material. The G-buffer
+  // fragment shader needs it for the layer weights and again for the grass macro colour; grass culling needs it three times.
+  // All of those calls share one (xz, maps.w), so the hoisted *Dry entry points below take it from the caller instead of
+  // recomputing it. These assertions fail if a redundant glDryness( call is reintroduced into a hot entry point.
+  it('evaluates it once in the terrain G-buffer fragment shader and threads it to both consumers', () => {
+    const fs = fnBody(resolveShader('terrain/terrain.wgsl'), 'fs');
+    expect(fs.match(/glDryness\(/g)).toHaveLength(1);
+    expect(fs).toContain('let dryField = glDryness(w.xz, maps.w);');
+    expect(fs).toContain('terrainLayerWeightsDry(w.xz, w.y, ts.normal.y, maps, tp.waterLevel, dryField)');
+    expect(fs).toContain('layerMacroColorDry(lid[k], w.xz, w.y, maps, dryField)');
+  });
+
+  it('evaluates it once per grass blade-culling thread', () => {
+    const main = fnBody(resolveShader('vegetation/grass_cull.wgsl'), 'blades_main');
+    expect(main.match(/glDryness\(/g)).toHaveLength(1);
+    expect(main).toContain('let dryField = glDryness(xz, maps.w);');
+    expect(main).toContain('terrainLayerWeightsDry(xz, y, nrm.y, maps, vp.grass2.z, dryField)');
+    expect(main).toContain('grassTintFromMapsDry(xz, maps, dryField)');
+  });
+
+  it('keeps the public wrappers bit-identical by delegating to the hoisted bodies', () => {
+    const gc = resolveShader('terrain/ground_color.wgsl');
+    expect(gc).toContain('return grassTintFromMapsDry(xz, maps, glDryness(xz, maps.w));');
+    expect(gc).toContain('return terrainLayerWeightsDry(xz, y, ny, maps, waterLevel, glDryness(xz, maps.w));');
+    // Only the grass case reads `dry`, so the wrapper must not evaluate it for the other seven layers.
+    expect(gc).toContain('if (layer == 0) { return grassTintFromMaps(xz, maps); }');
+    expect(gc).toContain('return layerMacroColorDry(layer, xz, y, maps, 0.0);');
+  });
+});

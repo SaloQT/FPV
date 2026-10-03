@@ -25,8 +25,8 @@ fn glDryness(xz : vec2f, wet : f32) -> f32 {
 }
 
 // Living turf: lush green with yellow-green and clover patches at 10 m and 1-2 m scale, bleached toward straw where it is dry.
-fn grassTintFromMaps(xz : vec2f, maps : vec4f) -> vec3f {
-  let dry = glDryness(xz, maps.w);
+// `dry` is the caller's glDryness(xz, maps.w) so a point that also evaluates terrainLayerWeights reuses it instead of recomputing the FBM.
+fn grassTintFromMapsDry(xz : vec2f, maps : vec4f, dry : f32) -> vec3f {
   let tuft = tnFbm(xz * 0.31 + vec2f(41.0, 5.0), 2);
   let hue = tnFbm(xz * 0.09 + vec2f(7.0, 63.0), 2);
   let clover = smoothstep(0.55, 0.72, tnFbm(xz * 0.9 + vec2f(19.0, 3.0), 2));
@@ -35,11 +35,16 @@ fn grassTintFromMaps(xz : vec2f, maps : vec4f) -> vec3f {
   return mix(c, GL_GRASS_DRY, dry) * (0.82 + 0.4 * tuft);
 }
 
+fn grassTintFromMaps(xz : vec2f, maps : vec4f) -> vec3f {
+  return grassTintFromMapsDry(xz, maps, glDryness(xz, maps.w));
+}
+
 fn grassTint(xz : vec2f) -> vec3f {
   return grassTintFromMaps(xz, terrainMapsAt(terrainMirrorXz(xz)));
 }
 
-fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel : f32) -> LayerWeights {
+// As terrainLayerWeights, with the caller's glDryness(xz, maps.w) passed in rather than recomputed (see grassTintFromMapsDry).
+fn terrainLayerWeightsDry(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel : f32, dry : f32) -> LayerWeights {
   let soil = maps.x;
   let flow = maps.y;
   let dep = maps.z;
@@ -69,7 +74,6 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   if (waterLevel > -1.0e8) { shore = 1.0 - smoothstep(0.1, 1.0, y - waterLevel); }
 
   // The sward thins in metre-scale patches, more on slopes, dry ground and thin soil; soil shows through the gaps.
-  let dry = glDryness(xz, wet);
   let patchN = tnFbm(q * 0.55 + vec2f(23.0, 51.0), 3);
   let thinSoil = 1.0 - smoothstep(0.30, 0.70, soilJ);
   let sparse = smoothstep(0.60, 0.86, patchN + 0.30 * smoothstep(0.03, 0.15, slope) + 0.18 * dry + 0.25 * thinSoil);
@@ -98,9 +102,14 @@ fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel :
   return w;
 }
 
-fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
+fn terrainLayerWeights(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel : f32) -> LayerWeights {
+  return terrainLayerWeightsDry(xz, y, ny, maps, waterLevel, glDryness(xz, maps.w));
+}
+
+// As layerMacroColor, with the caller's glDryness(xz, maps.w) supplied for the grass case (see grassTintFromMapsDry). Only layer 0 reads it.
+fn layerMacroColorDry(layer : i32, xz : vec2f, y : f32, maps : vec4f, dry : f32) -> vec3f {
   switch (layer) {
-    case 0: { return grassTintFromMaps(xz, maps); }
+    case 0: { return grassTintFromMapsDry(xz, maps, dry); }
     case 1: { return glBaseColor(GL_HAY) * (0.8 + 0.4 * tnFbm(xz * 0.07 + vec2f(2.0, 8.0), 2)); }
     case 2: {
       let t = tnFbm(xz * 0.05 + vec2f(13.0, 1.0), 3);
@@ -126,14 +135,21 @@ fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
   }
 }
 
+fn layerMacroColor(layer : i32, xz : vec2f, y : f32, maps : vec4f) -> vec3f {
+  // Only the grass case needs the dryness, so compute it for that case alone; the rest never reads it.
+  if (layer == 0) { return grassTintFromMaps(xz, maps); }
+  return layerMacroColorDry(layer, xz, y, maps, 0.0);
+}
+
 fn groundBaseColorAt(xz : vec2f, y : f32, ny : f32, maps : vec4f, waterLevel : f32) -> vec3f {
-  let lw = terrainLayerWeights(xz, y, ny, maps, waterLevel);
+  let dryField = glDryness(xz, maps.w);
+  let lw = terrainLayerWeightsDry(xz, y, ny, maps, waterLevel, dryField);
   var w = array<f32, 8>(lw.lo.x, lw.lo.y, lw.lo.z, lw.lo.w, lw.hi.x, lw.hi.y, lw.hi.z, lw.hi.w);
   var sum = 0.0;
   for (var i = 0; i < GL_COUNT; i++) { sum += w[i]; }
   var c = vec3f(0.0);
   for (var i = 0; i < GL_COUNT; i++) {
-    if (w[i] > 0.02 * sum) { c += w[i] * layerMacroColor(i, xz, y, maps); }
+    if (w[i] > 0.02 * sum) { c += w[i] * layerMacroColorDry(i, xz, y, maps, dryField); }
   }
   return c / max(sum, 1e-4);
 }
