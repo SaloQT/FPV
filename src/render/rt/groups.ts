@@ -117,7 +117,7 @@ export function buildGroups(s: GroupSources): RtGroups {
       const dst = i === 0 ? tex.tmpA.view : i === 1 ? tex.tmpB.view : signalView[sig];
       return d.createBindGroup({
         label: `rt ${sig} atrous ${i} ${p}`, layout: i === ATROUS_ITERATIONS - 1 ? finalLayout : L.atrousRgba,
-        entries: [buf(0, s.params), view(1, tex.auxDepth[p].view), view(2, tex.auxNormal[p].view), view(3, src), view(4, h.mom[p].view), view(5, dst)],
+        entries: [buf(0, s.params), view(1, tex.auxDepth[p].view), view(2, tex.auxNormal[p].view), view(3, src), view(4, h.mom[p].view), view(5, dst), buf(6, tex.varSum)],
       });
     }));
   }

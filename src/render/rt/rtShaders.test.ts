@@ -75,6 +75,34 @@ describe('fp16 safety of the RT passes', () => {
   });
 });
 
+describe('a-trous neighbourhood moment sum', () => {
+  // The 3x3 sum that steers sigmaL depends only on the moments texture, the texel and the RT size, and all three iterations of a signal
+  // read the same moments texture, so the sum is computed once (iteration 0, VARSTORE) and read back by iterations 1 and 2. The scratch is
+  // an f32 buffer, so the read-back is the value the later iterations would have recomputed, bit for bit.
+  const src = (defines: Record<string, string | number | boolean>) => resolveShader('rt/atrous.wgsl', { GRP: 1, GI: true, OUTFMT: 'rgba16float', ...defines });
+
+  it('computes the 3x3 moment sum in the first iteration and stores it to the scratch buffer', () => {
+    const first = src({ ITER: '0.0', VARSTORE: true });
+    expect(first).toContain('textureLoad(momTex, q, 0).w');
+    expect(first).toContain('varBuf[u32(px.y) * u32(dims.x) + u32(px.x)] = varSum;');
+  });
+
+  it.each(['1.0', '2.0'])('reads it back instead of re-fetching the moments in iteration %s', (iter) => {
+    const later = src({ ITER: iter });
+    expect(later).toContain('let varSum = varBuf[u32(px.y) * u32(dims.x) + u32(px.x)];');
+    // No moment fetch survives in the sigmaL path (the FINAL GI debug view's own momTex read is not part of it).
+    expect(later).not.toContain('textureLoad(momTex, q, 0).w');
+  });
+
+  it('only skips the scratch for the sky texels that every iteration skips alike', () => {
+    // The z <= 0 early return precedes the scratch in every iteration, so no iteration reads a texel the first one did not write.
+    for (const iter of ['0.0', '1.0', '2.0']) {
+      const s = src({ ITER: iter, ...(iter === '0.0' ? { VARSTORE: true } : {}) });
+      expect(s.indexOf('if (z <= 0.0) {')).toBeLessThan(s.indexOf('varSum'));
+    }
+  });
+});
+
 describe('a-trous accumulator width', () => {
   // The shadow signal is single-channel (shadow.wgsl writes vec4f(vis, 0, 0, 0) and only .x is read back), so its accumulator is a
   // scalar. GI and SPEC genuinely consume .a (dstValue's confidence divide and the AO debug views) and must keep the rgba form.

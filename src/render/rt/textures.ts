@@ -18,6 +18,12 @@ export class RtTextures {
   readonly shadow: History;
   readonly gi: History;
   spec: History | null = null;
+  /**
+   * Per-texel a-trous scratch (one f32 per RT texel): the neighbourhood moment sum, which every iteration of a signal would otherwise
+   * recompute from the same moments texture. A f32 buffer round-trips a f32 value bit-exactly, so the later iterations read back exactly
+   * what they would have recomputed. A buffer, so it is not counted in `bytes`.
+   */
+  readonly varSum: GPUBuffer;
   bytes = 0;
   private readonly all: GPUTexture[] = [];
 
@@ -30,6 +36,7 @@ export class RtTextures {
     this.tmpB = this.make('rt tmp B', 'rgba16float');
     this.shadow = this.history('shadow');
     this.gi = this.history('gi');
+    this.varSum = device.createBuffer({ label: 'rt a-trous variance', size: this.width * this.height * 4, usage: GPUBufferUsage.STORAGE });
   }
 
   /** The specular history is only allocated once the quality tier asks for it. */
@@ -53,5 +60,6 @@ export class RtTextures {
   destroy(): void {
     for (const t of this.all) t.destroy();
     this.all.length = 0;
+    this.varSum.destroy();
   }
 }

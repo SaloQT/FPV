@@ -48,8 +48,8 @@ export function createLayouts(device: GPUDevice): RtLayouts {
       uniform(0), { binding: 1, visibility: C, texture: { sampleType: 'depth' } }, tex2d(2), tex2d(3), store2d(4, 'r32float'), store2d(5, 'rgba16float'),
     ]),
     temporal: layout('temporal', [uniform(0), ...range(1, 9), storageRo(10), store2d(11, 'rgba16float'), store2d(12, 'rgba16float')]),
-    atrousRgba: layout('atrous rgba', [uniform(0), ...range(1, 4), store2d(5, 'rgba16float')]),
-    atrousR32: layout('atrous r32', [uniform(0), ...range(1, 4), store2d(5, 'r32float')]),
+    atrousRgba: layout('atrous rgba', [uniform(0), ...range(1, 4), store2d(5, 'rgba16float'), storageRw(6)]),
+    atrousR32: layout('atrous r32', [uniform(0), ...range(1, 4), store2d(5, 'r32float'), storageRw(6)]),
     latch: layout('latch', [uniform(0), storageRw(1)]),
   };
 }

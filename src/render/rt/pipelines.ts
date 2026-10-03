@@ -38,6 +38,8 @@ export async function createPipelines(rc: RenderContext, L: RtLayouts): Promise<
     const last = i === ATROUS_ITERATIONS - 1;
     const toR32 = s === 'shadow' && last;
     const defines: Defines = { GRP: 1, [SIGNAL_DEFINE[s]]: true, ITER: `${i}.0`, OUTFMT: toR32 ? 'r32float' : 'rgba16float', FINAL: last };
+    // Only the first iteration computes the neighbourhood moment sum; the rest read it back (see shaders/rt/atrous.wgsl).
+    if (i === 0) defines.VARSTORE = true;
     return make(`${s} atrous ${i}`, 'atrous', defines, localLayout(toR32 ? L.atrousR32 : L.atrousRgba));
   }));
   const [aux, latch, probe, probePlan, probeCompact, ...rest] = await Promise.all([

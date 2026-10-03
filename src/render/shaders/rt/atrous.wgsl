@@ -9,6 +9,7 @@
 @group(${GRP}) @binding(3) var srcTex : texture_2d<f32>;
 @group(${GRP}) @binding(4) var momTex : texture_2d<f32>;
 @group(${GRP}) @binding(5) var dstTex : texture_storage_2d<${OUTFMT}, write>;
+@group(${GRP}) @binding(6) var<storage, read_write> varBuf : array<f32>;
 
 const ITER : f32 = ${ITER};
 const LUMA_FLOOR : f32 = 0.01;
@@ -71,6 +72,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let n = octDecode(an.xy);
   let pos = worldFromLinear(pixelUv(rtSrc(px)), z);
 
+  // The 3x3 moment sum that steers sigmaL is a pure function of momTex, the texel and the RT size, and momTex is the same texture for all
+  // three iterations of a frame - so only the first iteration computes it. Later iterations read it back (a f32 value stored to a f32 buffer
+  // is bit-identical to recomputing it), which removes 18 of the 27 moment fetches per texel. The early return above covers exactly the texels
+  // that skip the write, and it runs before this point in every iteration alike, so a read is never uninitialised.
+#ifdef VARSTORE
   var varSum = 0.0;
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
@@ -78,6 +84,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       varSum += textureLoad(momTex, q, 0).w * select(0.5, 0.25, i != 0) * select(0.5, 0.25, j != 0);
     }
   }
+  varBuf[u32(px.y) * u32(dims.x) + u32(px.x)] = varSum;
+#else
+  let varSum = varBuf[u32(px.y) * u32(dims.x) + u32(px.x)];
+#endif
   let sigmaL = 4.0 * pow(0.6, ITER) * sqrt(max(varSum, 0.0)) + LUMA_FLOOR;
   let lc = tapLuma(centre);
   let zTol = 0.005 * z + 0.02;
