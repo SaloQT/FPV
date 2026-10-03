@@ -18,7 +18,7 @@ node tools/perf-terrain-compare.mjs --baseline ../fpv-round3-baseline --out ../r
 node tools/perf-compare.mjs --baseline ../fpv-round3-baseline --out ../round3-physics-incremental.json
 ```
 
-For cumulative comparison, point those tools at a clean original-upstream checkout. Node 24+ is required. The terrain comparison loads each checkout's actual Clipmap, WaterMask and TilePayload; only pre-cache upstream checkouts use frozen original packing loops. It first checks 10,000 exact active GPU-payload frames, then performs alternating timed trials. This is CPU submission preparation, not hardware FPS.
+For cumulative comparison, point those tools at a clean original-upstream checkout. Node 24+ is required. The terrain comparison loads each checkout's actual Clipmap, WaterMask and TilePayload; only pre-cache upstream checkouts use frozen original packing loops. It first checks 20,000 exact active GPU-payload frames across sparse, dry, typical and dense water maps, then performs alternating timed trials. This is CPU submission preparation, not hardware FPS.
 
 The older `perf-terrain-payload.mjs` isolates payload caching with the CURRENT water-query algorithm on both arms. Its frozen-packing reference is not a full previous-release comparison; use `perf-terrain-compare.mjs` for that.
 

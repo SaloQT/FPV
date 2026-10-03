@@ -72,7 +72,8 @@ export class WaterMask {
     const z0 = Math.floor(za / BLOCK), z1 = Math.floor(zb / BLOCK) + 1;
     if (x1 <= x0 || z1 <= z0) return false;
     const stride = this.blocks + 1, prefix = this.wetPrefix;
-    // Unsigned subtraction also preserves exact counts if a prefix wraps.
+    // Normal terrain grids have fewer than 2^32 blocks, so these integer counts
+    // are exact. This is not an unbounded-size summed-area table.
     return ((prefix[z1 * stride + x1] - prefix[z0 * stride + x1]
       - prefix[z1 * stride + x0] + prefix[z0 * stride + x0]) >>> 0) !== 0;
   }

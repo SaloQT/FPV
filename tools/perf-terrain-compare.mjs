@@ -37,7 +37,7 @@ const [before, after] = await Promise.all([load(base), load(root)]);
 const n = 1024, origin = -1024, frames = 6000;
 const heights = Float32Array.from({ length: n * n }, (_, i) => 50 + 40 * Math.sin((i % n) / 120) * Math.cos(Math.floor(i / n) / 120));
 heights[0] = 0;
-function mask(m, water) { return new m.WaterMask(heights, n, 2, [origin, origin], 0, 90, water === 'dry' ? -1 : 1); }
+function mask(m, water) { return new m.WaterMask(heights, n, 2, [origin, origin], 0, 90, water === 'dry' ? -1 : water === 'typical' ? 20 : water === 'dense' ? 49 : 1); }
 function pipeline(m, waterMask) {
   const clip = new m.Clipmap(), frustum = new m.Frustum(), payload = m.TilePayload ? new m.TilePayload(clip.tiles) : null;
   const data = payload ? payload.data : new Float32Array(2 * m.MAX_TILES * m.TILE_FLOATS);
@@ -81,9 +81,19 @@ function run(m, waterMask, mode, count) {
 }
 const metadata = { baselineCommit: git(base, 'rev-parse', 'HEAD'), optimizedCommit: git(root, 'rev-parse', 'HEAD'), node: process.version,
   timestamp: new Date().toISOString(), baselinePacking: before.TilePayload ? 'actual baseline TilePayload' : 'frozen original index.ts packing loops' };
-const result = { metadata, frames, exactPayloadFramesCompared: 0, samples: [], note: 'CPU build/frustum/water query/packing only; no native GPU upload timing or FPS claims' };
+const result = { metadata, frames, exactPayloadFramesCompared: 0, constructors: [], samples: [], note: 'CPU build/frustum/water query/packing only; no native GPU upload timing or FPS claims' };
 const modes = ['stable', 'slow', 'moving', 'boundary', 'adversarial'];
-for (const water of ['sparse', 'dry']) for (const mode of modes) {
+for (const water of ['sparse', 'dry', 'typical', 'dense']) {
+  const beforeMs = [], afterMs = [];
+  mask(before, water); mask(after, water);
+  for (let i = 0; i < 7; i++) {
+    const run = m => { const start = performance.now(); mask(m, water); return performance.now() - start; };
+    if (i % 2) { afterMs.push(run(after)); beforeMs.push(run(before)); }
+    else { beforeMs.push(run(before)); afterMs.push(run(after)); }
+  }
+  result.constructors.push({ water, beforeMs, afterMs });
+}
+for (const water of ['sparse', 'dry', 'typical', 'dense']) for (const mode of modes) {
   const bm = mask(before, water), am = mask(after, water), bp = pipeline(before, bm), ap = pipeline(after, am);
   for (let i = 0; i < 1000; i++) {
     const b = bp.frame(mode, i), a = ap.frame(mode, i);
