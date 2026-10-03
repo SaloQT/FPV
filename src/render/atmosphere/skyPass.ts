@@ -17,6 +17,9 @@ export class SkyPass {
   private readonly milkyWay: GPUTexture;
   private readonly planetBuffer: GPUBuffer;
   private readonly planetData = new Float32Array(MAX_PLANETS * STAR_FLOATS);
+  private readonly planetBits = new Uint32Array(this.planetData.buffer);
+  private readonly uploadedPlanetBits = new Uint32Array(MAX_PLANETS * STAR_FLOATS);
+  private uploadedPlanetCount = -1;
   private starBuffer: GPUBuffer | null = null;
   private stars: PackedStars | null = null;
   private starCount = 0;
@@ -80,7 +83,16 @@ export class SkyPass {
   /** Per-frame CPU work: planet instances and the star count for the magnitude limit. */
   update(f: FrameInfo, magnitudeLimit: number): void {
     this.planetCount = packPlanets(f.astro.planets, this.planetData);
-    if (this.planetCount > 0) this.rc.device.queue.writeBuffer(this.planetBuffer, 0, this.planetData as Float32Array<ArrayBuffer>, 0, this.planetCount * STAR_FLOATS);
+    const words = this.planetCount * STAR_FLOATS;
+    // The astronomy clock normally reuses its state between evaluations. Compare packed bits rather than
+    // object identity: dev callers may mutate planets in place, and signed zero / NaN must retain GPU bytes.
+    let changed = this.planetCount !== this.uploadedPlanetCount;
+    for (let i = 0; !changed && i < words; i++) changed = this.planetBits[i] !== this.uploadedPlanetBits[i];
+    if (changed && words > 0) {
+      this.rc.device.queue.writeBuffer(this.planetBuffer, 0, this.planetData as Float32Array<ArrayBuffer>, 0, words);
+      this.uploadedPlanetBits.set(this.planetBits);
+    }
+    this.uploadedPlanetCount = this.planetCount;
     this.starCount = this.stars ? starCountBrighterThan(this.stars.magnitudes, magnitudeLimit) : 0;
   }
 
