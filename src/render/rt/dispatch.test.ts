@@ -8,8 +8,9 @@ import { createRTModule } from './index';
 interface Dispatch { label: string; size: number[] }
 
 function context(width: number, height: number, specular: boolean): RenderContext {
-  const resource = (desc: { label?: string; size?: number } = {}) => ({ ...desc, destroy() {}, createView: () => ({}) });
+  const resource = (desc: { label?: string; size?: number } = {}) => ({ ...desc, destroy() {}, createView: () => ({}), getMappedRange: () => new ArrayBuffer(desc.size ?? 16), unmap() {} });
   const device = {
+    limits: { maxComputeWorkgroupsPerDimension: 65535, maxStorageBufferBindingSize: 128 * 1024 * 1024, maxBufferSize: 256 * 1024 * 1024 },
     queue: { writeBuffer() {}, writeTexture() {} },
     createBuffer: resource,
     createTexture: resource,
@@ -33,7 +34,7 @@ function context(width: number, height: number, specular: boolean): RenderContex
 describe('RT dispatch dimensions', () => {
   beforeEach(() => {
     vi.stubGlobal('GPUShaderStage', { COMPUTE: 4 });
-    vi.stubGlobal('GPUBufferUsage', { STORAGE: 128, UNIFORM: 64, COPY_DST: 8 });
+    vi.stubGlobal('GPUBufferUsage', { STORAGE: 128, UNIFORM: 64, COPY_DST: 8, INDIRECT: 256 });
     vi.stubGlobal('GPUTextureUsage', { TEXTURE_BINDING: 4, STORAGE_BINDING: 8, COPY_SRC: 1, COPY_DST: 2 });
   });
   afterEach(() => vi.unstubAllGlobals());

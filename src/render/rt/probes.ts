@@ -33,6 +33,14 @@ export interface ProbeImg { texture: GPUTexture; view: GPUTextureView }
 export interface ProbeSet { r: ProbeImg; g: ProbeImg; b: ProbeImg }
 export type Vec3i = [number, number, number];
 
+export interface ProbeWork { ids: GPUBuffer; args: GPUBuffer }
+
+/** A compact trace uses one x workgroup per active probe. Larger grids retain the original 3-D dispatch. */
+export function canCompactProbes(total: number, limits: Pick<GPUSupportedLimits, 'maxComputeWorkgroupsPerDimension' | 'maxStorageBufferBindingSize' | 'maxBufferSize'>): boolean {
+  return Number.isSafeInteger(total) && total > 0 && total <= 0x7fffffff && total <= limits.maxComputeWorkgroupsPerDimension
+    && Math.max(total * 4, 16) <= Math.min(limits.maxStorageBufferBindingSize, limits.maxBufferSize);
+}
+
 /**
  * Camera-centred toroidal grid of SH-L1 radiance probes (double-buffered: the update reads one set and writes the other).
  * Lattice coordinate c lives at texel posmod(c, dim); the window [lo, lo + dim) follows the camera in whole probe steps, so probes
@@ -46,6 +54,7 @@ export class ProbeGrid {
   readonly total: number;
   /** Rotating subset: probe id % stride == frame % stride is refreshed each frame. */
   readonly stride: number;
+  readonly work: ProbeWork | null;
   lo: Vec3i = [0, 0, 0];
   prevLo: Vec3i = [0, 0, 0];
   allFresh = true;
@@ -60,6 +69,14 @@ export class ProbeGrid {
     this.stride = probeStride(this.total, q.raysPerProbe, limits.rayBudget, limits.maxStride);
     const set = (i: number): ProbeSet => ({ r: this.make(device, `rt probe R ${i}`), g: this.make(device, `rt probe G ${i}`), b: this.make(device, `rt probe B ${i}`) });
     this.sets = [set(0), set(1)];
+    this.work = null;
+    if (this.stride > 1 && canCompactProbes(this.total, device.limits)) {
+      const ids = device.createBuffer({ label: 'rt active probe ids', size: this.total * 4, usage: GPUBufferUsage.STORAGE });
+      const args = device.createBuffer({ label: 'rt active probe dispatch', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+      new Uint32Array(args.getMappedRange()).set([0, 1, 1, 0]);
+      args.unmap();
+      this.work = { ids, args };
+    }
   }
 
   private make(device: GPUDevice, label: string): ProbeImg {
@@ -76,7 +93,9 @@ export class ProbeGrid {
     return limits.rayBudget === this.limits.rayBudget && limits.maxStride === this.limits.maxStride && q.dim[0] === this.dim[0] && q.dim[1] === this.dim[1] && q.dim[2] === this.dim[2] && q.spacing === this.spacing && q.raysPerProbe === this.raysPerProbe;
   }
 
-  get bytes(): number { return this.total * 8 * 6; }
+  get bytes(): number { return this.total * 8 * 6 + (this.work ? this.total * 4 + 16 : 0); }
+  /** Fresh-all and stride-one updates do not benefit from planning/compaction. */
+  get useCompact(): boolean { return this.work !== null && !this.allFresh && this.stride > 1; }
   get raysPerFrame(): number { return Math.ceil(this.total / this.stride) * this.raysPerProbe; }
 
   /** Forget every stored probe: the next update traces the whole grid from scratch. */
@@ -94,6 +113,8 @@ export class ProbeGrid {
   commit(): void { this.valid = true; }
 
   destroy(): void {
+    this.work?.ids.destroy();
+    this.work?.args.destroy();
     for (const t of this.textures) t.destroy();
     this.textures.length = 0;
   }

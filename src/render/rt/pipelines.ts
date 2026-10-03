@@ -13,6 +13,8 @@ export interface RtPipelines {
   aux: GPUComputePipeline;
   latch: GPUComputePipeline;
   probe: GPUComputePipeline;
+  probePlan: GPUComputePipeline;
+  probeCompact: GPUComputePipeline;
   trace: Record<Signal, GPUComputePipeline>;
   temporal: Record<Signal, GPUComputePipeline>;
   atrous: Record<Signal, GPUComputePipeline[]>;
@@ -38,15 +40,17 @@ export async function createPipelines(rc: RenderContext, L: RtLayouts): Promise<
     const defines: Defines = { GRP: 1, [SIGNAL_DEFINE[s]]: true, ITER: `${i}.0`, OUTFMT: toR32 ? 'r32float' : 'rgba16float', FINAL: last };
     return make(`${s} atrous ${i}`, 'atrous', defines, localLayout(toR32 ? L.atrousR32 : L.atrousRgba));
   }));
-  const [aux, latch, probe, ...rest] = await Promise.all([
+  const [aux, latch, probe, probePlan, probeCompact, ...rest] = await Promise.all([
     make('aux', 'aux', { GRP: 1 }, localLayout(L.aux)),
     make('latch', 'latch', { GRP: 1 }, localLayout(L.latch)),
     make('probe update', 'probe_update', { GRP: 2 }, worldLayout(L.probe)),
+    make('probe plan', 'probe_plan', { GRP: 1 }, localLayout(L.probePlan)),
+    make('probe compact update', 'probe_update', { GRP: 2, COMPACT: true }, worldLayout(L.probeCompact)),
     ...trace, ...temporal, ...atrous.flat(),
   ]);
   const at = (i: number) => rest.slice(i, i + ATROUS_ITERATIONS);
   return {
-    aux, latch, probe,
+    aux, latch, probe, probePlan, probeCompact,
     trace: { shadow: rest[0], gi: rest[1], spec: rest[2] },
     temporal: { shadow: rest[3], gi: rest[4], spec: rest[5] },
     atrous: { shadow: at(6), gi: at(9), spec: at(12) },

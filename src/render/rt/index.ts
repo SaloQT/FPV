@@ -220,11 +220,24 @@ class RtModule implements RTModule {
     const par = this.parity;
     this.wx = Math.ceil(rc.gbuf.rtWidth / 8);
     this.wy = Math.ceil(rc.gbuf.rtHeight / 8);
+    const compact = this.probes.useCompact;
+    // Encode the reset every time, including capture() re-encodes of the same frame index.
+    if (compact) enc.clearBuffer(this.probes.work!.args, 0, 4);
     const pass = this.pass = enc.beginComputePass({ label: 'rt' });
     pass.setBindGroup(0, rc.frame.group);
     this.local(this.pipes.aux, groups.aux[par]);
     const dim = this.probes.dim;
-    this.traced(this.pipes.probe, groups.probe[par], dim[0], dim[1], dim[2]);
+    if (compact) {
+      pass.setPipeline(this.pipes.probePlan);
+      pass.setBindGroup(1, groups.probePlan![par]);
+      pass.dispatchWorkgroups(Math.ceil(dim[0] / 4), Math.ceil(dim[1] / 4), Math.ceil(dim[2] / 4));
+      pass.setPipeline(this.pipes.probeCompact);
+      pass.setBindGroup(1, rc.world.group);
+      pass.setBindGroup(2, groups.probeCompact![par]);
+      pass.dispatchWorkgroupsIndirect(this.probes.work!.args, 0);
+    } else {
+      this.traced(this.pipes.probe, groups.probe[par], dim[0], dim[1], dim[2]);
+    }
     this.probes.commit();
     this.signal('shadow', groups, par);
     this.signal('gi', groups, par);

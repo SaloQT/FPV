@@ -9,6 +9,9 @@
 @group(${GRP}) @binding(7) var newG : texture_storage_3d<rgba16float, write>;
 @group(${GRP}) @binding(8) var newB : texture_storage_3d<rgba16float, write>;
 @group(${GRP}) @binding(9) var<storage, read> prevPre : array<f32>;
+#ifdef COMPACT
+@group(${GRP}) @binding(12) var<storage, read> activeIds : array<u32>;
+#endif
 
 const GOLDEN_ANGLE : f32 = 2.399963;
 const PROBE_LIFT : f32 = 0.75;
@@ -23,7 +26,13 @@ fn posmod3(a : vec3i, m : vec3i) -> vec3i { return ((a % m) + m) % m; }
 @compute @workgroup_size(64)
 fn main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_index) lid : u32) {
   let dim = vec3i(rp.probeDim.xyz);
+#ifdef COMPACT
+  let activeId = activeIds[wg.x];
+  let udim = rp.probeDim.xyz;
+  let cell = vec3i(i32(activeId % udim.x), i32((activeId / udim.x) % udim.y), i32(activeId / (udim.x * udim.y)));
+#else
   let cell = vec3i(wg);
+#endif
   let lattice = rp.probeLo.xyz + posmod3(cell - rp.probeLo.xyz, dim);
   let prevLo = rp.probePrev.xyz;
   let inPrev = all(lattice >= prevLo) && all(lattice < prevLo + dim);

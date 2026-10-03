@@ -11,6 +11,8 @@ type Pair = [GPUBindGroup, GPUBindGroup];
 export interface RtGroups {
   aux: Pair;
   probe: Pair;
+  probePlan: Pair | null;
+  probeCompact: Pair | null;
   latch: GPUBindGroup;
   trace: Partial<Record<Signal, Pair>>;
   temporal: Partial<Record<Signal, Pair>>;
@@ -64,7 +66,26 @@ export function buildGroups(s: GroupSources): RtGroups {
   });
   const latch = d.createBindGroup({ label: 'rt latch', layout: L.latch, entries: [buf(0, s.params), buf(1, s.prevPre)] });
 
-  const groups: RtGroups = { aux, probe, latch, trace: {}, temporal: {}, atrous: {} };
+  const probePlan = probes.work ? both((p) => {
+    const read = probes.sets[p], write = probes.sets[p ^ 1];
+    return d.createBindGroup({
+      label: `rt probe plan ${p}`, layout: L.probePlan,
+      entries: [buf(0, s.params), view(3, read.r.view), view(4, read.g.view), view(5, read.b.view),
+        view(6, write.r.view), view(7, write.g.view), view(8, write.b.view), buf(9, s.prevPre), buf(12, probes.work!.ids), buf(13, probes.work!.args)],
+    });
+  }) : null;
+  const probeCompact = probes.work ? both((p) => {
+    const read = probes.sets[p], write = probes.sets[p ^ 1];
+    return d.createBindGroup({
+      label: `rt probes compact ${p}`, layout: L.probeCompact,
+      entries: [buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
+        view(3, read.r.view), view(4, read.g.view), view(5, read.b.view),
+        view(6, write.r.view), view(7, write.g.view), view(8, write.b.view),
+        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(12, probes.work!.ids)],
+    });
+  }) : null;
+
+  const groups: RtGroups = { aux, probe, probePlan, probeCompact, latch, trace: {}, temporal: {}, atrous: {} };
   for (const sig of SIGNALS) {
     const h = history[sig];
     if (!h) continue;
