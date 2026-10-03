@@ -48,4 +48,18 @@ describe('leaf-crown scatter model in the shaders', () => {
     expect(gi).toMatch(/vis \+= 1\.0 - hitSolidity\(h, chord\) \* \(1\.0 - saturate1\(h\.t \/ CONTACT_RANGE\)\)/);
     expect(gi).toMatch(/if \(h\.t < CONTACT_RANGE\)/);
   });
+  it('leaves the contact-visibility term bit-identical when the chord is shared and skipped past CONTACT_RANGE', () => {
+    const gi = read('rt/gi.wgsl');
+    const contactRange = Number(gi.match(/const CONTACT_RANGE\s*:\s*f32\s*=\s*([^;]+);/)?.[1]);
+    expect(contactRange).toBeGreaterThan(0);
+    const saturate1 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+    // The old march always evaluated the weight; the new one takes the weight's exact value past CONTACT_RANGE.
+    const oldTerm = (t: number, solidity: number) => 1.0 - solidity * (1.0 - saturate1(t / contactRange));
+    const newTerm = (t: number, solidity: number) => (t < contactRange ? oldTerm(t, solidity) : 1.0);
+    for (const t of [0, 0.25, 0.999, 1.5, 1.9999, 2, 2.0001, 3, 17.5, 1e4]) {
+      for (const solidity of [0, 0.25, 0.5, 0.999, 1]) {
+        expect(newTerm(t, solidity)).toBe(oldTerm(t, solidity));
+      }
+    }
+  });
 });
