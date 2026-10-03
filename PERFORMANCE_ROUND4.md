@@ -58,7 +58,7 @@ hit and therefore the downstream work, and the 15 ms of "node-load divergence" i
 the sweep turned out to be half the GI rays terminating early. The rebuilt pass-timer map is in **What the
 frame is actually made of** at the end of this file; trust that one over this table's first row.
 
-## The 20-term sweep: the BVH node loads are warp divergence, not bandwidth
+## The 20-term sweep, and two conclusions from it that had to be withdrawn
 
 A second sweep of 20 terms at 4K/ultra, control `w00` = **82.253 ms**, one term deleted per probe, output
 wrong on purpose. The full pass timers, because the frame total turns out to be a misleading instrument:
@@ -134,7 +134,71 @@ that I did not chase, and w17's first attempt failed the same way. w17 was fixed
 because a motion vector is inside the ~10.8 ms of G-buffer that the six valid G-buffer probes all failed to
 localise, and one more of them would not change the picture.
 
-## What the frame is actually made of
+## Two probes that closed the two open questions
+
+The sweep left exactly two things worth knowing and neither could be priced with a deletion probe, because
+both are about *size* rather than *work*. Both were run against a fresh control on the same tree
+(`ctl21` = **82.788 ms**, gbuffer 13.057, giRays 28.393), and both keep the traversal and the output
+bit-identical, so they are the first probes here whose only variable is bytes moved.
+
+**`w21` — how much is BVH node traffic worth?** Double the node record from 32 B to 64 B, leaving the
+first 8 words and everything the shader reads untouched. Same nodes, same visits, same results; each
+scattered node fetch simply moves twice the bytes.
+
+| | frame | gbuffer | giRays |
+|---|---|---|---|
+| `ctl21` control | 82.788 | 13.057 | 28.393 |
+| `w21` node 32 → 64 B | 83.537 (**+0.90%**) | 13.167 | 28.780 (+0.39) |
+
+**Doubling all node traffic costs 0.39 ms in the pass that uses it.** That is the whole prize, and it is
+small enough to end the question. The GPU only ever reads 2 of a node record's 8 words, so a 4-word record
+looked like a free 4× cut — but the child boxes have to live somewhere, and they are 48 of the 96 bytes a
+visit moves. Shrinking the record from 32 B to 16 B removes 16 of 96 bytes, a predicted **0.07 ms**, an
+order of magnitude under the 0.3% bar. Halving the boxes instead means quantising them, which changes
+which nodes are culled and therefore the image. **The BVH is closed**: not because traversal is free, but
+because 96 bytes per visit is close to what a binary tree of float AABBs actually costs, and the measured
+sensitivity to that number is 0.4 ms per doubling.
+
+**`w22` — are the per-layer mean-colour lookups worth hoisting?** `dsPlane` calls `dsPlain` twice and each
+call re-fetches the layer's mean colour at the same fixed coordinate, same layer, same mip — a value that
+does not depend on the pixel at all, so hoisting it into a per-layer constant table is exactly bit-exact
+and looked free to do.
+
+| | frame | gbuffer |
+|---|---|---|
+| `ctl21` control | 82.788 | 13.057 |
+| `w22` mean lookups removed | 83.720 | 13.195 (**+0.14**) |
+
+**0.14 ms: free.** The repeated identical fetch is an L1 hit every time, so the redundancy that made the
+code look wasteful costs nothing to execute. The 2.11 ms that `w17` attributed to the per-layer detail
+textures is in the *distinct* per-layer, per-pixel samples, which genuinely differ and cannot be shared.
+**Rejected before writing a line of it.**
+
+Both probes also re-confirm the noise floor from the other direction: the frame total moved +0.90% and
++1.13% while the pass each probe actually touched moved +0.39 ms and +0.14 ms, and in `w22`'s case the
+frame moved *against* the pass by more than the pass moved at all.
+
+## A bit-exact BVH change that was correct, verified, and still not worth landing
+
+The child-box array (`bvhKids`: each node's two children's boxes, indexed by the parent, so a visit issues
+one independent 64 B fetch instead of a 32 B node fetch followed by a *dependent* 64 B child-box fetch).
+Same floats, same arithmetic, same visit order, same push order — bit-exact by construction, and the
+oracle agreed (all three tags, every image and every probe atlas byte-identical; the only diff in the whole
+result was `bvhBytes` 139264 → 278528, which is the memory this array costs).
+
+Paired interleaved A/B, 858 frames per arm, 10 seeds, both arms built from the same HEAD:
+
+| round | base | candidate | delta |
+|---|---|---|---|
+| 1 | 91.64 ms | 91.53 ms | −0.12% |
+| 2 | 90.83 ms | 91.58 ms | **+0.83%** |
+
+A −0.12% and a +0.83% on 858 frames each is a spread, not a result: with enough warps in flight the second
+load was never the critical path, so removing its dependency bought nothing. **Not landed** — it doubles
+BVH node memory and adds 8 files for a change indistinguishable from zero. `w21` then explained why the
+gain was never there to be had.
+
+
 
 Rebuilt from the pass timers of the same control, because it is the version of this map that survives the
 correction above. The RT pass's 59.5 ms is not one thing:
@@ -154,12 +218,18 @@ correction above. The RT pass's 59.5 ms is not one thing:
 **Two kernels are 65% of the frame: GI ray tracing and à-trous denoising.** The à-trous half is
 irreducible bit-exactly — it is `pow`, two `exp` and a per-tap mat4 unprojection per tap, and none of
 those can be reassociated into cheaper arithmetic without changing the bits. The GI half is where the
-remaining headroom is, and it is where the next probe has to go: one that changes the *size* of the BVH
-node record and nothing else. Same nodes, same visits, same results, twice the scattered bytes. If that
-costs real time, node traffic is a lever and a 4-word node record (the GPU only ever reads 2 of the 8
-words) is a bit-exact 4× reduction of it. If it costs nothing, the tree already sits in cache, the
-traversal is ALU- or dependency-bound, and the BVH is done and the GI pass's cost is in its shading and
-terrain work instead. Either answer is worth having, and neither is knowable without measuring.
+remaining headroom would have to be, and `w21` has now bounded it: all BVH node traffic is worth 0.39 ms
+per doubling, so the traversal's own memory cost is nearly exhausted and the pass's 28 ms is in its slab
+arithmetic, its primitive intersection and its shading. The G-buffer's 12.9 ms is 2.11 ms of per-layer
+detail sampling (`w17`) plus roughly 10.8 ms that six separate fragment probes could not move at all —
+which points at rasterisation and vertex work rather than shading, and neither can be changed without
+changing the image.
+
+That is the honest floor of this round. Across four rounds, 40+ probes and one landed win, the measured
+addressable headroom left under the byte-identical rule is on the order of **1–2 ms, under 2%**, spread
+thin enough that no single remaining change clears the 0.3% bar on its own. The remaining large levers —
+quantised BVH boxes, fewer GI rays, a cheaper à-trous weight, lower internal resolution — all change the
+output, which is the one thing this work is not allowed to do.
 
 ## Landed
 
