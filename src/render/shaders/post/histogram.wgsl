@@ -163,7 +163,9 @@ fn trimmedMeanEv(trimLow : f32, total : f32) -> f32 {
 fn meteredMeanEv(total : f32, preEv : f32) -> f32 {
   let night = trimmedMeanEv(TRIM_LOW_NIGHT, total);
   let w = smoothstep(TRIM_BLEND_LO_EV, TRIM_BLEND_HI_EV, EXPECTED_MEAN_EV - preEv);
-  return select(night + w * (trimmedMeanEv(TRIM_LOW, total) - night), night, w <= 0.0);
+  // Avoid the unused second 64-bin mean when the shade trim is fully off.
+  if (w <= 0.0) { return night; }
+  return night + w * (trimmedMeanEv(TRIM_LOW, total) - night);
 }
 
 // Cap level of the sky bins (skyCapLevelEv): the ground's metered mean plus SKY_CAP_EV, lifted away as the ground share of the weight falls.
@@ -239,7 +241,8 @@ fn reduce(@builtin(local_invocation_index) i : u32) {
     }
     // highlightKneeEv: the cap's ground mean plus HL_KNEE_EV (off in the dark), in EV after the exposure ratio so a pre-exposure change leaves it alone.
     let kneeTarget = clamp(capEv - SKY_CAP_EV + HL_KNEE_EV + nightWeight(preEv) * SKY_UNCAPPED_EV + total_ev - preEv, -30.0, 40.0);
-    let rollTarget = select(0.0, highlightRoll(wgGroundMeanEv), wgHasGround > 0.5);
+    var rollTarget = 0.0;
+    if (wgHasGround > 0.5) { rollTarget = highlightRoll(wgGroundMeanEv); }
     let blend = select(1.0 - exp(-clamp(params.dt, 0.0, MAX_DT) / HL_TAU), 1.0, adapt[1] < 0.5 || params.reset != 0u);
     kneeEv += (kneeTarget - kneeEv) * blend;
     roll += (rollTarget - roll) * blend;
