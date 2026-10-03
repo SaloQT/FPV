@@ -52,6 +52,29 @@ function noisyData(seed: number): TerrainData {
   return makeData(h);
 }
 
+describe('normal cell cache', () => {
+  it('is bit-exact with fresh uncached queries across repeats, cell transitions, borders and slopes', () => {
+    const data = noisyData(938);
+    const cached = createTerrainSampler(data);
+    const rng = new Rng(712);
+    const out: Vec3 = [0, 0, 0];
+    for (let k = 0; k < 800; k++) {
+      const x = rng.range(ORIGIN - CELL, FAR + CELL);
+      const z = rng.range(ORIGIN - CELL, FAR + CELL);
+      for (const delta of [0, 0.001, -0.001, CELL, 0]) {
+        const fresh = createTerrainSampler(data);
+        expect(cached.normalAt(x + delta, z, out)).toEqual(fresh.normalAt(x + delta, z));
+        expect(cached.slopeAt(x + delta, z)).toBe(fresh.slopeAt(x + delta, z));
+      }
+    }
+    for (const x of [ORIGIN - 100, ORIGIN, FAR, FAR + 100]) {
+      for (const z of [ORIGIN - 100, ORIGIN, FAR, FAR + 100]) {
+        expect(cached.normalAt(x, z, out)).toEqual(createTerrainSampler(data).normalAt(x, z));
+      }
+    }
+  });
+});
+
 describe('heightAt', () => {
   it('reproduces a plane exactly, since the triangulation is planar on planes', () => {
     const s = createTerrainSampler(sampleField(plane));

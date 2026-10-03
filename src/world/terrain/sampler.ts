@@ -25,6 +25,8 @@ class GridSampler implements TerrainSampler {
   private readonly cell: number;
   private readonly inv: number;
   private readonly vertex = new Float64Array(12);
+  private normalCellX = -1;
+  private normalCellZ = -1;
   private readonly slopeScratch: Vec3 = [0, 0, 0];
   private cellMax: Float32Array | null = null;
 
@@ -67,10 +69,16 @@ class GridSampler implements TerrainSampler {
     const fx = tx - i;
     const fz = tz - j;
     const v = this.vertex;
-    this.vertexNormal(i, j, 0);
-    this.vertexNormal(i + 1, j, 3);
-    this.vertexNormal(i, j + 1, 6);
-    this.vertexNormal(i + 1, j + 1, 9);
+    // Terrain is immutable. Nearby physics contacts reuse these exact Float64
+    // vertex normals; interpolation still runs at each query's own coordinates.
+    if (i !== this.normalCellX || j !== this.normalCellZ) {
+      this.vertexNormal(i, j, 0);
+      this.vertexNormal(i + 1, j, 3);
+      this.vertexNormal(i, j + 1, 6);
+      this.vertexNormal(i + 1, j + 1, 9);
+      this.normalCellX = i;
+      this.normalCellZ = j;
+    }
     const w00 = (1 - fx) * (1 - fz);
     const w10 = fx * (1 - fz);
     const w01 = (1 - fx) * fz;
