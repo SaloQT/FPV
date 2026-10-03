@@ -3,6 +3,7 @@ import { DEPTH_STATE, GBUFFER_TARGETS } from '../contracts';
 import { Clipmap, Frustum, MAX_TILES, TILE_BYTES, TILE_FLOATS, buildTileIndices, levelCount } from './clipmap';
 import { createDetailTextures, type DetailTextures } from './detailTextures';
 import { WaterMask } from './waterMask';
+import { TilePayload } from './tilePayload';
 import type { TerrainData } from '../../contracts';
 
 export interface TerrainStats {
@@ -39,7 +40,7 @@ export function createTerrainModule(): TerrainModule {
 
   const clipmap = new Clipmap();
   const frustum = new Frustum();
-  const tileData = new Float32Array(2 * MAX_TILES * TILE_FLOATS);
+  const payload = new TilePayload(clipmap.tiles);
   const paramsF = new Float32Array(8);
   const paramsU = new Uint32Array(paramsF.buffer);
   const stats: TerrainStats = { levels: 0, terrainTiles: 0, waterTiles: 0, culledTiles: 0, vertices: 0, triangles: 0, draws: 0 };
@@ -48,28 +49,6 @@ export function createTerrainModule(): TerrainModule {
   let mask: WaterMask | null = null;
   let debugMode = 0;
 
-  function copyTile(dst: number, src: Float32Array, srcTile: number): void {
-    const o = dst * TILE_FLOATS, s = srcTile * TILE_FLOATS;
-    for (let k = 0; k < TILE_FLOATS; k++) tileData[o + k] = src[s + k];
-  }
-
-  function collectWater(count: number, t: TerrainData, m: WaterMask): number {
-    let n = 0;
-    const tiles = clipmap.tiles;
-    for (let i = 0; i < count; i++) {
-      const o = i * TILE_FLOATS, spacing = tiles[o + 4];
-      const x0 = t.origin[0] + tiles[o] * spacing, z0 = t.origin[1] + tiles[o + 1] * spacing;
-      if (m.regionBelow(x0, z0, x0 + tiles[o + 2] * spacing, z0 + tiles[o + 3] * spacing)) copyTile(count + n++, tiles, i);
-    }
-    return n;
-  }
-
-  function waterQuads(terrainCount: number, waterCount: number): number {
-    let quads = 0;
-    for (let i = 0; i < waterCount; i++) quads += tileData[(terrainCount + i) * TILE_FLOATS + 2] * tileData[(terrainCount + i) * TILE_FLOATS + 3];
-    return quads;
-  }
-
   const mod: TerrainModule = {
     name: 'terrain',
     stats,
@@ -77,6 +56,7 @@ export function createTerrainModule(): TerrainModule {
     init(rc: RenderContext) {
       const dev = rc.device;
       device = dev;
+      payload.invalidate();
       detail = createDetailTextures(rc);
       tileBuf = dev.createBuffer({ label: 'terrain-tiles', size: 2 * MAX_TILES * TILE_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       paramsBuf = dev.createBuffer({ label: 'terrain-params', size: paramsF.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -125,6 +105,7 @@ export function createTerrainModule(): TerrainModule {
 
     setScene(_rc: RenderContext, scene: SceneData) {
       terrain = scene.terrain;
+      payload.invalidate();
       const t = scene.terrain;
       mask = new WaterMask(t.height, t.resolution, t.cellSize, t.origin, t.minHeight, t.maxHeight, t.waterLevel);
     },
@@ -139,9 +120,9 @@ export function createTerrainModule(): TerrainModule {
       const cam = f.camera;
       frustum.setFromCamera(cam.pos, cam.quat, cam.fovY, cam.aspect);
       const count = clipmap.build(cam.pos[0], cam.pos[2], t.origin[0], t.origin[1], t.cellSize, levels, t.minHeight, t.maxHeight, frustum);
-      for (let i = 0; i < count; i++) copyTile(i, clipmap.tiles, i);
-      const water = mask && mask.enabled ? collectWater(count, t, mask) : 0;
-      device.queue.writeBuffer(tileBuf, 0, tileData, 0, (count + water) * TILE_FLOATS);
+      const changed = payload.update(count, t.origin[0], t.origin[1], mask);
+      const water = payload.waterCount;
+      if (changed) device.queue.writeBuffer(tileBuf, 0, payload.data, 0, (count + water) * TILE_FLOATS);
 
       paramsF[0] = mask && mask.enabled ? t.waterLevel : NO_WATER;
       paramsF[1] = f.time;
@@ -155,7 +136,7 @@ export function createTerrainModule(): TerrainModule {
       stats.waterTiles = water;
       stats.culledTiles = clipmap.stats.culledTiles;
       stats.vertices = (count + water) * VERTS_PER_TILE;
-      stats.triangles = (clipmap.stats.quads + waterQuads(count, water)) * 2;
+      stats.triangles = (clipmap.stats.quads + payload.waterQuads) * 2;
       stats.draws = (count > 0 ? 1 : 0) + (water > 0 ? 1 : 0);
     },
 
