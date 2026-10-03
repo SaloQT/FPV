@@ -87,7 +87,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   stride = max(1.0, round(stride * clamp(an.z / 0.6, 0.0, 1.0) * 1.5));
 #endif
   let stepPx = i32(stride);
+#ifdef SHADOW
+  // The shadow signal is a single scalar channel: tapLuma() and dstValue() read .x only, so .y/.z/.w of every source tap and of the
+  // accumulator are dead. Accumulating the scalar removes 3 of the 4 vector multiply-adds from each of the 25 taps, and lets the
+  // shader fetch just the one channel it uses. The other signals keep the full rgba accumulator.
+  var sum = 0.0;
+#else
   var sum = vec4f(0.0);
+#endif
   var wSum = 0.0;
   for (var j = -2; j <= 2; j++) {
     for (var i = -2; i <= 2; i++) {
@@ -102,9 +109,20 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let wn = pow(max(dot(n, nq), 0.0), 16.0);
       let wl = exp(-abs(lc - tapLuma(s)) / sigmaL);
       let w = tapWeight(i) * tapWeight(j) * wz * wn * wl;
+#ifdef SHADOW
+      sum += s.x * w;
+#else
       sum += s * w;
+#endif
       wSum += w;
     }
   }
+#ifdef SHADOW
+  // Reproduces select(centre, sum / wSum, ok) channel for channel: the scalar average carries .x, and the unused channels stay exactly
+  // what the rgba form stored (centre's, on the degenerate wSum path, 0.0 otherwise - s.y/.z/.w are 0, so sum.y/.z/.w were 0).
+  let acc = select(centre, vec4f(sum / wSum, 0.0, 0.0, 0.0), wSum > 1e-6);
+  textureStore(dstTex, px, fp16Safe(dstValue(acc, px)));
+#else
   textureStore(dstTex, px, fp16Safe(dstValue(select(centre, sum / wSum, wSum > 1e-6), px)));
+#endif
 }

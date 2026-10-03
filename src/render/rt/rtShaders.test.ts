@@ -74,3 +74,27 @@ describe('fp16 safety of the RT passes', () => {
     expect(constant(src, 'LUMA_CAP') ** 2).toBeLessThan(65504);
   });
 });
+
+describe('a-trous accumulator width', () => {
+  // The shadow signal is single-channel (shadow.wgsl writes vec4f(vis, 0, 0, 0) and only .x is read back), so its accumulator is a
+  // scalar. GI and SPEC genuinely consume .a (dstValue's confidence divide and the AO debug views) and must keep the rgba form.
+  const src = (defines: Record<string, string | number | boolean>) => resolveShader('rt/atrous.wgsl', { GRP: 1, ITER: '0.0', OUTFMT: 'rgba16float', ...defines });
+
+  it('accumulates a scalar for SHADOW, and still stores centre on the degenerate wSum path', () => {
+    const shadow = src({ SHADOW: true });
+    expect(shadow).toContain('var sum = 0.0;');
+    expect(shadow).toContain('sum += s.x * w;');
+    // sum.y/.z/.w were exactly 0 before (s.y/.z/.w are 0), so the vec4 form stored 0 there - except on the wSum <= 1e-6 fallback,
+    // where it stored centre. Reproducing both exactly is what keeps the stored texels identical.
+    expect(shadow).toContain('select(centre, vec4f(sum / wSum, 0.0, 0.0, 0.0), wSum > 1e-6)');
+    expect(shadow).not.toContain('sum += s * w;');
+  });
+
+  it.each<[string, Record<string, string | number | boolean>]>([['GI', { GI: true }], ['SPEC', { SPEC: true }]])(
+    'keeps the rgba accumulator for %s', (_name, defines) => {
+      const other = src(defines);
+      expect(other).toContain('var sum = vec4f(0.0);');
+      expect(other).toContain('sum += s * w;');
+      expect(other).not.toContain('sum += s.x * w;');
+    });
+});
