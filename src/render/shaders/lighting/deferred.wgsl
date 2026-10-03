@@ -147,17 +147,25 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let nv = max(dot(n, v), 1e-3);
 
   let r = atmosRadiusAtHeight(world.y);
-  let sunE = frame.sunIrradiance.rgb * frame.sunIrradiance.w * sampleTransmittance(r, frame.sunDir.y);
+  let sunOn = frame.sunIrradiance.w != 0.0;
   let moonUp = select(0.0, 1.0, frame.moonDir.y > HORIZON_EPS);
-  let moonE = frame.moonIrradiance.rgb * moonUp * sampleTransmittance(r, frame.moonDir.y);
+  var sunE = vec3f(0.0);
+  var moonE = vec3f(0.0);
+  // These are uniform light-enable gates, not intensity approximations. Keep the irradiance
+  // values for the ground bounce below, but do not sample extinction for an inactive light.
+  if (sunOn) { sunE = frame.sunIrradiance.rgb * frame.sunIrradiance.w * sampleTransmittance(r, frame.sunDir.y); }
+  if (moonUp > 0.0) { moonE = frame.moonIrradiance.rgb * moonUp * sampleTransmittance(r, frame.moonDir.y); }
 
   let rt = sampleRT(px, uv, depth, world, n);
   let visibility = rt.shadow;
   let keyIsMoon = frame.misc.w == 1u;
   let sunVis = select(visibility, 1.0, keyIsMoon);
   let moonVis = select(1.0, visibility, keyIsMoon);
-  let direct = directLight(frame.sunDir.xyz, n, v, diffuseColor, f0, rough, msc.g, sunE * sunVis, frame.sunDir.w)
-             + directLight(frame.moonDir.xyz, n, v, diffuseColor, f0, rough, msc.g, moonE * moonVis, frame.moonDir.w);
+  var sunDirect = vec3f(0.0);
+  var moonDirect = vec3f(0.0);
+  if (sunOn) { sunDirect = directLight(frame.sunDir.xyz, n, v, diffuseColor, f0, rough, msc.g, sunE * sunVis, frame.sunDir.w); }
+  if (moonUp > 0.0) { moonDirect = directLight(frame.moonDir.xyz, n, v, diffuseColor, f0, rough, msc.g, moonE * moonVis, frame.moonDir.w); }
+  let direct = sunDirect + moonDirect;
 
   let zenithSky = skyNits(vec3f(0.0, 1.0, 0.0));
   let ground = groundRadiance(sunE, moonE, zenithSky);
