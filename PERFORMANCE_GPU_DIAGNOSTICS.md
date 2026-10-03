@@ -33,4 +33,4 @@ The final aggregate suite passes 2,249 tests across 190 files. Strict TypeScript
 
 `tools/test-gpu-timestamp-capability.mjs` checks feature availability and real timestamp readback. `tools/test-gpu-profile-renderer.mjs` checks baseline, normal and profile renderer modes using a bundled renderer. Both accept `WEBGPU_MODULE` pointing to an optional official `webgpu` runtime; the application has no new runtime dependency. The archive includes exact logs, JSON results, image/atlas readbacks and bundle fingerprints.
 
-Use a fresh checkout for recovery. Do not overwrite an existing working tree with uncommitted changes. No remote push, merge or deployment of the simulator is included.
+Use a fresh checkout for recovery. Do not overwrite an existing working tree with uncommitted changes. No remote push or merge is included. (A temporary Cloudflare Workers preview of the built site has since been deployed from this branch — see the deployment section below. It is a throwaway preview account, not the user's own.)
