@@ -77,9 +77,12 @@ struct Env { sunE : vec3f, moonE : vec3f, zenith : vec3f, ground : vec3f }
 
 fn envAt(y : f32) -> Env {
   let r = atmosRadiusAtHeight(y);
-  let sunE = frame.sunIrradiance.rgb * frame.sunIrradiance.w * sampleTransmittance(r, frame.sunDir.y);
+  // Retain RGB * enable (including signed zero), but skip extinction for an exactly inactive light.
+  var sunE = frame.sunIrradiance.rgb * frame.sunIrradiance.w;
+  if (frame.sunIrradiance.w != 0.0) { sunE *= sampleTransmittance(r, frame.sunDir.y); }
   let moonUp = select(0.0, 1.0, frame.moonDir.y > HORIZON_EPS);
-  let moonE = frame.moonIrradiance.rgb * moonUp * sampleTransmittance(r, frame.moonDir.y);
+  var moonE = frame.moonIrradiance.rgb * moonUp;
+  if (moonUp > 0.0) { moonE *= sampleTransmittance(r, frame.moonDir.y); }
   let zenith = skyNits(vec3f(0.0, 1.0, 0.0));
   let direct = sunE * max(frame.sunDir.y, 0.0) + moonE * max(frame.moonDir.y, 0.0);
   return Env(sunE, moonE, zenith, GROUND_ALBEDO * (direct * INV_PI + 0.6 * zenith));
