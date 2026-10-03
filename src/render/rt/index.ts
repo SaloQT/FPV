@@ -229,7 +229,10 @@ class RtModule implements RTModule {
     this.signal('shadow', groups, par);
     this.signal('gi', groups, par);
     if (q.rtSpecular) this.signal('spec', groups, par);
-    this.local(this.pipes.latch, groups.latch);
+    // The latch writes one scalar, not one value per RT texel.
+    pass.setPipeline(this.pipes.latch);
+    pass.setBindGroup(1, groups.latch);
+    pass.dispatchWorkgroups(1);
     pass.end();
     this.pass = null;
   }
