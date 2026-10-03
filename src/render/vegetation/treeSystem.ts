@@ -109,8 +109,21 @@ export class TreeSystem {
 
   encodePre(enc: GPUCommandEncoder, rc: RenderContext): void {
     if (this.slots === 0) return;
-    enc.clearBuffer(this.counters);
+    this.clearCounters(enc);
     const pass = enc.beginComputePass({ label: 'tree-cull' });
+    this.encodeCull(pass, rc);
+    pass.end();
+    this.copyCounters(enc);
+  }
+
+  /** Clear before beginning the standalone or shared vegetation compute pass. */
+  clearCounters(enc: GPUCommandEncoder): void {
+    if (this.slots !== 0) enc.clearBuffer(this.counters);
+  }
+
+  /** The original two dispatches, also usable in the shared vegetation compute pass. */
+  encodeCull(pass: GPUComputePassEncoder, rc: RenderContext): void {
+    if (this.slots === 0) return;
     pass.setBindGroup(0, rc.frame.group);
     pass.setBindGroup(1, rc.world.group);
     pass.setPipeline(this.assets.cullPipe);
@@ -119,7 +132,11 @@ export class TreeSystem {
     pass.setPipeline(this.assets.finalizePipe);
     pass.setBindGroup(2, this.finalizeGroup);
     pass.dispatchWorkgroups(1);
-    pass.end();
+  }
+
+  /** Optional dev readback; call after the compute pass has ended. */
+  copyCounters(enc: GPUCommandEncoder): void {
+    if (this.slots === 0) return;
     if (this.staging && !this.copyQueued && !this.mapping && ++this.sinceSample >= SAMPLE_INTERVAL) {
       this.sinceSample = 0;
       enc.copyBufferToBuffer(this.counters, 0, this.staging, 0, COUNT_BYTES);

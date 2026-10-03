@@ -137,9 +137,21 @@ export class GrassSystem {
   }
 
   encodePre(enc: GPUCommandEncoder, rc: RenderContext): void {
-    const b = this.budget;
-    enc.clearBuffer(this.counters);
+    this.clearCounters(enc);
     const pass = enc.beginComputePass({ label: 'grass-cull' });
+    this.encodeCull(pass, rc);
+    pass.end();
+    this.copyCounters(enc);
+  }
+
+  /** Clear before beginning the standalone or shared vegetation compute pass. */
+  clearCounters(enc: GPUCommandEncoder): void {
+    enc.clearBuffer(this.counters);
+  }
+
+  /** The original four dispatches, also usable in the shared vegetation compute pass. */
+  encodeCull(pass: GPUComputePassEncoder, rc: RenderContext): void {
+    const b = this.budget;
     pass.setBindGroup(0, rc.frame.group);
     pass.setBindGroup(1, rc.world.group);
     pass.setPipeline(this.pipes.patchesPipe);
@@ -154,7 +166,10 @@ export class GrassSystem {
     pass.setPipeline(this.pipes.finDrawPipe);
     pass.setBindGroup(2, this.finGroup);
     pass.dispatchWorkgroups(1);
-    pass.end();
+  }
+
+  /** Optional dev readback; call after the compute pass has ended. */
+  copyCounters(enc: GPUCommandEncoder): void {
     if (this.staging && !this.copyQueued && !this.mapping && ++this.sinceSample >= 30) {
       this.sinceSample = 0;
       enc.copyBufferToBuffer(this.counters, 0, this.staging, 0, COUNTER_BYTES);

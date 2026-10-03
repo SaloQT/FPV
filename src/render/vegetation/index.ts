@@ -207,6 +207,19 @@ export function createVegetationModule(): VegetationModule {
 
     encodePre(enc: GPUCommandEncoder, ctx: RenderContext) {
       if (!scene) return;
+      if (grass && trees && trees.slots > 0) {
+        // Their writable buffers are disjoint; clear both before the shared pass and keep every
+        // dispatch in its original order. Dev-only copies can follow both systems' dispatches.
+        grass.clearCounters(enc);
+        trees.clearCounters(enc);
+        const pass = enc.beginComputePass({ label: 'vegetation-cull' });
+        grass.encodeCull(pass, ctx);
+        trees.encodeCull(pass, ctx);
+        pass.end();
+        grass.copyCounters(enc);
+        trees.copyCounters(enc);
+        return;
+      }
       grass?.encodePre(enc, ctx);
       trees?.encodePre(enc, ctx);
     },
