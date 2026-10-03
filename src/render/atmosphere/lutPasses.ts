@@ -64,17 +64,22 @@ export class AtmosphereLuts {
     if (this.baked) return;
     this.baked = true;
     this.bindGroups();
-    this.dispatch(enc, this.transmittance, TRANSMITTANCE_SIZE.width / 8, TRANSMITTANCE_SIZE.height / 8);
-    this.dispatch(enc, this.multiScatter, MULTISCATTER_SIZE, MULTISCATTER_SIZE);
+    const pass = enc.beginComputePass({ label: 'atmosphere lut bake' });
+    this.dispatch(pass, this.transmittance, TRANSMITTANCE_SIZE.width / 8, TRANSMITTANCE_SIZE.height / 8);
+    this.dispatch(pass, this.multiScatter, MULTISCATTER_SIZE, MULTISCATTER_SIZE);
+    pass.end();
   }
 
   /** Per-frame LUTs: moon sky-view (only while its light matters), sun sky-view + night sky, then the aerial-perspective froxels. */
   encode(enc: GPUCommandEncoder, moonActive: boolean): void {
     this.bindGroups();
     const gx = Math.ceil(SKYVIEW_SIZE.width / 8), gy = Math.ceil(SKYVIEW_SIZE.height / 8);
-    if (moonActive) this.dispatch(enc, this.moonView, gx, gy);
-    this.dispatch(enc, this.sunView, gx, gy);
-    this.dispatch(enc, this.aerial, AP_SLICES / 8, AP_SLICES / 8);
+    // Each compute dispatch remains its own WebGPU usage scope, including write-to-sample dependencies.
+    const pass = enc.beginComputePass({ label: 'atmosphere lut' });
+    if (moonActive) this.dispatch(pass, this.moonView, gx, gy);
+    this.dispatch(pass, this.sunView, gx, gy);
+    this.dispatch(pass, this.aerial, AP_SLICES / 8, AP_SLICES / 8);
+    pass.end();
   }
 
   destroy(): void {
@@ -83,13 +88,11 @@ export class AtmosphereLuts {
     this.params.destroy();
   }
 
-  private dispatch(enc: GPUCommandEncoder, s: Stage, x: number, y: number): void {
-    const pass = enc.beginComputePass({ label: 'atmosphere lut' });
+  private dispatch(pass: GPUComputePassEncoder, s: Stage, x: number, y: number): void {
     pass.setPipeline(s.pipeline);
     pass.setBindGroup(0, this.rc.frame.group);
     pass.setBindGroup(1, s.group!);
     pass.dispatchWorkgroups(x, y);
-    pass.end();
   }
 
   /** (Re)creates the per-stage bind groups whenever the world's LUT textures were replaced. */

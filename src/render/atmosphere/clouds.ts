@@ -85,9 +85,12 @@ export class CloudLayer {
     if (!enabled && this.idle) return;
     this.prepare();
     const r = this.res!, g = this.groups!;
-    this.dispatch(enc, this.marchStage, g.march, Math.ceil(r.width / 8), Math.ceil(r.height / 8));
-    this.dispatch(enc, this.resolveStage, g.resolve[this.parity], Math.ceil(r.width / 8), Math.ceil(r.height / 8));
-    this.dispatch(enc, this.shadowStage, g.shadow, CLOUD_SHADOW_SIZE / 8, CLOUD_SHADOW_SIZE / 8);
+    // Dispatch boundaries preserve the march -> resolve resource dependency within this pass.
+    const pass = enc.beginComputePass({ label: 'atmosphere clouds' });
+    this.dispatch(pass, this.marchStage, g.march, Math.ceil(r.width / 8), Math.ceil(r.height / 8));
+    this.dispatch(pass, this.resolveStage, g.resolve[this.parity], Math.ceil(r.width / 8), Math.ceil(r.height / 8));
+    this.dispatch(pass, this.shadowStage, g.shadow, CLOUD_SHADOW_SIZE / 8, CLOUD_SHADOW_SIZE / 8);
+    pass.end();
     this.resolvedIndex = this.parity;
     this.parity = 1 - this.parity;
     this.frameIndex++;
@@ -100,13 +103,11 @@ export class CloudLayer {
     this.shadow.destroy();
   }
 
-  private dispatch(enc: GPUCommandEncoder, s: Stage, group: GPUBindGroup, x: number, y: number): void {
-    const pass = enc.beginComputePass({ label: 'atmosphere clouds' });
+  private dispatch(pass: GPUComputePassEncoder, s: Stage, group: GPUBindGroup, x: number, y: number): void {
     pass.setPipeline(s.pipeline);
     pass.setBindGroup(0, this.rc.frame.group);
     pass.setBindGroup(1, group);
     pass.dispatchWorkgroups(x, y);
-    pass.end();
   }
 
   private targetSize(): { width: number; height: number } {
