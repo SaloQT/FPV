@@ -1,5 +1,7 @@
-import type { ObstacleCollider, Quat, TerrainSampler, Vec3 } from '../contracts';
-import { G0, quatRotate, quatRotateInv, quatToMat3 } from './math3d';
+// Test-only frozen full solver from baseline 4f56d904aa2b46acafcab4238d423e2fc6934940.
+// Keep independent of collision.ts so exact behavioral regressions remain observable.
+import type { ObstacleCollider, Quat, TerrainSampler, Vec3 } from '../../contracts';
+import { G0, quatRotate, quatRotateInv, quatToMat3 } from '../math3d';
 
 export interface ProxySphere {
   /** Centre in the body frame (x right, y up, -z forward), m. */
@@ -23,11 +25,6 @@ export interface CollisionParams {
   propStrikeTorque: number;
 }
 
-// Cache only a conservative candidate list, never contacts or the exact reach test.
-// At 4 kHz the drone normally remains in one 8 m cell for many solver steps.
-const BOX_CACHE_CELL = 8;
-const BOX_CACHE_MIN = 64;
-const BOX_CACHE_LIMIT = 1e12;
 const MAX_CONTACTS = 64;
 const MAX_SPHERES = 16;
 const ITERATIONS = 6;
@@ -56,11 +53,6 @@ export class CollisionWorld {
   private readonly p: CollisionParams;
   private readonly ns: number;
   private nBox = 0;
-  private boxCandidates = new Int32Array(0);
-  private nCandidates = 0;
-  private cellX = NaN;
-  private cellY = NaN;
-  private cellZ = NaN;
   private bx = new Float64Array(0);
   private by = new Float64Array(0);
   private bz = new Float64Array(0);
@@ -109,9 +101,6 @@ export class CollisionWorld {
   setColliders(list: ObstacleCollider[]): void {
     const n = list.length;
     this.nBox = n;
-    this.boxCandidates = new Int32Array(n);
-    this.nCandidates = 0;
-    this.cellX = this.cellY = this.cellZ = NaN;
     this.bx = new Float64Array(n);
     this.by = new Float64Array(n);
     this.bz = new Float64Array(n);
@@ -167,65 +156,20 @@ export class CollisionWorld {
   }
 
 
-  private gatherNearBoxes(pos: Vec3): number {
-    let nNear = 0;
-    const x = pos[0], y = pos[1], z = pos[2];
-    // Keep the original scan for small lists and unusual coordinates. In particular,
-    // NaN, infinities and overflowing squared distances retain their old semantics.
-    if (this.nBox < BOX_CACHE_MIN || !(Math.abs(x) <= BOX_CACHE_LIMIT && Math.abs(y) <= BOX_CACHE_LIMIT && Math.abs(z) <= BOX_CACHE_LIMIT)) {
-      for (let b = 0; b < this.nBox && nNear < this.nearBox.length; b++) {
-        const dx = pos[0] - this.bx[b];
-        const dy = pos[1] - this.by[b];
-        const dz = pos[2] - this.bz[b];
-        const reach = this.bR[b] + PROXY_REACH;
-        if (dx * dx + dy * dy + dz * dz < reach * reach) this.nearBox[nNear++] = b;
-      }
-      return nNear;
-    }
-    const cellX = Math.floor(x / BOX_CACHE_CELL) * BOX_CACHE_CELL;
-    const cellY = Math.floor(y / BOX_CACHE_CELL) * BOX_CACHE_CELL;
-    const cellZ = Math.floor(z / BOX_CACHE_CELL) * BOX_CACHE_CELL;
-    if (cellX !== this.cellX || cellY !== this.cellY || cellZ !== this.cellZ) {
-      this.cellX = cellX;
-      this.cellY = cellY;
-      this.cellZ = cellZ;
-      let n = 0;
-      for (let b = 0; b < this.nBox; b++) {
-        const bx = this.bx[b], by = this.by[b], bz = this.bz[b];
-        const reach = this.bR[b] + PROXY_REACH;
-        // A passing sphere test implies each axis distance is less than reach.
-        // Every query in this cell is <8 m from its lower corner per axis. Use
-        // 16 m padding, leaving ample rounding slack within the bounded range.
-        // Large/nonfinite boxes bypass pruning; no giant-box rasterization needed.
-        if (!(Math.abs(bx) <= BOX_CACHE_LIMIT && Math.abs(by) <= BOX_CACHE_LIMIT && Math.abs(bz) <= BOX_CACHE_LIMIT && reach <= BOX_CACHE_LIMIT)
-          || (Math.abs(cellX - bx) <= reach + 2 * BOX_CACHE_CELL
-            && Math.abs(cellY - by) <= reach + 2 * BOX_CACHE_CELL
-            && Math.abs(cellZ - bz) <= reach + 2 * BOX_CACHE_CELL)) {
-          this.boxCandidates[n++] = b;
-        }
-      }
-      // Ascending source indices preserve the original first-32 selection and
-      // therefore contact/impulse order even when more than 32 boxes are nearby.
-      this.nCandidates = n;
-    }
-    for (let k = 0; k < this.nCandidates && nNear < this.nearBox.length; k++) {
-      const b = this.boxCandidates[k];
-      const dx = pos[0] - this.bx[b];
-      const dy = pos[1] - this.by[b];
-      const dz = pos[2] - this.bz[b];
-      const reach = this.bR[b] + PROXY_REACH;
-      if (dx * dx + dy * dy + dz * dz < reach * reach) this.nearBox[nNear++] = b;
-    }
-    return nNear;
-  }
-
   private gather(pos: Vec3, q: Quat): void {
     this.nc = 0;
     const R = this.rot;
     quatToMat3(q, R);
     const terrain = this.terrain;
     const nearTerrain = pos[1] - this.groundHeight(pos[0], pos[2]) < TERRAIN_REACH;
-    const nNear = this.gatherNearBoxes(pos);
+    let nNear = 0;
+    for (let b = 0; b < this.nBox && nNear < this.nearBox.length; b++) {
+      const dx = pos[0] - this.bx[b];
+      const dy = pos[1] - this.by[b];
+      const dz = pos[2] - this.bz[b];
+      const reach = this.bR[b] + PROXY_REACH;
+      if (dx * dx + dy * dy + dz * dz < reach * reach) this.nearBox[nNear++] = b;
+    }
     if (!nearTerrain && nNear === 0) return;
     const n = this.tmpN;
     for (let i = 0; i < this.ns; i++) {
