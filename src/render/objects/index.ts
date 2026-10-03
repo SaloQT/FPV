@@ -25,6 +25,7 @@ export function createObjectsModule(): ObjectsModule {
 
   return {
     name: 'objects',
+    sharedOverlayPass: true,
     init(rc) {
       ctx = rc;
       track = createTrackObjects(rc);

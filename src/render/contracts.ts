@@ -238,6 +238,15 @@ export interface SceneData {
 
 export interface RenderModule {
   readonly name: string;
+  /**
+   * Explicit opt-in to sharing one render pass across sky and forward stages. Every active overlay hook must
+   * opt in. Hooks must only read bound resources (no storage writes), never sample hdr, and set every pipeline,
+   * bind group >= 2 and vertex/index buffer they use; sky and forward must be valid in one resource-usage scope.
+   * Do not depend on distinct pass identities or leave debug/query scopes open. Forward receives fresh viewport,
+   * scissor, blend constant and stencil reference defaults and pre-bound groups 0/1, but other state may persist.
+   * Omit for custom hooks requiring the original separate-pass contract.
+   */
+  readonly sharedOverlayPass?: boolean;
   init(rc: RenderContext): void | Promise<void>;
   /** Render resolution changed; G-buffer textures were recreated. Recreate bind groups that reference them. */
   resize?(rc: RenderContext): void;

@@ -17,6 +17,13 @@ export class ModuleHost {
   /** True while at least one module still draws the sky (drives FALLBACK_SKY and whether the sky pass is recorded). */
   get drawsSky(): boolean { return this.lists.encodeSky.length > 0; }
   get drawsForward(): boolean { return this.lists.encodeForward.length > 0; }
+  /** Only explicitly compatible active overlay hooks may share a resource-usage scope. */
+  get sharedOverlayPass(): boolean {
+    const sky = this.lists.encodeSky, forward = this.lists.encodeForward;
+    for (let i = 0; i < sky.length; i++) if (sky[i].sharedOverlayPass !== true) return false;
+    for (let i = 0; i < forward.length; i++) if (forward[i].sharedOverlayPass !== true) return false;
+    return true;
+  }
   get tracesRays(): boolean { return this.lists.encodeRT.length > 0; }
   get names(): string[] { return this.modules.map((m) => m.name); }
 

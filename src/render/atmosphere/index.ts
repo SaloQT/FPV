@@ -59,6 +59,7 @@ const NIGHT_DOME_MAX_SUN_ELEVATION = (-3 * Math.PI) / 180;
 
 class Atmosphere implements AtmosphereModule {
   readonly name = 'atmosphere';
+  readonly sharedOverlayPass = true;
   private settings: AtmosphereSettings;
   private luts!: AtmosphereLuts;
   private sky!: SkyPass;

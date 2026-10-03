@@ -74,3 +74,50 @@ describe('ModuleHost', () => {
     expect(h.drawsSky).toBe(false);
   });
 });
+
+
+describe('ModuleHost shared overlay capability', () => {
+  const module = (name: string, stage: 'encodeSky' | 'encodeForward', compatible?: boolean): RenderModule => ({
+    name, sharedOverlayPass: compatible, init() {}, [stage]() {},
+  });
+
+  it('allows explicitly compatible sky and forward hooks and ignores non-overlay modules', async () => {
+    const { h } = host([
+      module('sky', 'encodeSky', true), module('forward', 'encodeForward', true),
+      { name: 'gbuffer', init() {}, encodeGBuffer() {} },
+    ]);
+    await h.init(rc);
+    expect(h.sharedOverlayPass).toBe(true);
+  });
+
+  it.each(['encodeSky', 'encodeForward'] as const)('rejects an unapproved %s hook even beside approved hooks', async stage => {
+    const { h } = host([
+      module('sky', 'encodeSky', true), module('forward', 'encodeForward', true), module('custom', stage),
+    ]);
+    await h.init(rc);
+    expect(h.sharedOverlayPass).toBe(false);
+  });
+
+  it('honors explicit false and recomputes compatibility after the incompatible hook is disabled', async () => {
+    const { h } = host([
+      module('sky', 'encodeSky', true), module('forward', 'encodeForward', true),
+      { ...module('custom', 'encodeSky', false), encodeSky() { throw new Error('disabled'); } },
+    ]);
+    await h.init(rc);
+    expect(h.sharedOverlayPass).toBe(false);
+    h.encodeSky({} as GPURenderPassEncoder, rc, frame);
+    expect(h.sharedOverlayPass).toBe(true);
+    h.destroy();
+    expect(h.drawsSky).toBe(false);
+    expect(h.drawsForward).toBe(false);
+  });
+
+  it('ignores incompatible hooks whose module failed initialization', async () => {
+    const { h } = host([
+      module('sky', 'encodeSky', true), module('forward', 'encodeForward', true),
+      { ...module('custom', 'encodeSky'), init() { throw new Error('unavailable'); } },
+    ]);
+    await h.init(rc);
+    expect(h.sharedOverlayPass).toBe(true);
+  });
+});
