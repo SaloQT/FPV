@@ -58,6 +58,7 @@ export class CollisionWorld {
   private nBox = 0;
   private boxCandidates = new Int32Array(0);
   private nCandidates = 0;
+  private boxCacheDisabled = false;
   private cellX = NaN;
   private cellY = NaN;
   private cellZ = NaN;
@@ -111,6 +112,7 @@ export class CollisionWorld {
     this.nBox = n;
     this.boxCandidates = new Int32Array(n);
     this.nCandidates = 0;
+    this.boxCacheDisabled = false;
     this.cellX = this.cellY = this.cellZ = NaN;
     this.bx = new Float64Array(n);
     this.by = new Float64Array(n);
@@ -172,7 +174,7 @@ export class CollisionWorld {
     const x = pos[0], y = pos[1], z = pos[2];
     // Keep the original scan for small lists and unusual coordinates. In particular,
     // NaN, infinities and overflowing squared distances retain their old semantics.
-    if (this.nBox < BOX_CACHE_MIN || !(Math.abs(x) <= BOX_CACHE_LIMIT && Math.abs(y) <= BOX_CACHE_LIMIT && Math.abs(z) <= BOX_CACHE_LIMIT)) {
+    if (this.boxCacheDisabled || this.nBox < BOX_CACHE_MIN || !(Math.abs(x) <= BOX_CACHE_LIMIT && Math.abs(y) <= BOX_CACHE_LIMIT && Math.abs(z) <= BOX_CACHE_LIMIT)) {
       for (let b = 0; b < this.nBox && nNear < this.nearBox.length; b++) {
         const dx = pos[0] - this.bx[b];
         const dy = pos[1] - this.by[b];
@@ -202,6 +204,13 @@ export class CollisionWorld {
             && Math.abs(cellY - by) <= reach + 2 * BOX_CACHE_CELL
             && Math.abs(cellZ - bz) <= reach + 2 * BOX_CACHE_CELL)) {
           this.boxCandidates[n++] = b;
+          // Highly overlapping sets favor the original early-exit scan. Stop the
+          // rebuild rather than repeatedly scanning every box at cell boundaries.
+          // Retry caching only when setColliders supplies a new collider set.
+          if (n * 2 >= this.nBox) {
+            this.boxCacheDisabled = true;
+            return this.gatherNearBoxes(pos);
+          }
         }
       }
       // Ascending source indices preserve the original first-32 selection and

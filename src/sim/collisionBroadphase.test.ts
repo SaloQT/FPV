@@ -93,6 +93,19 @@ describe('exact conservative collision broadphase', () => {
     }
   });
 
+  it('falls back for highly overlapping sets and resets on collider replacement', () => {
+    const dense: ObstacleCollider[] = Array.from({ length: 6000 }, () => ({ kind: 'box', center: [0, 0, 0], half: [1000, 1000, 1000], yaw: 0 }));
+    const { a, b } = pair(dense);
+    const state = a as unknown as { boxCacheDisabled: boolean };
+    for (let i = 0; i < 100; i++) compare(a, b, [i % 2 ? 7.99999 : 8.00001, 10, 0], [0, 0, 0], [0, 0, 0, 1], [0, 0, 0]);
+    expect(state.boxCacheDisabled).toBe(true);
+    const sparse = boxes(6000);
+    a.setColliders(sparse); b.setColliders(sparse);
+    expect(state.boxCacheDisabled).toBe(false);
+    compare(a, b, [0, 30, 0], [0, 0, 0], [0, 0, 0, 1], [0, 0, 0]);
+    expect(state.boxCacheDisabled).toBe(false);
+  });
+
   it('keeps original nonfinite and extreme-coordinate behavior', () => {
     const list = boxes(100);
     for (const n of [NaN, Infinity, -Infinity, 1e200, -1e200]) {
