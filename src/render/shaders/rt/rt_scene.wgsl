@@ -175,21 +175,35 @@ fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u3
   return min(diffuse * (direct + probeIrradiance(p + s.n * 0.5, s.n, e)) + emission, vec3f(MAX_RADIANCE));
 }
 
-// Radiance (pre-exposed) arriving along a ray o + t*d that hit `h`. A ray entering a leaf crown mostly sees light that crossed the leaves,
-// so the crown's own shading is blended with the environment behind it by the chord's transmittance.
-fn hitRadiance(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32) -> vec3f {
+// Transmittance of the leaf chord that a hit `h` ends inside: 1 for a plain surface, the crown's Beer-Lambert share otherwise. A pass that
+// needs it for more than one output term integrates the chord once (via this) and passes it on, so a crown costs one optical-depth
+// integration per ray instead of one per consumer.
+fn hitChordT(h : SceneHit, o : vec3f, d : vec3f) -> f32 {
+  if (h.kind != KIND_PRIM || !primIsCanopy(h.prim)) { return 1.0; }
+  return exp(-CANOPY_DIFFUSE_TAU_SCALE * canopyOpticalDepth(h.prim, o, d, rp.f.w));
+}
+
+// Radiance (pre-exposed) arriving along a ray o + t*d that hit `h`, with the chord's transmittance already integrated by the caller
+// (`hitChordT(h, o, d)`). A ray entering a leaf crown mostly sees light that crossed the leaves, so the crown's own shading is blended
+// with the environment behind it by that transmittance.
+fn hitRadianceChord(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32, chord : f32) -> vec3f {
   let p = o + d * h.t;
   var s = surfaceAt(h, p, d);
   if (s.trans <= 0.0) { return shadeSurface(s, p, h.t, h.kind, e, steps); }
   s.albedo = CANOPY_SCATTER_ALBEDO;
   let lit = shadeSurface(s, p, h.t, h.kind, e, steps);
-  return mix(lit, skyRadiance(d, e), exp(-CANOPY_DIFFUSE_TAU_SCALE * canopyOpticalDepth(h.prim, o, d, rp.f.w)));
+  return mix(lit, skyRadiance(d, e), chord);
 }
 
-// How much of a hit's short-range occlusion is real: a leaf crown is porous, so a ray that ends in one only counts for the share of its chord's light the leaves stop.
-fn hitSolidity(h : SceneHit, o : vec3f, d : vec3f) -> f32 {
+fn hitRadiance(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32) -> vec3f {
+  return hitRadianceChord(h, o, d, e, steps, hitChordT(h, o, d));
+}
+
+// How much of a hit's short-range occlusion is real, from the chord transmittance the caller already integrated: a leaf crown is porous, so
+// a ray that ends in one only counts for the share of its chord's light the leaves stop, while any other hit is fully solid.
+fn hitSolidity(h : SceneHit, chord : f32) -> f32 {
   if (h.kind != KIND_PRIM || !primIsCanopy(h.prim)) { return 1.0; }
-  return 1.0 - exp(-CANOPY_DIFFUSE_TAU_SCALE * canopyOpticalDepth(h.prim, o, d, rp.f.w));
+  return 1.0 - chord;
 }
 
 // Blue-noise + R2 sample in [0,1)^2; `salt` decorrelates independent uses at the same pixel.

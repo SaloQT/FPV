@@ -19,21 +19,25 @@ fn nodeEntry(n : u32, o : vec3f, inv : vec3f, tMax : f32) -> f32 {
   return select(NO_HIT, t0, t0 <= t1);
 }
 
+// Node index and its entry distance share one 8-byte stack slot: the walk pops and pushes the pair together, so it moves one local word per
+// step instead of two (a variable index forces the stack into per-thread local memory, where each lane's slot is a separate access).
+struct BvhStackEntry { node : u32, entry : f32 }
+
 // Nearest hit along o + t*d (unit d) within tMax. Visits at most `cap` nodes.
 fn traceBvh(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> BvhHit {
   var best = BvhHit(tMax, NO_NODE);
   let inv = 1.0 / select(d, vec3f(1e-8), abs(d) < vec3f(1e-8));
-  var stack : array<u32, 32>;
-  var stackT : array<f32, 32>;
+  var stack : array<BvhStackEntry, 32>;
   var sp = 0u;
-  if (rp.scene.y != NO_NODE) { stack[sp] = rp.scene.y; stackT[sp] = 0.0; sp++; }
-  if (rp.scene.x != NO_NODE) { stack[sp] = rp.scene.x; stackT[sp] = 0.0; sp++; }
+  if (rp.scene.y != NO_NODE) { stack[sp] = BvhStackEntry(rp.scene.y, 0.0); sp++; }
+  if (rp.scene.x != NO_NODE) { stack[sp] = BvhStackEntry(rp.scene.x, 0.0); sp++; }
   var visits = 0u;
   while (sp > 0u && visits < cap) {
     sp--;
-    if (stackT[sp] > best.t) { continue; }
+    let top = stack[sp];
+    if (top.entry > best.t) { continue; }
     visits++;
-    let n = stack[sp];
+    let n = top.node;
     let n0 = bvhNodes[n * 2u];
     let count = bvhNodes[n * 2u + 1u].w;
     if (count > 0u) {
@@ -52,13 +56,11 @@ fn traceBvh(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> BvhHit {
     let nearT = select(tr, tl, leftFirst);
     let farT = select(tl, tr, leftFirst);
     if (farT < NO_HIT) {
-      stack[sp] = select(n0.w, n0.w + 1u, leftFirst);
-      stackT[sp] = farT;
+      stack[sp] = BvhStackEntry(select(n0.w, n0.w + 1u, leftFirst), farT);
       sp++;
     }
     if (nearT < NO_HIT) {
-      stack[sp] = select(n0.w + 1u, n0.w, leftFirst);
-      stackT[sp] = nearT;
+      stack[sp] = BvhStackEntry(select(n0.w + 1u, n0.w, leftFirst), nearT);
       sp++;
     }
   }

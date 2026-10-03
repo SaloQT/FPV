@@ -35,8 +35,16 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       sum += skyRadiance(d, e);
       vis += 1.0;
     } else {
-      sum += hitRadiance(h, origin, d, e, steps);
-      vis += 1.0 - hitSolidity(h, origin, d) * (1.0 - saturate1(h.t / CONTACT_RANGE));
+      // A crown's chord transmittance is the same number for the radiance and the contact visibility, so it is integrated once per ray.
+      // Past CONTACT_RANGE the visibility weight is exactly zero, so there the chord is needed by the radiance alone.
+      var chord = 1.0;
+      if (h.kind == KIND_PRIM && primIsCanopy(h.prim)) { chord = hitChordT(h, origin, d); }
+      sum += hitRadianceChord(h, origin, d, e, steps, chord);
+      if (h.t < CONTACT_RANGE) {
+        vis += 1.0 - hitSolidity(h, chord) * (1.0 - saturate1(h.t / CONTACT_RANGE));
+      } else {
+        vis += 1.0;
+      }
     }
   }
   let inv = 1.0 / f32(rays);

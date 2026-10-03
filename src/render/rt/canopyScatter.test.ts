@@ -42,7 +42,10 @@ describe('leaf-crown scatter model in the shaders', () => {
   it('counts a hit inside a porous crown as occlusion only by the leaves\' share of the chord, in the GI contact visibility', () => {
     const gi = read('rt/gi.wgsl');
     expect(rtScene).toMatch(/fn hitSolidity\([^)]*\)\s*->\s*f32/);
-    expect(rtScene).toMatch(/1\.0\s*-\s*exp\(-CANOPY_DIFFUSE_TAU_SCALE\s*\*\s*canopyOpticalDepth/);
-    expect(gi).toMatch(/vis \+= 1\.0 - hitSolidity\(h, origin, d\) \* \(1\.0 - saturate1\(h\.t \/ CONTACT_RANGE\)\)/);
+    expect(rtScene).toMatch(/exp\(-CANOPY_DIFFUSE_TAU_SCALE\s*\*\s*canopyOpticalDepth/);
+    // The chord is integrated once per ray and shared by both terms, and the visibility weight is exactly zero past CONTACT_RANGE.
+    expect(gi).toMatch(/chord = hitChordT\(h, origin, d\)/);
+    expect(gi).toMatch(/vis \+= 1\.0 - hitSolidity\(h, chord\) \* \(1\.0 - saturate1\(h\.t \/ CONTACT_RANGE\)\)/);
+    expect(gi).toMatch(/if \(h\.t < CONTACT_RANGE\)/);
   });
 });
