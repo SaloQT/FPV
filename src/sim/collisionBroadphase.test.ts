@@ -106,6 +106,16 @@ describe('exact conservative collision broadphase', () => {
     expect(state.boxCacheDisabled).toBe(false);
   });
 
+  it('falls back when the first-32 list saturates even below half-candidate density', () => {
+    const list: ObstacleCollider[] = Array.from({ length: 6000 }, (_, i) => ({ kind: 'box', center: i < 1000 ? [0, 0, 0] : [1e6, 1e6, 1e6], half: i < 1000 ? [1000, 1000, 1000] : [1, 1, 1], yaw: 0 }));
+    const { a, b } = pair(list);
+    const state = a as unknown as { boxCacheDisabled: boolean; nCandidates: number };
+    compare(a, b, [7.99999, 10, 0], [0, 0, 0], [0, 0, 0, 1], [0, 0, 0]);
+    expect(state.nCandidates).toBe(1000);
+    expect(state.boxCacheDisabled).toBe(true);
+    for (let i = 0; i < 20; i++) compare(a, b, [i % 2 ? 7.99999 : 8.00001, 10, 0], [0, 0, 0], [0, 0, 0, 1], [0, 0, 0]);
+  });
+
   it('keeps original nonfinite and extreme-coordinate behavior', () => {
     const list = boxes(100);
     for (const n of [NaN, Infinity, -Infinity, 1e200, -1e200]) {

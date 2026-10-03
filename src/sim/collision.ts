@@ -225,6 +225,9 @@ export class CollisionWorld {
       const reach = this.bR[b] + PROXY_REACH;
       if (dx * dx + dy * dy + dz * dz < reach * reach) this.nearBox[nNear++] = b;
     }
+    // A saturated near list means the old scan can stop early even if most
+    // colliders are distant. Avoid future full rebuilds for this set as well.
+    if (nNear === this.nearBox.length) this.boxCacheDisabled = true;
     return nNear;
   }
 
