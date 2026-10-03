@@ -111,8 +111,44 @@ The two hot kernels are both close to their **bit-exact floor**:
 - The BVH traversal is ~19 ms and, per the rejected experiments above, the cost is the slab arithmetic and
   the thread-local stack, not the node loads and not the visit count.
 
-**The one identified structural win left** is that the GI pass traces 2 rays per texel from the *same*
-origin through the *same* tree, independently — a shared-front or common-prefix pair traversal would visit
-each shared node once instead of twice. It is bit-exact only if the two rays' visit order is preserved and
-the per-ray visit cap is still accounted separately (the cap barely binds, so there is room). It is a
-substantial rewrite of the walk with real divergence risk, and it was not attempted in this round.
+## The G-buffer, probed
+
+The G-buffer pass is 12.7–13.6 ms (~15%) and had never been examined. Two ceilings were measured in it:
+
+- **Terrain top-3 layer selection, −3.00 ms (−22.5% of the pass), all 4 seeds negative.** The fragment
+  shader picks the three heaviest ground layers with a selection sort: 3 rounds of an 8-way argmax with
+  the winner zeroed, over a function-local array with dynamic indexing. Implemented faithfully with
+  register scalars (`c7`) it recovered only **−1.62% of the pass (0.22 ms, −0.26% of the frame)**, and
+  one seed was a regression. So the cost is not thread-local memory, as the dynamic indexing suggested —
+  the compiler was already promoting the array, and the 3 ms is the selection sort itself, which a
+  bit-exact patch has to keep. **Rejected: below the 0.3% bar.**
+- **Slope-plane detail branch, −0.44 ms.** `dsLayerDetail` is called up to three times per pixel and each
+  call recomputes `pow(abs(c.n), vec3f(6.0))` from the same `c.n`, which looked like free redundancy. The
+  branch is off for most terrain (`ctx.planes` needs the flag *and* `normal.y < 0.85`), so the ceiling was
+  0.44 ms and the change would alter the image anyway. **Rejected.**
+
+## The shared-front GI traversal: priced, then dropped
+
+The GI pass traces 2 rays per texel from the same origin through the same tree independently, so a
+shared-front or common-prefix pair traversal would visit each shared node once instead of twice. The
+32-entry stack was confirmed never to overflow (raising it to 256 renders identically), so the merge
+would not have changed results, and the near-hit is order-independent given the cap barely binds.
+
+It was priced before being written: making the second ray reuse the first ray's hit — one scene trace
+instead of two — saves only **2.38 ms (8.2% of giRays, 2.8% of the frame)**, not the ~9.5 ms that
+"half the traversal" implies. The two rays diverge early and the second one prunes harder, so it is much
+cheaper than the first. A realistic common-prefix implementation would capture perhaps half of that,
+about **1% of the frame, for a high-risk rewrite of the walk with real divergence subtleties**.
+**Dropped before implementation.**
+
+## What the two surprises teach
+
+Both c4 and c7 were reasoned predictions that the measurement contradicted:
+
+- c4 predicted the redundant `bvhNodes` load on pop was real traffic. It was a free L1 hit, and growing
+  the stack entry cost more than it saved (+5.1%).
+- c7 predicted the dynamically indexed local array was spilling to thread-local memory. The compiler had
+  already promoted it, so a faithful rewrite gained 7% of the ceiling.
+
+Both were caught only because the ceiling was measured first. Neither would have been caught by writing
+the "obvious" optimisation and benchmarking it — that is the whole argument for probing before porting.
