@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, type FlightMode, type Observer, type RenderQuality, type Settings, type TrackData } from '../contracts';
 import { defaultGamepadConfig, type GamepadConfig } from '../input/gamepadMap';
 import { sanitizeGamepadConfig } from '../input/gamepadConfig';
+import { defaultRateSettings, sanitizeRateSettings, type RateSettings } from '../sim/fc/ratePresets';
 
 /** Settings the pilot controls that the shared `Settings` contract has no room for. */
 export interface UiSettings {
@@ -17,6 +18,8 @@ export interface UiSettings {
   motorVolume: number;
   windVolume: number;
   gamepad: GamepadConfig;
+  /** The radio's stick-to-rate curve: how far the quad is told to turn for a given stick deflection. */
+  rates: RateSettings;
   /** Key into the airframe presets of the physics module. */
   quadPreset: string;
   /** Mean wind in m/s. */
@@ -57,6 +60,7 @@ export function defaultAppSettings(): AppSettings {
     motorVolume: 1,
     windVolume: 1,
     gamepad: defaultGamepadConfig(),
+    rates: defaultRateSettings(),
     quadPreset: 'QUAD_5IN_6S',
     windSpeed: 0,
     windDirDeg: 0,
@@ -145,6 +149,7 @@ const RULES: Rules = {
   motorVolume: num(0, 1),
   windVolume: num(0, 1),
   gamepad: (v, fb) => (isRecord(v) ? sanitizeGamepadConfig(v) : fb),
+  rates: (v, fb) => sanitizeRateSettings(v, fb),
   quadPreset: name,
   windSpeed: num(0, 30),
   windDirDeg: num(0, 360),

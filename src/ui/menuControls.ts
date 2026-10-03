@@ -1,12 +1,20 @@
 import { el, setText } from './dom';
 import { buildGamepadPanel } from './menuGamepad';
-import { rowFor, type BuiltControl, type ControlHost } from './menuHost';
+import { rowFor, type BuiltControl, type ControlHost, type Row } from './menuHost';
 import {
   MAX_DATE_YEAR, MIN_DATE_YEAR,
   type ButtonControl, type Control, type DateControl, type NumberControl, type SelectControl, type SliderControl, type ToggleControl,
 } from './menuSchema';
 
-function sliderControl(c: SliderControl, host: ControlHost): BuiltControl {
+/** A range input and its value box. `input` is exposed for controls that re-range the slider as the settings change. */
+export interface SliderRow {
+  row: Row;
+  input: HTMLInputElement;
+  paint(value: number): void;
+}
+
+/** Builds the range input of a slider control and keeps the value box and the fill in step with it. */
+export function buildSliderRow(c: SliderControl, host: ControlHost): SliderRow {
   const r = rowFor(c, 'slider');
   const input = el('input', 'fpv-range');
   input.type = 'range';
@@ -18,7 +26,6 @@ function sliderControl(c: SliderControl, host: ControlHost): BuiltControl {
   out.htmlFor = r.id;
   r.ctl.append(input, out);
   r.describe(input);
-  let dragging = false;
   const paint = (v: number): void => {
     const text = c.format(v);
     input.style.setProperty('--fill', `${((v - c.min) / (c.max - c.min)) * 100}%`);
@@ -30,10 +37,17 @@ function sliderControl(c: SliderControl, host: ControlHost): BuiltControl {
     paint(v);
     host.change(c.write(v, host.settings()));
   });
-  input.addEventListener('pointerdown', () => { dragging = true; });
-  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur']) input.addEventListener(type, () => { dragging = false; });
+  return { row: r, input, paint };
+}
+
+function sliderControl(c: SliderControl, host: ControlHost): BuiltControl {
+  const { row, input, paint } = buildSliderRow(c, host);
+  let dragging = false;
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'lostpointercapture', 'blur']) {
+    input.addEventListener(type, () => { dragging = type === 'pointerdown'; });
+  }
   return {
-    root: r.root,
+    root: row.root,
     sync(s) {
       if (dragging) return;
       const v = c.read(s);

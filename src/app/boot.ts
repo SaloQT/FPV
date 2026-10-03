@@ -8,6 +8,7 @@ import { createSessionSnapshot } from '../game/sessionTypes';
 import { InputManager } from '../input/inputManager';
 import { createPostProcessor } from '../render/post';
 import { Renderer } from '../render/renderer';
+import { rateProfileOf } from '../sim/fc/ratePresets';
 import { getPreset } from '../sim/presets';
 import { QuadPhysics } from '../sim/quad';
 import { classifyStartupError } from '../ui/errorMessages';
@@ -176,6 +177,7 @@ function assemble(p: Parts): AppCtx {
   const { canvas, store, params, world } = p;
   const settings = store.get();
   const physics = new QuadPhysics(getPreset(settings.quadPreset), world.sampler, settings.seed);
+  physics.fc.setRates(rateProfileOf(settings.rates));
   physics.setAtmosphere(settings.observer.altitudeM, 15);
   const ground = new PadGround(world.sampler, null);
   const wind = new WindModel(settings.seed);

@@ -1,4 +1,4 @@
-import type { PadSample } from '../input/gamepadMap';
+import type { PadButton, PadSample } from '../input/gamepadMap';
 import type { SkyBodies } from './clockModel';
 import { el, uid } from './dom';
 import type { Control, MenuAction } from './menuSchema';
@@ -10,6 +10,7 @@ export interface PadView {
   readonly connected: boolean;
   readonly padId: string;
   readonly raw: ArrayLike<number>;
+  readonly buttons: ArrayLike<PadButton>;
   readonly sample: Readonly<Pick<PadSample, 'roll' | 'pitch' | 'yaw' | 'throttleDirect' | 'profile'>>;
 }
 

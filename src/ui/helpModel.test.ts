@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ACTION_LABELS, AXIS_LABELS, DEFAULT_BINDINGS, type Bindings } from '../input/bindings';
 import { KeyboardStick } from '../input/keyboardStick';
 import { MouseStick } from '../input/mouseStick';
+import { PAD_ACTION_INFO } from '../input/padActions';
 import { buildHelp, keyCaps, startSummary } from './helpModel';
 
 const labels = (sections: ReturnType<typeof buildHelp>): string[] => sections.flatMap((s) => s.rows.map((r) => r.label));
@@ -40,8 +41,17 @@ describe('help model', () => {
 
   it('describes the gamepad buttons of the default layout', () => {
     const pad = buildHelp().find((s) => s.title === 'Gamepad or radio');
-    expect(pad?.rows.find((r) => r.label === 'Arm / disarm')?.keys).toEqual(['A']);
-    expect(pad?.rows.find((r) => r.label === 'Menu and settings')?.keys).toEqual(['Start']);
+    expect(pad?.rows.find((r) => r.label === PAD_ACTION_INFO.arm.label)?.keys).toEqual(['A']);
+    expect(pad?.rows.find((r) => r.label === PAD_ACTION_INFO.menu.label)?.keys).toEqual(['Start']);
+    // The four actions that were keyboard-only before the table existed stay off the pad sheet.
+    expect(pad?.rows.some((r) => r.label === PAD_ACTION_INFO.resetTrack.label)).toBe(false);
+  });
+
+  it('names a switch by its axis, and an unfamiliar button by its number', () => {
+    const pad = buildHelp().find((s) => s.title === 'Gamepad or radio');
+    // The X-56 default layout leaves the hat and the slider free, so nothing is listed twice.
+    const labels = pad?.rows.map((r) => r.label) ?? [];
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it('gives every section a title and rows with labels', () => {

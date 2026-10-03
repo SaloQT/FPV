@@ -3,6 +3,7 @@ import { compileBindings, DEFAULT_BINDINGS, REPEATABLE_ACTIONS, SWALLOWED_KEYS, 
 import { clamp, shapeStick } from './curves';
 import { GamepadInput, type PadProvider } from './gamepad';
 import { padThrottle, resolveThrottleMode } from './gamepadMap';
+import type { PadAction } from './padActions';
 import { KeyboardStick, type KeyboardAxes } from './keyboardStick';
 import { MouseStick } from './mouseStick';
 import { PointerInput, type OrbitDelta } from './pointer';
@@ -17,6 +18,14 @@ export interface InputManagerOptions {
 
 const MODES: readonly FlightMode[] = ['acro', 'angle', 'horizon'];
 const MAX_QUEUED = 32;
+/**
+ * Which app action each bindable pad action raises. `turtle` is a held state rather than an edge, so it
+ * is read from the sample in `poll` instead of appearing here.
+ */
+const PAD_ACTION_INPUT: readonly (readonly [PadAction, InputAction])[] = [
+  ['arm', 'arm-toggle'], ['camera', 'camera-cycle'], ['respawn', 'respawn'], ['resetTrack', 'reset-track'],
+  ['newTrack', 'new-track'], ['modeCycle', 'mode-cycle'], ['menu', 'toggle-menu'], ['help', 'toggle-help'], ['perf', 'toggle-perf'],
+];
 /** Esc can reach us both as a key and as a lost pointer lock; report the menu toggle once. */
 const MENU_DEDUPE_MS = 150;
 /** A stalled frame must not turn into a huge stick ramp. */
@@ -133,7 +142,7 @@ export class InputManager implements InputSource {
       out.roll = padOn ? s.roll : clamp(this.kb.roll + shapeStick(this.mouse.x, cfg.mouseDeadzone, cfg.mouseExpo), -1, 1);
       out.pitch = padOn ? s.pitch : clamp(this.kb.pitch + shapeStick(this.mouse.y, cfg.mouseDeadzone, cfg.mouseExpo), -1, 1);
       out.yaw = padOn ? s.yaw : this.kb.yaw;
-      out.turtle = anyHeld(this.held, this.bindings.axes.turtle) || (pad.connected && s.turtle);
+      out.turtle = anyHeld(this.held, this.bindings.axes.turtle) || (pad.connected && s.aux.turtle);
     } else {
       out.roll = out.pitch = out.yaw = 0;
       out.turtle = false;
@@ -177,11 +186,11 @@ export class InputManager implements InputSource {
 
   private applyPadEdges(): void {
     const e = this.gamepad.edges;
-    if (e.menu) this.pushAction('toggle-menu');
-    if (e.arm || (e.armSwitchOn && !this.isArmed) || (e.armSwitchOff && this.isArmed)) this.pushAction('arm-toggle');
-    if (e.respawn) this.pushAction('respawn');
-    if (e.camera) this.pushAction('camera-cycle');
-    if (e.modeCycle) this.pushAction('mode-cycle');
+    for (const [action, inputAction] of PAD_ACTION_INPUT) {
+      if (e.aux[action]) this.pushAction(inputAction);
+    }
+    if (e.armSwitchOn && !this.isArmed) this.pushAction('arm-toggle');
+    if (e.armSwitchOff && this.isArmed) this.pushAction('arm-toggle');
     if (e.modeSwitchChanged && this.enabled) this.settings.patch({ mode: this.gamepad.sample.modeSwitch });
   }
 

@@ -44,6 +44,8 @@ export class FlightController {
   /** Rate setpoint (deg/s) and filtered gyro (deg/s), FC axes: roll right, nose down, yaw right. */
   readonly setpoint = new Float64Array(3);
   readonly gyro = new Float64Array(3);
+  /** The rate curve in use. It starts at `cfg.rates` and the settings swap it live with `setRates`. */
+  rates: RateProfile;
   readonly pid: PidController;
   readonly mixer: Mixer;
   readonly imu: Mahony;
@@ -55,6 +57,7 @@ export class FlightController {
   private armBlocked = false;
 
   constructor(readonly cfg: FcConfig = DEFAULT_FC) {
+    this.rates = cfg.rates;
     this.pid = new PidController(cfg.pid);
     this.mixer = new Mixer(cfg.mixer);
     this.imu = new Mahony(cfg.imu);
@@ -85,6 +88,11 @@ export class FlightController {
     this.imu.reset(q);
   }
 
+  /** Swap the rate curve without rebuilding the controller: the pilot can change rates while armed. */
+  setRates(rates: RateProfile): void {
+    this.rates = rates;
+  }
+
   /**
    * One FC loop iteration. `gyroBody` is the measured body rate (rad/s), `accelBody` the accelerometer (m/s^2) and
    * `motorOmega` the motor speeds (rad/s) used by the RPM filter.
@@ -105,7 +113,7 @@ export class FlightController {
     }
     const throttle = clamp(input.throttle, 0, 1);
     if (!this.airmodeActive && throttle > c.airmodeStartThrottle) this.airmodeActive = true;
-    const r = c.rates;
+    const r = this.rates;
     const sp = this.setpoint;
     sp[0] = stickToRate(r.type, r.roll, input.roll);
     sp[1] = stickToRate(r.type, r.pitch, input.pitch);
