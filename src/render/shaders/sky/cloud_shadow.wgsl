@@ -56,7 +56,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let o = vec3f((world.x - frame.camPos.x) * 0.001, datumR, (world.y - frame.camPos.z) * 0.001);
   let jitter = hash21(gid.xy + vec2u(u32(ap.cloudC.y) % 8u, 0u)) * 0.999;
   let sun = columnTransmittance(o, frame.sunDir.xyz, CUMULUS_STEPS, datumR, jitter);
-  let moon = select(1.0, columnTransmittance(o, frame.moonDir.xyz, CUMULUS_STEPS, datumR, jitter), ap.flags.x > 0.5);
+  // select evaluates both values; skip the entire moon column when moonlight is disabled.
+  var moon = 1.0;
+  if (ap.flags.x > 0.5) {
+    moon = columnTransmittance(o, frame.moonDir.xyz, CUMULUS_STEPS, datumR, jitter);
+  }
   let zenith = columnTransmittance(o, vec3f(0.0, 1.0, 0.0), ZENITH_STEPS, datumR, jitter);
   textureStore(outTex, texel, vec4f(sun, moon, zenith, 1.0));
 }
