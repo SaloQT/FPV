@@ -136,6 +136,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
   let flagCount = 0;
   let gateData = new Float32Array(GATE_FLOATS);
   let gateCount = 0;
+  let gatesUploaded = false;
   let active = -1;
   const passed = new Set<number>();
   // Gate -> time its pass flash started; NaN until the next update stamps it with the frame clock.
@@ -177,6 +178,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
       mesh = upload(built.mesh, 'track mesh');
       glow = upload(buildGlowMesh(built.strips), 'track glow');
       gateCount = track.gates.length;
+      gatesUploaded = false;
       gateData = new Float32Array(Math.max(1, gateCount) * GATE_FLOATS);
       track.gates.forEach((g, i) => gateData.set(gateColour(g.index), i * GATE_FLOATS));
       flagCount = built.flags.length;
@@ -207,6 +209,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
       uniformData[6] = wind[2];
       prevTime = time;
       d.queue.writeBuffer(uniform, 0, uniformData);
+      let gatesChanged = !gatesUploaded;
       for (let i = 0; i < gateCount; i++) {
         let start = flashAt.get(i);
         if (start !== undefined && Number.isNaN(start)) {
@@ -214,10 +217,17 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
           flashAt.set(i, time);
         }
         const flash = start === undefined ? 0 : Math.min(1, Math.max(0, 1 - (time - start) / FLASH_SECONDS));
-        gateData[i * GATE_FLOATS + 4] = passed.has(i) ? 2 : i === active ? 1 : 0;
-        gateData[i * GATE_FLOATS + 5] = flash;
+        const o = i * GATE_FLOATS;
+        const prevState = gateData[o + 4], prevFlash = gateData[o + 5];
+        gateData[o + 4] = passed.has(i) ? 2 : i === active ? 1 : 0;
+        gateData[o + 5] = flash;
+        // Compare the packed float32 values: an unchanged GPU payload needs no queue upload.
+        if (prevState !== gateData[o + 4] || prevFlash !== gateData[o + 5]) gatesChanged = true;
       }
-      d.queue.writeBuffer(gateBuffer, 0, gateData);
+      if (gatesChanged) {
+        d.queue.writeBuffer(gateBuffer, 0, gateData);
+        gatesUploaded = true;
+      }
     },
     encodeGBuffer(pass) {
       if (!group) return;
