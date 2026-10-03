@@ -14,6 +14,7 @@ function countingContext(): { rc: RenderContext; made: Record<string, number> } 
   const device = new Proxy({ limits: { maxStorageBufferBindingSize: 1 << 30, maxBufferSize: 1 << 30 }, queue: { writeBuffer: () => undefined, writeTexture: () => undefined } }, {
     get(target, key: string) {
       if (key in target) return (target as Record<string, unknown>)[key];
+      if (key === 'createRenderBundleEncoder') return () => { note(key); return { setBindGroup() {}, setPipeline() {}, setVertexBuffer() {}, setIndexBuffer() {}, draw() {}, drawIndirect() {}, drawIndexedIndirect() {}, finish: () => ({}) }; };
       if (key.startsWith('create')) return () => { note(key); return object(); };
       return undefined;
     },
@@ -47,13 +48,35 @@ describe('vegetation GPU objects across scenes', () => {
     const { terrain, track } = testScene();
     const scene: SceneData = { terrain, sampler: createTerrainSampler(terrain), track };
     mod.setScene!(rc, scene);
+    const pass = { executeBundles() {}, setBindGroup() {} } as unknown as GPURenderPassEncoder;
+    const encode = () => mod.encodeGBuffer!(pass, rc, {} as never);
+    encode(); encode();
+    expect(made.createRenderBundleEncoder).toBe(1);
     const buffersAfterFirst = made.createBuffer;
     mod.setScene!(rc, { ...scene, track: null });
+    encode();
+    expect(made.createRenderBundleEncoder).toBe(2);
     mod.setScene!(rc, scene);
+    encode();
+    expect(made.createRenderBundleEncoder).toBe(3);
     expect((made.createRenderPipeline ?? 0) + (made.createComputePipeline ?? 0)).toBe(afterInit.pipelines);
     expect(made.createBindGroupLayout).toBe(afterInit.layouts);
     expect(made.module).toBe(afterInit.modules);
     expect(mod.stats().farCards).toBeGreaterThan(0);
     expect(made.createBuffer).toBeGreaterThan(buffersAfterFirst);
+    // Uniform writes alone preserve the bundle; changing the quality budget replaces its resources.
+    const frame = { camera: { pos: [0, 10, 0] }, quad: null } as never;
+    mod.update!(rc, frame);
+    encode();
+    expect(made.createRenderBundleEncoder).toBe(3);
+    rc.quality = resolveQuality({ quality: 'medium', performance240: false });
+    mod.update!(rc, frame);
+    encode();
+    expect(made.createRenderBundleEncoder).toBe(4);
+    mod.destroy!();
+    await mod.init(rc);
+    mod.setScene!(rc, scene);
+    encode();
+    expect(made.createRenderBundleEncoder).toBe(5);
   }, 120000);
 });

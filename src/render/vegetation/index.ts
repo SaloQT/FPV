@@ -12,6 +12,7 @@ import { TreeAssets } from './treeAssets';
 import { placeFarForest } from './treePlanFar';
 import { TreeSystem } from './treeSystem';
 import { DRAW_COUNT } from './variants';
+import { VegetationRenderBundle } from './renderBundle';
 
 export interface VegetationStats {
   /** Grass blades appended by the last sampled cull, all LODs. Null until the first async counter readback (dev builds only). */
@@ -62,6 +63,12 @@ export function createVegetationModule(): VegetationModule {
   const quadIn = { pos: [0, 0, 0] as Vec3, vel: [0, 0, 0] as Vec3, thrust: 0 };
   const quadUse = { pos: [0, 0, 0] as Vec3, vel: [0, 0, 0] as Vec3, thrust: 0 };
   let quadPending = false;
+  const renderBundle = new VegetationRenderBundle();
+  const drawVegetation = (pass: GPURenderBundleEncoder): void => {
+    grass?.encodeGBuffer(pass);
+    trees?.encodeGBuffer(pass);
+    far?.encodeGBuffer(pass);
+  };
   const camXZ: [number, number] = [0, 0];
   const devReadback = import.meta.env.DEV;
 
@@ -82,11 +89,13 @@ export function createVegetationModule(): VegetationModule {
   const treeParams = { ...TREE_TIER.medium, slots: 0, draws: DRAW_COUNT };
 
   function rebuildGrass(ctx: RenderContext): void {
+    renderBundle.invalidate();
     grass?.destroy();
     grass = paramsBuf && grassPipes ? new GrassSystem(ctx, grassPipes, paramsBuf, devReadback) : null;
   }
 
   function rebuildTrees(ctx: RenderContext): void {
+    renderBundle.invalidate();
     trees?.destroy();
     trees = null;
     treeCount = bushCount = rockCount = 0;
@@ -104,6 +113,7 @@ export function createVegetationModule(): VegetationModule {
   }
 
   function rebuildFar(ctx: RenderContext): void {
+    renderBundle.invalidate();
     far?.destroy();
     far = null;
     farUncovered = 0;
@@ -143,6 +153,7 @@ export function createVegetationModule(): VegetationModule {
     name: 'vegetation',
 
     async init(ctx: RenderContext) {
+      renderBundle.invalidate();
       paramsBuf = ctx.device.createBuffer({ label: 'vegetation-params', size: VEG_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       assets = await TreeAssets.create(ctx);
       farPipe = new FarCanopyPipeline(ctx);
@@ -200,11 +211,9 @@ export function createVegetationModule(): VegetationModule {
       trees?.encodePre(enc, ctx);
     },
 
-    encodeGBuffer(pass: GPURenderPassEncoder) {
+    encodeGBuffer(pass: GPURenderPassEncoder, ctx: RenderContext) {
       if (!scene) return;
-      grass?.encodeGBuffer(pass);
-      trees?.encodeGBuffer(pass);
-      far?.encodeGBuffer(pass);
+      renderBundle.encode(pass, ctx, drawVegetation);
     },
 
     setQuad(pos: Vec3, vel: Vec3, thrust: number) {
@@ -250,6 +259,7 @@ export function createVegetationModule(): VegetationModule {
     },
 
     destroy() {
+      renderBundle.invalidate();
       grass?.destroy();
       trees?.destroy();
       far?.destroy();

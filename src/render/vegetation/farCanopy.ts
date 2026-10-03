@@ -54,7 +54,7 @@ export class FarCanopy {
     this.pipeline = shared.pipeline;
   }
 
-  encodeGBuffer(pass: GPURenderPassEncoder): void {
+  encodeGBuffer(pass: GPURenderPassEncoder | GPURenderBundleEncoder): void {
     if (!this.pipeline || !this.group) return;
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(2, this.group);

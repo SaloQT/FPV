@@ -127,7 +127,7 @@ export class TreeSystem {
     }
   }
 
-  encodeGBuffer(pass: GPURenderPassEncoder): void {
+  encodeGBuffer(pass: GPURenderPassEncoder | GPURenderBundleEncoder): void {
     if (this.slots === 0) return;
     pass.setVertexBuffer(0, this.assets.vertexBuffer);
     pass.setIndexBuffer(this.assets.indexBuffer, 'uint32');

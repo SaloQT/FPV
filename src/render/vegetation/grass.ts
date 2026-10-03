@@ -162,7 +162,7 @@ export class GrassSystem {
     }
   }
 
-  encodeGBuffer(pass: GPURenderPassEncoder): void {
+  encodeGBuffer(pass: GPURenderPassEncoder | GPURenderBundleEncoder): void {
     for (let i = 0; i < 3; i++) {
       pass.setPipeline(this.pipes.drawPipes[i]);
       pass.setBindGroup(2, this.drawGroups[i]);
