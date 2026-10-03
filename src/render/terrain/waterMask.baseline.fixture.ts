@@ -1,3 +1,4 @@
+// Frozen 562768c WaterMask for independent differential tests; do not optimize.
 /** Mirrors TERRAIN_FAR_FRACTION in shaders/terrain/terrain_height.wgsl. */
 const FAR_FRACTION = 0.35;
 const BLOCK = 8;
@@ -13,9 +14,10 @@ export class WaterMask {
   private readonly cell: number;
   private readonly originX: number;
   private readonly originZ: number;
+  private readonly waterLevel: number;
   private readonly farBelow: boolean;
   private readonly blocks: number;
-  private readonly wetPrefix: Uint32Array;
+  private readonly blockMin: Float32Array;
   private readonly segX = new Int32Array(8);
   private readonly segZ = new Int32Array(8);
 
@@ -24,32 +26,22 @@ export class WaterMask {
     this.cell = cell;
     this.originX = origin[0];
     this.originZ = origin[1];
+    this.waterLevel = waterLevel;
     this.farBelow = minHeight + FAR_FRACTION * (maxHeight - minHeight) < waterLevel;
     const nb = Math.ceil(n / BLOCK);
     this.blocks = nb;
-    const blockMin = new Float32Array(nb * nb).fill(Infinity);
+    this.blockMin = new Float32Array(nb * nb).fill(Infinity);
     let lowest = Infinity;
     for (let j = 0; j < n; j++) {
       const row = Math.floor(j / BLOCK) * nb;
       for (let i = 0; i < n; i++) {
         const h = height[j * n + i];
         const b = row + Math.floor(i / BLOCK);
-        if (h < blockMin[b]) blockMin[b] = h;
+        if (h < this.blockMin[b]) this.blockMin[b] = h;
         if (h < lowest) lowest = h;
       }
     }
     this.enabled = Number.isFinite(waterLevel) && lowest < waterLevel;
-    // Keep the same Float32 minima and strict comparison as the block scan.
-    // A padded summed-area table makes any inclusive block rectangle O(1).
-    const stride = nb + 1;
-    this.wetPrefix = new Uint32Array(stride * stride);
-    for (let z = 0; z < nb; z++) {
-      let rowWet = 0;
-      for (let x = 0; x < nb; x++) {
-        if (blockMin[z * nb + x] < waterLevel) rowWet++;
-        this.wetPrefix[(z + 1) * stride + x + 1] = this.wetPrefix[z * stride + x + 1] + rowWet;
-      }
-    }
   }
 
   /** True if terrain under [x0,x1] x [z0,z1] (world metres) may be below the water level. */
@@ -68,13 +60,12 @@ export class WaterMask {
   }
 
   private blocksBelow(xa: number, xb: number, za: number, zb: number): boolean {
-    const x0 = Math.floor(xa / BLOCK), x1 = Math.floor(xb / BLOCK) + 1;
-    const z0 = Math.floor(za / BLOCK), z1 = Math.floor(zb / BLOCK) + 1;
-    if (x1 <= x0 || z1 <= z0) return false;
-    const stride = this.blocks + 1, prefix = this.wetPrefix;
-    // Unsigned subtraction also preserves exact counts if a prefix wraps.
-    return ((prefix[z1 * stride + x1] - prefix[z0 * stride + x1]
-      - prefix[z1 * stride + x0] + prefix[z0 * stride + x0]) >>> 0) !== 0;
+    for (let bz = Math.floor(za / BLOCK); bz <= Math.floor(zb / BLOCK); bz++) {
+      for (let bx = Math.floor(xa / BLOCK); bx <= Math.floor(xb / BLOCK); bx++) {
+        if (this.blockMin[bz * this.blocks + bx] < this.waterLevel) return true;
+      }
+    }
+    return false;
   }
 
   private reflect(t: number, w: number, period: number): number {
