@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /** Reproducible CPU-only A/B: original per-frame packing vs exact retained payload.
  * node tools/perf-terrain-payload.mjs [output.json] (Node >=24). Includes build/frustum every frame.
+ * Both arms use CURRENT WaterMask; this isolates packing cache, not full release-to-release performance.
+ * Use perf-terrain-compare.mjs for actual baseline/candidate pipeline comparisons.
  * Does not time WebGPU uploads or claim an FPS improvement.
  */
 import { registerHooks, stripTypeScriptTypes } from 'node:module';
@@ -12,7 +14,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
 if (git('status', '--porcelain')) throw new Error('Benchmark requires a clean source tree');
 const metadata = { optimizedCommit: git('rev-parse', 'HEAD'), node: process.version,
-  baselineCommit: '8f2e342c60370151af45840569678d21aadfbd78', baselineMethod: 'Frozen original index.ts copyTile/collectWater/waterQuads loops',
+  packingReferenceCommit: '8f2e342c60370151af45840569678d21aadfbd78', baselineMethod: 'Frozen original index.ts copyTile/collectWater/waterQuads loops',
   timestamp: new Date().toISOString() };
 console.log('Terrain payload benchmark', metadata);
 registerHooks({
