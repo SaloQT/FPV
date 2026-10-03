@@ -19,6 +19,8 @@ fn videoSyncJitterPx(row : f32, frame : u32, vn : f32, width : f32) -> f32 {
 // 0 = clean, 1 = pure static. A burst covers a band of rows for up to six frames; rarely the whole frame drops out.
 fn videoBurstCover(v : f32, frame : u32, vn : f32) -> f32 {
   let p = smoothstep(0.7, 1.0, vn);
+  // Below the existing burst threshold both selects are exactly zero.
+  if (p <= 0.0) { return 0.0; }
   let h = pcg3d(vec3u(frame / 6u, 0x51u, 0x9du));
   let r = unitOpen(h.x);
   let y0 = unitOpen(h.y);
