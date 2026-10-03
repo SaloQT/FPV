@@ -84,6 +84,7 @@ Handy for sharing a world and for the test tooling (`src/app/params.ts`, `src/ap
 | `countdown=0\|1` `hold=1` `advance=<frames>` `fixeddt=<s>` | Force the 3-2-1-GO on or off (off for `autostart` runs), do not start the real-time loop once the app is ready, run this many deterministic frames before ready, and use a fixed frame step (test tooling) |
 | `wind=<m/s>` `winddir=<deg>` | Wind |
 | `bench=1` `benchSeconds=<s>` `benchWarmup=<s>` | Benchmark (below) |
+| `gpuProfile=1` | Explicit diagnostic timestamp breakdown; off by default, with RT pass segmentation overhead |
 
 Parameters change the running session only; they never overwrite the pilot's saved settings. **Share links** (the world card's Copy link) carry
 `seed`, `tseed` (only when it differs), `style`, `gates`, `laps`, `diff` and `quality`: the terrain grid size depends on the quality tier, so a link
@@ -251,8 +252,30 @@ CHROME_BIN=/usr/bin/google-chrome node tools/bench.mjs --gpu --uncapped   # also
 exists nowhere else (`tools/shot.mjs` has the same fallback); both tools report a browser that cannot start with this hint instead of a stack trace (exit code 2),
 and stop the Vite server they started on that path and on Ctrl-C.
 
-In a normal browser the average is capped by the refresh rate, so read `avgGpuMs` for the headroom. The results panel says whether the display or the GPU limited the run. `--uncapped` is a
-measuring aid for the command-line runner only and has not been verified on real hardware.
+Observed frame rate includes CPU work, GPU work and browser scheduling, and may be presentation-limited. GPU timestamps describe GPU intervals, not guaranteed achievable FPS. `--gpu` requests the browser's default adapter but does not prove hardware rendering; check adapter identity. `--uncapped` uses the runner's existing frame-limit/v-sync overrides and has not been verified on physical hardware.
+
+#### Optional detailed GPU diagnostics
+
+`?bench=1&gpuProfile=1` (or `node tools/bench.mjs --profile`) exports diagnostic GPU categories in `profile.perCategoryMs`: probes, screen-space rays, denoising, clouds, post, RT auxiliary and RT latch. The existing panel's **Copy JSON**, `window.__fpv.benchDone`, and the runner's `--out` include the same result. This does not change saved settings, quality budgets or shaders.
+
+- With profiling **off**, the existing seven coarse timestamps, single RT compute pass and GPU command order are retained
+- With profiling **on** and `timestamp-query` supported, RT is split only at category boundaries. Trace → temporal → à-trous order, dispatch sizes and history/probe updates remain unchanged. Cloud timings use the existing combined cloud pass; post reuses its coarse interval
+- Probe timing includes planning/compaction and updates. Screen rays sum shadow/GI/optional specular trace intervals; denoising sums their temporal and à-trous intervals. Clouds include lighting precompute, march, temporal resolve and the shadow map. Categories are subsets of coarse sections: do not add them to the coarse total
+- Pass segmentation and queries add overhead. Detailed runs diagnose costs; compare normal throughput with profiling off. Timestamp granularity and backend scheduling also limit precision; zero-duration samples may be quantized
+- Unsupported timestamp queries yield explicit `unsupported` mode and null GPU values, with no profiling-only segmentation. Software adapters are labeled software; unknown/unverified adapters are never certified as physical hardware by the runner
+- GPU samples are attributed once to their originating presented frame, excluding warmup and captures. Three asynchronous readback slots never block rendering. The result reports dropped, failed, invalid and pending samples; skipped category slots cannot reuse old query values. A bounded asynchronous drain runs outside the measured window; timeout/device loss/configuration change marks the result incomplete
+
+Schema version 2 retains `avgFps`, `p1LowFps`, `avgGpuMs`, `perPassMs` and existing device/size fields. It adds profiling mode, per-category sample/skip/invalid counts, frame attribution and provenance: full effective settings/quality profile, scenario/world, resolution, refresh source and browser identity. Runner exports also include launch arguments, browser version and source snapshots before/after the run. A clean unchanged locally served checkout has a verified source commit; dirty or external `--url` builds have a null exact revision, with the uncertainty recorded. A Git HEAD alone is not proof of the served build.
+
+For a baseline/final comparison on the user's physical GPU:
+
+1. Use separate clean checkouts and identical browser, launch mode, viewport, effective quality, scale, scene, time, camera, warmup and duration. Keep foreground state/power conditions consistent. The benchmark still inherits some saved simulation/observer settings; compare the exported settings, not just the command line
+2. Run alternating repeated baseline/final measurements with profiling off, keeping every JSON and comparing the spread. Example: `CHROME_BIN=/path/to/chrome node tools/bench.mjs --gpu --size 1920x1080 --seconds 20 --warmup 5 --query "quality=high&scale=1&seed=1337&scenario=hover&cam=fpv&t=12" --out ../baseline-normal.json`; repeat unchanged in the final checkout with a different output path outside the checkout (untracked result files would make later source snapshots dirty)
+3. For category comparison, apply the **same instrumentation** to both revisions and repeat with `--profile`. Never compare an uninstrumented baseline against a segmented final run as an optimization gain
+4. Reject comparisons with incompatible provenance, renderer errors, loss, changed configuration or unfinished readbacks. Inspect sample/drop counts and adapter identity. Capture visual comparisons separately from the measured run
+5. The real-time fly scenario is not a frame-identical replay across different performance. Use a stable hover scene as an additional controlled comparison; no result is a guarantee of 240 FPS
+
+Cloud-native Dawn/SwiftShader validation can check descriptors, readbacks, dispatch order and image/probe parity. It is software correctness evidence only; physical-GPU speed and instrumentation overhead remain unmeasured. See [GPU diagnostics validation](PERFORMANCE_GPU_DIAGNOSTICS.md) for the separately recorded native checks.
 
 ## Testing
 

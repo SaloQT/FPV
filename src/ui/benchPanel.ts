@@ -3,6 +3,8 @@ import './panels.css';
 
 /** What the panel needs from a finished run; `BenchResult` (app/benchModel.ts) satisfies it. */
 export interface BenchRows {
+  profile?: { requested: boolean; supported: boolean; mode: string; perCategoryMs: Record<string, number | null>; overhead: string };
+  gpuTiming?: { measured: number; dropped: number; failed: number; pending: number };
   avgFps: number;
   p1LowFps: number;
   avgGpuMs: number | null;
@@ -61,13 +63,18 @@ export class BenchPanel {
   show(r: BenchRows, verdict: string, actions: BenchActions): void {
     setHidden(this.pill, true);
     const table = el('table', 'fpv-bench-table');
-    const gpu = r.avgGpuMs === null ? 'not measured (no timestamp-query)' : `${r.avgGpuMs.toFixed(2)} ms`;
+    const gpu = r.avgGpuMs === null ? r.profile?.supported === false ? 'not measured (no timestamp-query)' : 'not measured (no valid samples)' : `${r.avgGpuMs.toFixed(2)} ms`;
     table.append(
-      row('Average', `${r.avgFps.toFixed(1)} fps`),
+      row('Observed frame rate', `${r.avgFps.toFixed(1)} fps`),
       row('1% low', `${r.p1LowFps.toFixed(1)} fps`),
       row('GPU time', gpu),
     );
     if (r.perPassMs) for (const [name, ms] of Object.entries(r.perPassMs)) table.append(row(`  ${PASS_LABELS[name] ?? name}`, `${ms.toFixed(2)} ms`));
+    if (r.profile?.requested) {
+      table.append(row('GPU profiling', r.profile.mode));
+      if (r.profile.mode === 'detailed') for (const [name, ms] of Object.entries(r.profile.perCategoryMs)) table.append(row(`  ${name}`, ms === null ? 'not measured / skipped' : `${ms.toFixed(2)} ms`));
+    }
+    if (r.gpuTiming) table.append(row('GPU samples', `${r.gpuTiming.measured} measured, ${r.gpuTiming.dropped} dropped, ${r.gpuTiming.failed} failed, ${r.gpuTiming.pending} pending`));
     table.append(
       row('Render', `${r.renderWidth} x ${r.renderHeight} (${Math.round(r.renderScale * 100)}% of ${r.outWidth} x ${r.outHeight})`),
       row('Quality', r.quality),
@@ -92,6 +99,7 @@ export class BenchPanel {
     this.dialog.replaceChildren(
       el('h2', 'fpv-bench-title', 'Benchmark results'),
       el('p', r.device.software ? 'fpv-bench-warn' : 'fpv-bench-note', verdict),
+      ...(r.profile?.mode === 'detailed' ? [el('p', 'fpv-bench-note', r.profile.overhead)] : []),
       table,
       el('div', 'fpv-bench-buttons', again, copy, close),
     );

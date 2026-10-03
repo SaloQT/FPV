@@ -155,3 +155,33 @@ describe('compact probe command encoding', () => {
     expect(planner).not.toContain('traceScene');
   });
 });
+
+import type { GpuProfiler, DetailName } from '../gpuTimer';
+
+describe('opt-in RT diagnostic pass segmentation', () => {
+  it.each([false, true])('keeps dispatch order/dimensions and rebinds every split with specular=%s', async (specular) => {
+    const plain = fixture(), profiled = fixture();
+    plain.rc.quality.rtSpecular = profiled.rc.quality.rtSpecular = specular;
+    const sections: DetailName[] = [];
+    profiled.rc.profiler = { active: true, computePass(label, section) { sections.push(section); return { label }; } } satisfies GpuProfiler;
+    const a = createRTModule(), b = createRTModule(); await a.init(plain.rc); await b.init(profiled.rc);
+    a.encodeRT!(plain.enc, plain.rc, plain.frame(10)); b.encodeRT!(profiled.enc, profiled.rc, profiled.frame(10));
+    a.encodeRT!(plain.enc, plain.rc, plain.frame(11)); b.encodeRT!(profiled.enc, profiled.rc, profiled.frame(11));
+    const work = (commands: Command[]) => commands.filter(c => ['pipeline', 'dispatch', 'indirect', 'clear'].includes(String(c[0])));
+    expect(work(profiled.commands)).toEqual(work(plain.commands));
+    const oneFrame: DetailName[] = ['rtAux', 'probes', 'shadowRays', 'shadowDenoise', 'giRays', 'giDenoise', ...(specular ? ['specularRays', 'specularDenoise'] as const : []), 'rtLatch'];
+    expect(sections).toEqual([...oneFrame, ...oneFrame]);
+    for (let i = 0; i < profiled.commands.length; i++) if (profiled.commands[i][0] === 'begin') expect(profiled.commands[i + 1]).toEqual(['group', 0, 'frame']);
+    expect(profiled.commands.filter(c => c[0] === 'begin')).toHaveLength(oneFrame.length * 2);
+    a.destroy?.(); b.destroy?.();
+  });
+
+  it('does not split when an optional profiler is inactive (capture or unsupported)', async () => {
+    const f = fixture();
+    const computePass = vi.fn(() => { throw new Error('must not profile'); });
+    f.rc.profiler = { active: false, computePass };
+    const m = createRTModule(); await m.init(f.rc); m.encodeRT!(f.enc, f.rc, f.frame(10));
+    expect(computePass).not.toHaveBeenCalled();
+    expect(f.commands.filter(c => c[0] === 'begin')).toEqual([['begin', 'rt']]); m.destroy?.();
+  });
+});

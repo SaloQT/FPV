@@ -36,9 +36,9 @@ export async function rebuildRenderer(ctx: AppCtx): Promise<Renderer> {
     console.warn('recover: the lost renderer could not be destroyed cleanly', e);
   }
   const { mods, list } = createAppModules();
-  const renderer = await Renderer.create(ctx.canvas, renderSettings(ctx.store.get(), ctx.rig.mode), list, createPostProcessor());
+  const renderer = await Renderer.create(ctx.canvas, renderSettings(ctx.store.get(), ctx.rig.mode), list, createPostProcessor(), ctx.renderer.options);
   try {
-    renderer.setDisplayRefresh(ctx.renderer.stats.displayHz);
+    renderer.setDisplayRefresh(ctx.renderer.stats.displayHz, ctx.renderer.stats.displaySource);
     const dpr = window.devicePixelRatio || 1;
     if (ctx.canvas.clientWidth > 0 && ctx.canvas.clientHeight > 0) renderer.resize(ctx.canvas.clientWidth, ctx.canvas.clientHeight, dpr);
     Object.assign(ctx.mods, mods);

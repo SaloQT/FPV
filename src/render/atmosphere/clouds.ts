@@ -95,7 +95,7 @@ export class CloudLayer {
     const r = this.res!, g = this.groups!;
     // Recompute even on a same-frame capture: the LUTs and uniforms belong to this encode.
     // Dispatch boundaries preserve precompute -> march -> resolve resource dependencies.
-    const pass = enc.beginComputePass({ label: 'atmosphere clouds' });
+    const pass = enc.beginComputePass(this.rc.profiler?.active ? this.rc.profiler.computePass('atmosphere clouds', 'clouds') : { label: 'atmosphere clouds' });
     this.dispatch(pass, this.precomputeStage, g.precompute, 1, 1);
     this.dispatch(pass, this.marchStage, g.march, Math.ceil(r.width / 8), Math.ceil(r.height / 8));
     this.dispatch(pass, this.resolveStage, g.resolve[this.parity], Math.ceil(r.width / 8), Math.ceil(r.height / 8));

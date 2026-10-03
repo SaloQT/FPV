@@ -93,13 +93,70 @@ describe('benchVerdict', () => {
     expect(benchVerdict({ ...base, device: { ...META.device, software: true } })).toMatch(/Software rendering/);
   });
 
-  it('a result at the refresh rate is display-limited and shows the GPU headroom', () => {
+  it('qualifies possible refresh limitation without predicting hardware FPS', () => {
     const v = benchVerdict(base);
     expect(v).toContain('144 Hz');
-    expect(v).toContain('500 fps');
+    expect(v).toContain('may be presentation-limited');
+    expect(v).not.toContain('500 fps');
   });
 
-  it('a result below the refresh rate says the GPU is the limit', () => {
-    expect(benchVerdict({ ...base, avgFps: 90 })).toMatch(/GPU could not keep up/);
+  it('does not infer a GPU bottleneck from below-refresh frame rate', () => {
+    expect(benchVerdict({ ...base, avgFps: 90 })).toMatch(/does not establish/);
+  });
+});
+
+import { DETAIL_NAMES, PASS_NAMES, type GpuTimingSample, type DetailTimes } from '../render/gpuTimer';
+
+function timing(frameIndex: number, sequence: number, gpuMs: number | null = 2): GpuTimingSample {
+  return { frameIndex, sequence, status: 'measured', gpuMs, passMs: PASS_NAMES.map(() => gpuMs === null ? NaN : gpuMs / 6), detailMs: null, detailWritten: 0 };
+}
+
+describe('attributed asynchronous benchmark GPU samples', () => {
+  it('excludes warmup and future frames, accepts out-of-order completions once, and counts quantized zero', () => {
+    const r = new BenchRecorder(PASS_NAMES, 1, 0.01, 1);
+    r.push(10, NaN, [], 1, 9); // warmup
+    r.push(10, NaN, [], 1, 10);
+    r.push(10, NaN, [], 1, 11);
+    r.recordGpu(timing(9, 0, 99)); r.recordGpu(timing(12, 3, 99));
+    r.recordGpu(timing(11, 2, 0)); r.recordGpu(timing(10, 1, 4)); r.recordGpu(timing(10, 1, 4));
+    const result = r.result(META);
+    expect(result.avgGpuMs).toBe(2);
+    expect(result.gpuTiming).toMatchObject({ received: 2, measured: 2, firstFrame: 10, lastFrame: 11, pending: 0 });
+  });
+
+  it('reports drops, failures and pending frames without filling with latest data', () => {
+    const r = new BenchRecorder(PASS_NAMES, 1, 0, 1);
+    for (let i = 1; i <= 4; i++) r.push(10, NaN, [], 1, i);
+    r.recordGpu({ ...timing(1, 1), status: 'dropped' });
+    r.recordGpu({ ...timing(2, 2), status: 'failed' });
+    r.recordGpu(timing(3, 3, null));
+    const result = r.result({ ...META, profiling: { requested: true, supported: true, mode: 'detailed' } });
+    expect(result.avgGpuMs).toBeNull();
+    expect(result.gpuTiming).toMatchObject({ received: 3, measured: 0, dropped: 1, failed: 1, invalid: 1, pending: 1 });
+  });
+
+  it('aggregates only written signal intervals and distinguishes skipped versus invalid categories', () => {
+    const r = new BenchRecorder(PASS_NAMES, 1, 0, 1);
+    r.push(10, NaN, [], 1, 1); r.push(10, NaN, [], 1, 2);
+    const detailMs = Object.fromEntries(DETAIL_NAMES.map(key => [key, null])) as DetailTimes;
+    Object.assign(detailMs, { probes: 2, shadowRays: 1, giRays: 3, shadowDenoise: 0, giDenoise: 2, clouds: 80 });
+    const written = ['probes', 'shadowRays', 'giRays', 'shadowDenoise', 'giDenoise'].reduce((bits, key) => bits | 1 << DETAIL_NAMES.indexOf(key as typeof DETAIL_NAMES[number]), 0);
+    r.recordGpu({ ...timing(1, 1), detailMs, detailWritten: written });
+    r.recordGpu({ ...timing(2, 2), detailMs: { ...detailMs, giRays: null }, detailWritten: written });
+    const result = r.result({ ...META, profiling: { requested: true, supported: true, mode: 'detailed' } });
+    expect(result.profile.perCategoryMs).toMatchObject({ probes: 2, screenRays: 4, denoise: 2, clouds: null });
+    expect(result.profile.samples.screenRays).toBe(1);
+    expect(result.profile.invalid.screenRays).toBe(1);
+    expect(result.profile.skipped.clouds).toBe(2);
+    expect(result.profile.overhead).toMatch(/segmentation/);
+  });
+
+  it('exports unsupported GPU timing as null without treating frame timing as hardware evidence', () => {
+    const r = new BenchRecorder(PASS_NAMES, 1, 0, 1); r.push(10, NaN, [], 1, 1);
+    const result = r.result({ ...META, profiling: { requested: true, supported: false, mode: 'unsupported' } });
+    expect(result.avgGpuMs).toBeNull(); expect(result.perPassMs).toBeNull();
+    expect(result.gpuTiming.pending).toBe(0); expect(result.profile.overhead).toMatch(/unavailable/);
+    expect(benchVerdict({ ...result, device: { ...result.device, classification: 'unknown' } })).toMatch(/unverified/);
+    expect(JSON.parse(JSON.stringify(result)).profile.perCategoryMs.probes).toBeNull();
   });
 });

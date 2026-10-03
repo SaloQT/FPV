@@ -1,6 +1,7 @@
 /**
  * Query parameters about performance (kept apart from params.ts, which belongs to the scenario hooks). Pure.
  *
+ *   gpuProfile=1       opt-in diagnostic GPU breakdown (may split RT compute passes)
  *   bench=1            scripted fly-through at fixed settings, then results in `window.__fpv.bench` and a panel
  *   benchSeconds=<s>   measured length of the run, 1..300 (default 20)
  *   benchWarmup=<s>    frames before this many seconds are not measured (default 2)
@@ -15,6 +16,7 @@ import { hoursToTimeMs, type AppParams } from './params';
 
 export interface PerfParams {
   bench: boolean;
+  gpuProfile: boolean;
   benchSeconds: number;
   benchWarmup: number;
   /** Refresh rate to assume; undefined measures it. */
@@ -44,6 +46,7 @@ export function parsePerfParams(search: string): PerfParams {
   const cap = num(q, 'cap');
   return {
     bench: flag('bench') ?? false,
+    gpuProfile: q.get('gpuProfile') === '1',
     benchSeconds: seconds === undefined ? BENCH_DEFAULT_SECONDS : Math.min(300, Math.max(1, seconds)),
     benchWarmup: warmup === undefined ? BENCH_DEFAULT_WARMUP_S : Math.min(30, Math.max(0, warmup)),
     refresh: refresh !== undefined && refresh >= 10 && refresh <= 1000 ? refresh : undefined,

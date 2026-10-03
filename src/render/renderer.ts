@@ -9,7 +9,7 @@ import {
   type FrameUniformInput, type TerrainUniformInfo,
 } from './frameUniforms';
 import { createGBuffer, destroyGBuffer, renderSize } from './gbuffer';
-import { GpuTimer, PASS_NAMES } from './gpuTimer';
+import { GpuTimer, PASS_NAMES, type GpuTimingListener } from './gpuTimer';
 import { DeferredLighting } from './lighting';
 import { ModuleHost } from './moduleHost';
 import { createDefaultModules } from './modules';
@@ -18,6 +18,8 @@ import { resolveQuality, sameProfile } from './qualityPresets';
 import { SceneRegistry } from './rtRegistry';
 import { resolveShader, type Defines } from './shaderLib';
 import { WorldResources } from './worldBindings';
+
+export interface RendererOptions { gpuProfile?: boolean }
 
 export interface RenderStats {
   frameIndex: number;
@@ -39,6 +41,7 @@ export interface RenderStats {
   passMs: number[];
   /** Display refresh rate measured at startup (0 until `setDisplayRefresh` was called). */
   displayHz: number;
+  displaySource: 'measured' | 'fallback' | 'override' | 'unknown';
   /** The frame rate dynamic resolution aims at: the setting, or the display refresh for 0, never above the frame cap. */
   targetFps: number;
   frameCap: number;
@@ -95,9 +98,9 @@ export class Renderer {
   private destroyed = false;
   private errorCount = 0;
 
-  static async create(canvas: HTMLCanvasElement, settings: Settings, modules?: RenderModule[], post?: PostProcessor): Promise<Renderer> {
+  static async create(canvas: HTMLCanvasElement, settings: Settings, modules?: RenderModule[], post?: PostProcessor, options: RendererOptions = {}): Promise<Renderer> {
     const setup = await requestDevice();
-    const r = new Renderer(canvas, settings, setup, modules ?? createDefaultModules(), post ?? createPostProcessor());
+    const r = new Renderer(canvas, settings, setup, modules ?? createDefaultModules(), post ?? createPostProcessor(), options);
     try {
       await r.init();
     } catch (e) {
@@ -107,7 +110,7 @@ export class Renderer {
     return r;
   }
 
-  private constructor(private readonly canvas: HTMLCanvasElement, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor) {
+  private constructor(private readonly canvas: HTMLCanvasElement, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor, readonly options: Readonly<RendererOptions>) {
     const device = setup.device;
     this.device = device;
     this.adapter = setup.adapter;
@@ -115,6 +118,7 @@ export class Renderer {
     void device.lost.then((l) => {
       if (l.reason === 'destroyed') return;
       this.lost = `${l.reason}: ${l.message}`;
+      this.timer.destroy();
       this.report(`WebGPU device lost (${this.lost})`);
       this.onLost?.(l.reason, l.message);
     });
@@ -127,7 +131,7 @@ export class Renderer {
     this.outW = Math.max(1, canvas.width);
     this.outH = Math.max(1, canvas.height);
     this.world = new WorldResources(device);
-    this.timer = new GpuTimer(device, setup.features.has('timestamp-query'));
+    this.timer = new GpuTimer(device, setup.features.has('timestamp-query'), options.gpuProfile);
     this.host = new ModuleHost(modules, (m) => this.report(m));
     const quality = resolveQuality(settings);
     const size = renderSize(this.outW, this.outH, this.clampScale(settings.renderScale), 1);
@@ -135,6 +139,7 @@ export class Renderer {
     const stages = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE;
     const frameLayout = device.createBindGroupLayout({ label: 'frame', entries: [{ binding: 0, visibility: stages, buffer: { type: 'uniform' } }] });
     this.rc = {
+      ...(this.timer.detailed ? { profiler: this.timer } : {}),
       device,
       canvasFormat,
       features: setup.features,
@@ -150,10 +155,22 @@ export class Renderer {
     this.graph.bind(this.rc.gbuf);
     this.stats = {
       frameIndex: 0, cpuMs: 0, gpuMs: null, fps: 0, renderWidth: size.width, renderHeight: size.height, outWidth: this.outW, outHeight: this.outH,
-      dynamicScale: 1, preExposure: 1, rtMs: null, adapter: setup.adapterName, passMs: PASS_NAMES.map(() => NaN), displayHz: 0,
+      dynamicScale: 1, preExposure: 1, rtMs: null, adapter: setup.adapterName, passMs: PASS_NAMES.map(() => NaN), displayHz: 0, displaySource: 'unknown',
       targetFps: resolveTargetFps(settings.targetFps, 0, settings.frameCap), frameCap: settings.frameCap, dynamicDriver: 'off', errorCount: 0,
     };
   }
+
+  /** Current total, including errors surfaced asynchronously since the last rendered frame. */
+  get totalErrorCount(): number { return this.errorCount; }
+
+  get gpuProfiling() {
+    return { requested: this.options.gpuProfile === true, supported: this.rc.features.has('timestamp-query'), mode: this.timer.detailed ? 'detailed' as const : this.rc.features.has('timestamp-query') ? 'coarse' as const : 'unsupported' as const };
+  }
+
+  /** Stops admission of future submissions; in-flight callbacks remain deliverable until drainGpuTimings() settles. */
+  listenGpuTimings(listener: GpuTimingListener): () => void { return this.timer.listen(listener); }
+  drainGpuTimings(timeoutMs = 5000): Promise<boolean> { return this.timer.drain(timeoutMs); }
+  get qualityProfile() { return this.rc.quality; }
 
   private async init(): Promise<void> {
     await this.host.init(this.rc);
@@ -182,8 +199,9 @@ export class Renderer {
   }
 
   /** The display refresh rate measured at startup (Hz). It is the default frame-rate target and what the dynamic-resolution controller trusts. */
-  setDisplayRefresh(hz: number): void {
+  setDisplayRefresh(hz: number, source: RenderStats['displaySource'] = 'unknown'): void {
     this.stats.displayHz = hz;
+    this.stats.displaySource = source;
     this.dyn.setMeasuredRefreshHz(hz);
     this.dyn.reset();
   }
@@ -192,6 +210,7 @@ export class Renderer {
   simulateLoss(message: string): void {
     if (this.lost || this.destroyed) return;
     this.lost = `unknown: ${message}`;
+    this.timer.destroy();
     this.report(`WebGPU device lost (${this.lost})`);
     this.onLost?.('unknown', message);
   }
@@ -222,6 +241,7 @@ export class Renderer {
     try {
       this.encodeFrame(f, frameMs, null);
     } catch (e) {
+      this.timer.abortFrame();
       this.reportOnce('render', e);
     }
     this.stats.cpuMs = performance.now() - t0;
@@ -255,6 +275,7 @@ export class Renderer {
       buffer.unmap();
       return { width, height, rgba };
     } finally {
+      this.timer.abortFrame();
       buffer.destroy();
     }
   }
@@ -294,6 +315,7 @@ export class Renderer {
     this.host.update(rc, info);
     this.post.update?.(rc, info);
 
+    this.timer.beginFrame(this.frameIndex, readback !== null);
     const enc = this.device.createCommandEncoder({ label: 'frame' });
     const target = this.context.getCurrentTexture();
     const p = this.postParams;

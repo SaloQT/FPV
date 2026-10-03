@@ -18,6 +18,7 @@
  * must NOT re-apply it. Sun at zenith is ~1.2e5 lux; full moon ~0.25 lux; starlight ~2e-3 lux.
  */
 
+import type { GpuProfiler } from './gpuTimer';
 import type { AstroState, CameraState, QuadState, Quat, Settings, TerrainData, TerrainSampler, TrackData, Vec3, RenderQuality } from '../contracts';
 
 // ───────────────────────────── Formats ─────────────────────────────
@@ -202,6 +203,8 @@ export interface RTSceneRegistry {
 // ───────────────────────────── Module contract ─────────────────────────────
 
 export interface RenderContext {
+  /** Opt-in diagnostics only; omitted on the production path and unsupported devices. */
+  profiler?: GpuProfiler;
   device: GPUDevice;
   canvasFormat: GPUTextureFormat;
   features: ReadonlySet<string>;

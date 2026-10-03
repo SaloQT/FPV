@@ -5,7 +5,13 @@ import { benchSettingsPatch, parsePerfParams, perfSettingsPatch, withBench } fro
 
 describe('parsePerfParams', () => {
   it('defaults: no benchmark, measure the refresh', () => {
-    expect(parsePerfParams('')).toEqual({ bench: false, benchSeconds: 20, benchWarmup: 2, refresh: undefined, target: undefined, cap: undefined, perf240: undefined });
+    expect(parsePerfParams('')).toEqual({ bench: false, gpuProfile: false, benchSeconds: 20, benchWarmup: 2, refresh: undefined, target: undefined, cap: undefined, perf240: undefined });
+  });
+
+  it('requires an explicit profiling opt-in without changing saved settings', () => {
+    expect(parsePerfParams('?gpuProfile=1').gpuProfile).toBe(true);
+    for (const value of ['', '0', 'false', 'true', 'typo']) expect(parsePerfParams(`?gpuProfile=${value}`).gpuProfile).toBe(false);
+    expect(perfSettingsPatch(parsePerfParams('?gpuProfile=1'))).toEqual({});
   });
 
   it('reads the benchmark options and clamps them', () => {

@@ -70,6 +70,7 @@ function collectStats(ctx: AppCtx): Record<string, unknown> {
   const w = ctx.world;
   return {
     ...ctx.renderer.stats,
+    gpuProfiling: ctx.renderer.gpuProfiling,
     errors: ctx.renderer.errors.length,
     state: s.state,
     physicsMs: s.stats.physicsMs,

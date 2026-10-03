@@ -1,3 +1,4 @@
+import type { DetailName, GpuProfiler } from '../gpuTimer';
 import type { FrameInfo, GBuffer, RenderContext, RenderModule, SceneData } from '../contracts';
 import type { TerrainSampler } from '../../contracts';
 import { atmosphereOf } from '../atmosphere';
@@ -223,9 +224,11 @@ class RtModule implements RTModule {
     const compact = this.probes.useCompact;
     // Encode the reset every time, including capture() re-encodes of the same frame index.
     if (compact) enc.clearBuffer(this.probes.work!.args, 0, 4);
-    const pass = this.pass = enc.beginComputePass({ label: 'rt' });
+    const profiler = rc.profiler?.active ? rc.profiler : undefined;
+    let pass = this.pass = enc.beginComputePass(profiler ? profiler.computePass('rt auxiliary', 'rtAux') : { label: 'rt' });
     pass.setBindGroup(0, rc.frame.group);
     this.local(this.pipes.aux, groups.aux[par]);
+    if (profiler) pass = this.nextProfilePass(enc, profiler, 'probes');
     const dim = this.probes.dim;
     if (compact) {
       pass.setPipeline(this.pipes.probePlan);
@@ -239,9 +242,10 @@ class RtModule implements RTModule {
       this.traced(this.pipes.probe, groups.probe[par], dim[0], dim[1], dim[2]);
     }
     this.probes.commit();
-    this.signal('shadow', groups, par);
-    this.signal('gi', groups, par);
-    if (q.rtSpecular) this.signal('spec', groups, par);
+    this.signal('shadow', groups, par, enc, profiler);
+    this.signal('gi', groups, par, enc, profiler);
+    if (q.rtSpecular) this.signal('spec', groups, par, enc, profiler);
+    if (profiler) pass = this.nextProfilePass(enc, profiler, 'rtLatch');
     // The latch writes one scalar, not one value per RT texel.
     pass.setPipeline(this.pipes.latch);
     pass.setBindGroup(1, groups.latch);
@@ -265,8 +269,18 @@ class RtModule implements RTModule {
     pass.dispatchWorkgroups(x, y, z);
   }
 
-  private signal(sig: Signal, groups: RtGroups, par: number): void {
+  private nextProfilePass(enc: GPUCommandEncoder, profiler: GpuProfiler, section: DetailName): GPUComputePassEncoder {
+    this.pass!.end();
+    const pass = this.pass = enc.beginComputePass(profiler.computePass(`rt ${section}`, section));
+    pass.setBindGroup(0, this.rc.frame.group);
+    return pass;
+  }
+
+  private signal(sig: Signal, groups: RtGroups, par: number, enc: GPUCommandEncoder, profiler?: GpuProfiler): void {
+    const name = sig === 'spec' ? 'specular' : sig;
+    if (profiler) this.nextProfilePass(enc, profiler, `${name}Rays`);
     this.traced(this.pipes.trace[sig], groups.trace[sig]![par], this.wx, this.wy, 1);
+    if (profiler) this.nextProfilePass(enc, profiler, `${name}Denoise`);
     this.local(this.pipes.temporal[sig], groups.temporal[sig]![par]);
     for (let i = 0; i < ATROUS_ITERATIONS; i++) this.local(this.pipes.atrous[sig][i], groups.atrous[sig]![par][i]);
   }

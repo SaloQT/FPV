@@ -98,12 +98,12 @@ export default async function boot(canvas: HTMLCanvasElement, osdCanvas: HTMLCan
 }
 
 /** The refresh rate of the display: from `?refresh=`, else measured over ~60 idle frames before the heavy startup work begins. */
-async function displayRefresh(perf: PerfParams, loading: LoadingOverlay): Promise<number> {
-  if (perf.refresh !== undefined) return perf.refresh;
+async function displayRefresh(perf: PerfParams, loading: LoadingOverlay): Promise<{ hz: number; source: 'override' | 'measured' | 'fallback' }> {
+  if (perf.refresh !== undefined) return { hz: perf.refresh, source: 'override' };
   loading.setProgress('Measuring the display', 0.02);
   const m = await measureRefresh();
   if (m.source === 'fallback') console.warn('display refresh could not be measured (hidden tab or throttled frames): assuming 60 Hz');
-  return m.hz;
+  return m;
 }
 
 async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, root: HTMLElement, loading: LoadingOverlay, perf: PerfParams): Promise<AppCtx> {
@@ -118,8 +118,8 @@ async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, ro
   let worldFrac = 0;
   const bar = (stage: string): void => loading.setProgress(stage, BAR_START + BAR_DEVICE * deviceDone + BAR_WORLD * worldFrac);
   bar('Starting the GPU');
-  const rendererP = Renderer.create(canvas, settings, modules, createPostProcessor()).then((r) => {
-    r.setDisplayRefresh(refreshHz);
+  const rendererP = Renderer.create(canvas, settings, modules, createPostProcessor(), { gpuProfile: perf.gpuProfile }).then((r) => {
+    r.setDisplayRefresh(refreshHz.hz, refreshHz.source);
     deviceDone = 1;
     bar('GPU ready');
     return r;
