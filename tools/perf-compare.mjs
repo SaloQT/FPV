@@ -37,7 +37,7 @@ registerHooks({
 });
 async function load(dir) {
   const get = p => import(pathToFileURL(resolve(dir, p)).href);
-  return { ...await get('src/sim/quad.ts'), ...await get('src/sim/presets.ts'), ...await get('src/world/terrain/sampler.ts') };
+  return { ...await get('src/sim/quad.ts'), ...await get('src/sim/collision.ts'), ...await get('src/sim/presets.ts'), ...await get('src/world/terrain/sampler.ts') };
 }
 const [before, after] = await Promise.all([load(base), load(root)]);
 const n = 64, cell = 2, height = Float32Array.from({ length: n * n }, (_, i) => Math.sin(i % n * .17) * Math.cos(Math.floor(i / n) * .13) * .08);
@@ -86,9 +86,22 @@ function normals(mod) {
   for (let i = 0; i < 200000; i++) s.normalAt(.1 + (i % 10) * .01, .1 + (i % 7) * .01, out);
   return performance.now() - start;
 }
+const overlapColliders = Array.from({ length: 6000 }, () => ({ kind: 'box', center: [0, 0, 0], half: [10000, 10000, 10000], yaw: 0 }));
+function overlappingCollision(mod) {
+  const world = new mod.CollisionWorld(mod.QUAD_5IN_6S.collision);
+  world.setColliders(overlapColliders);
+  const pos = [0, 30, 0], vel = [0, 0, 0], q = [0, 0, 0, 1], w = [0, 0, 0], invI = [250, 180, 200];
+  const start = performance.now();
+  for (let i = 0; i < 10000; i++) {
+    pos[0] = i % 2 ? 7.99999 : 8.00001; pos[1] = 30; pos[2] = 0;
+    vel.fill(0); w.fill(0);
+    world.resolve(dt, 1.4, invI, pos, vel, q, w);
+  }
+  return performance.now() - start;
+}
 function median(v) { const x = [...v].sort((a, b) => a - b); return (x[5] + x[6]) / 2; }
 const results = {};
-for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['dense_flight_4000_steps_1024_boxes', m => flight(m, false, true)], ['dense_ground_4000_steps_1024_boxes', m => flight(m, true, true)], ['same_cell_200000_normals', normals]]) {
+for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['dense_flight_4000_steps_1024_boxes', m => flight(m, false, true)], ['dense_ground_4000_steps_1024_boxes', m => flight(m, true, true)], ['same_cell_200000_normals', normals], ['adversarial_10000_collision_resolves_6000_overlapping_boxes', overlappingCollision]]) {
   for (let i = 0; i < 6; i++) { fn(before); fn(after); }
   const oldMs = [], newMs = [];
   for (let i = 0; i < 12; i++) {

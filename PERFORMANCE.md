@@ -7,7 +7,7 @@ The optimizations do not lower resolution, change quality presets, edit shader s
 - The RT exposure-history latch dispatches one scalar writer, rather than one per RT workgroup. Its existing WGSL and order are unchanged.
 - Track gate-state buffers are uploaded only when the packed float32 values differ. Time/cloth uniforms remain updated every frame; new buffers always get an initial upload.
 - RPM notch coefficients are calculated once and copied between axes. Each axis retains independent delay state.
-- Dense static collider lists cache a conservative ordered candidate list per 8 m query cell. Each step still runs the original exact reach test and contact solver; original ordering and the 32-near-box limit are preserved. Replacing colliders invalidates the cache. Small lists and unusual coordinates retain the linear scan.
+- Dense static collider lists cache a conservative ordered candidate list per 8 m query cell. Each step still runs the original exact reach test and contact solver; original ordering and the 32-near-box limit are preserved. Replacing colliders invalidates the cache. Small lists and unusual coordinates retain the linear scan. A collider set also falls back to the original scan if a cache rebuild retains at least half its boxes or the exact 32-near-box list saturates, avoiding repeated expensive rebuilds in heavily overlapping scenes. This conservative fallback resets when colliders are replaced.
 - The immutable terrain sampler caches the four vertex normals of its last queried cell, retaining float64 precision and the original interpolation.
 
 ## Verify
@@ -29,7 +29,7 @@ git worktree add --detach ../fpv-baseline 4f56d904aa2b46acafcab4238d423e2fc69349
 node tools/perf-compare.mjs --baseline ../fpv-baseline --out ../cpu-comparison.json
 ```
 
-Both source trees must be clean. The harness first compares every public QuadState output over seeded flight and ground scenarios, with and without 1,024 static obstacles, plus 20,000 terrain normal queries. It then warms each path and records twelve alternating-order timing trials. Medians and all individual samples are reported. Ground tests use an immutable nonflat terrain field; dense tests use a fixed distributed 1,024-box scene. These are synthetic CPU workloads, not full-frame rendering benchmarks. Full internal FC/IMU state is not compared by this harness; targeted filter tests separately compare exact filtering results.
+Both source trees must be clean. The harness first compares every public QuadState output over seeded flight and ground scenarios, with and without 1,024 static obstacles, plus 20,000 terrain normal queries. It then warms each path and records twelve alternating-order timing trials. Medians and all individual samples are reported. Ground tests use an immutable nonflat terrain field; dense tests use a fixed distributed 1,024-box scene. An adversarial 6,000-overlapping-box test alternates across a cell boundary every collision resolve to expose cache-rebuild regressions. These are synthetic CPU workloads, not full-frame rendering benchmarks. Full internal FC/IMU state is not compared by this harness; targeted filter tests separately compare exact filtering results.
 
 ## Hardware FPS and visual verification
 
