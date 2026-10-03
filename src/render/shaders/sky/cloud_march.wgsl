@@ -10,9 +10,10 @@
 // e-folding 25 km) with the transmittance fading out. The result is also faded to nothing between 60 and 100 km.
 //
 // Group 1: 3 output (rgba16float), plus everything sky/cloud_density.wgsl declares.
-#include "sky/cloud_light.wgsl"
+#include "sky/cloud_frame.wgsl"
 
 @group(1) @binding(3) var outTex : texture_storage_2d<rgba16float, write>;
+@group(1) @binding(11) var<storage, read> cloudFrame : CloudFrame;
 
 const CLOUD_MAX_KM : f32 = 100.0;
 const CLOUD_FADE_KM : f32 = 60.0;
@@ -173,9 +174,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     textureStore(outTex, texel, vec4f(0.0, 0.0, 0.0, 1.0));
     return;
   }
-  let datumR = datumRadius();
-  let lights = cloudLights(datumR + 0.5 * (ap.cloudB.x + ap.cloudB.y));
-  let amb = cloudAmbient(lights, datumR);
+  let lights = cloudFrame.lights;
+  let amb = cloudFrame.ambient;
   let jitter = interleavedGradientNoise(vec2f(gid.xy) + 5.588238 * f32(index % 64u));
   var cum = emptyLayer();
   if (ap.cloudA.x > 0.0) { cum = marchCumulus(o, dir, jitter, lights, amb); }

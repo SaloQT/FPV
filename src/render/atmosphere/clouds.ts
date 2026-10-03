@@ -3,6 +3,9 @@ import { LUNAR_ROWS } from './celestial';
 import { CLOUD_SHADOW_SIZE } from './cloudModel';
 import type { CloudNoise } from './cloudNoise';
 
+/** CloudLights (64 bytes) and Ambient (32 bytes), including WGSL vec3 padding. */
+export const CLOUD_FRAME_BYTES = 96;
+
 interface Stage {
   layout: GPUBindGroupLayout;
   pipeline: GPUComputePipeline;
@@ -29,13 +32,15 @@ export class CloudLayer {
   historyValid = false;
   /** Frames encoded; drives the sub-pixel and interleaved-noise jitter. */
   frameIndex = 0;
+  private readonly precomputeStage: Stage;
+  private readonly frameLighting: GPUBuffer;
   private readonly marchStage: Stage;
   private readonly resolveStage: Stage;
   private readonly shadowStage: Stage;
   private readonly noiseSampler: GPUSampler;
   private readonly shadowView: GPUTextureView;
   private res: Resources | null = null;
-  private groups: { march: GPUBindGroup; resolve: [GPUBindGroup, GPUBindGroup]; shadow: GPUBindGroup } | null = null;
+  private groups: { precompute: GPUBindGroup; march: GPUBindGroup; resolve: [GPUBindGroup, GPUBindGroup]; shadow: GPUBindGroup } | null = null;
   private groupsFor: { t: GPUTexture; s: GPUTexture; a: GPUTexture; res: Resources } | null = null;
   private parity = 0;
   private resolvedIndex = 0;
@@ -48,6 +53,7 @@ export class CloudLayer {
       ({ binding, visibility: C, texture: { sampleType: 'float', viewDimension } });
     const store = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: C, storageTexture: { access: 'write-only', format: 'rgba16float' } });
     const uniform = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: C, buffer: { type: 'uniform' } });
+    const lighting = (type: GPUBufferBindingType): GPUBindGroupLayoutEntry => ({ binding: 11, visibility: C, buffer: { type, minBindingSize: CLOUD_FRAME_BYTES } });
     const stage = (label: string, path: string, entries: GPUBindGroupLayoutEntry[]): Stage => {
       const layout = d.createBindGroupLayout({ label, entries });
       const pipeline = d.createComputePipeline({
@@ -56,8 +62,10 @@ export class CloudLayer {
       });
       return { layout, pipeline };
     };
+    this.frameLighting = d.createBuffer({ label: 'cloud frame lighting', size: CLOUD_FRAME_BYTES, usage: GPUBufferUsage.STORAGE });
+    this.precomputeStage = stage('cloud lighting precompute', 'sky/cloud_precompute.wgsl', [sampler(0), tex(1), uniform(5), tex(40), lighting('storage')]);
     this.marchStage = stage('cloud march', 'sky/cloud_march.wgsl', [
-      sampler(0), tex(1), store(3), uniform(5), tex(6, '3d'), tex(7, '3d'), sampler(8), tex(40), tex(41, '3d'),
+      sampler(0), tex(1), store(3), uniform(5), tex(6, '3d'), tex(7, '3d'), sampler(8), tex(40), tex(41, '3d'), lighting('read-only-storage'),
     ]);
     this.resolveStage = stage('cloud resolve', 'sky/cloud_resolve.wgsl', [sampler(0), store(3), uniform(5), tex(9), tex(10)]);
     this.shadowStage = stage('cloud shadow', 'sky/cloud_shadow.wgsl', [store(3), uniform(5), tex(6, '3d'), tex(7, '3d'), sampler(8)]);
@@ -85,8 +93,10 @@ export class CloudLayer {
     if (!enabled && this.idle) return;
     this.prepare();
     const r = this.res!, g = this.groups!;
-    // Dispatch boundaries preserve the march -> resolve resource dependency within this pass.
+    // Recompute even on a same-frame capture: the LUTs and uniforms belong to this encode.
+    // Dispatch boundaries preserve precompute -> march -> resolve resource dependencies.
     const pass = enc.beginComputePass({ label: 'atmosphere clouds' });
+    this.dispatch(pass, this.precomputeStage, g.precompute, 1, 1);
     this.dispatch(pass, this.marchStage, g.march, Math.ceil(r.width / 8), Math.ceil(r.height / 8));
     this.dispatch(pass, this.resolveStage, g.resolve[this.parity], Math.ceil(r.width / 8), Math.ceil(r.height / 8));
     this.dispatch(pass, this.shadowStage, g.shadow, CLOUD_SHADOW_SIZE / 8, CLOUD_SHADOW_SIZE / 8);
@@ -101,6 +111,7 @@ export class CloudLayer {
   destroy(): void {
     this.release();
     this.shadow.destroy();
+    this.frameLighting.destroy();
   }
 
   private dispatch(pass: GPUComputePassEncoder, s: Stage, group: GPUBindGroup, x: number, y: number): void {
@@ -149,7 +160,7 @@ export class CloudLayer {
     this.groups = this.createGroups(this.res);
   }
 
-  private createGroups(r: Resources): { march: GPUBindGroup; resolve: [GPUBindGroup, GPUBindGroup]; shadow: GPUBindGroup } {
+  private createGroups(r: Resources): { precompute: GPUBindGroup; march: GPUBindGroup; resolve: [GPUBindGroup, GPUBindGroup]; shadow: GPUBindGroup } {
     const d = this.rc.device, w = this.rc.world, t = w.tex;
     const params = { buffer: this.params };
     const noise = this.noise;
@@ -161,6 +172,14 @@ export class CloudLayer {
       ],
     });
     return {
+      precompute: d.createBindGroup({
+        label: 'cloud lighting precompute', layout: this.precomputeStage.layout,
+        entries: [
+          { binding: 0, resource: w.samplers.linearClamp }, { binding: 1, resource: t.transmittance.createView() },
+          { binding: 5, resource: params }, { binding: 40, resource: t.skyView.createView() },
+          { binding: 11, resource: { buffer: this.frameLighting } },
+        ],
+      }),
       march: d.createBindGroup({
         label: 'cloud march', layout: this.marchStage.layout,
         entries: [
@@ -168,6 +187,7 @@ export class CloudLayer {
           { binding: 5, resource: params }, { binding: 6, resource: noise.shapeView }, { binding: 7, resource: noise.detailView },
           { binding: 8, resource: this.noiseSampler }, { binding: 40, resource: t.skyView.createView() },
           { binding: 41, resource: t.aerialPerspective.createView({ dimension: '3d' }) },
+          { binding: 11, resource: { buffer: this.frameLighting } },
         ],
       }),
       resolve: [resolve(0), resolve(1)],
