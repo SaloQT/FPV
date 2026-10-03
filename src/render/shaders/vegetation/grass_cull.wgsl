@@ -120,7 +120,9 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   let nrm = terrainNormalAt(xz);
   let hRel = (y - frame.terrain.z) / max(frame.terrain.w - frame.terrain.z, 1.0);
   if (maps.x < 0.1 || nrm.y < 0.72 || hRel > 0.88 || y < vp.grass2.z + 0.3) { return; }
-  let lw = terrainLayerWeights(xz, y, nrm.y, maps, vp.grass2.z);
+  // All three of terrainLayerWeights, glDryness and grassTintFromMaps want the same glDryness(xz, maps.w); take it once.
+  let dryField = glDryness(xz, maps.w);
+  let lw = terrainLayerWeightsDry(xz, y, nrm.y, maps, vp.grass2.z, dryField);
   let cover = (lw.lo.x + lw.lo.y) / max(dot(lw.lo, vec4f(1.0)) + dot(lw.hi, vec4f(1.0)), 1.0e-4);
   let wetN = saturate1(maps.w * 1.8);
   let density = smoothstep(0.08, 0.62, cover) * (0.45 + 0.55 * wetN) * (1.0 - 0.65 * smoothstep(0.75, 0.98, maps.y));
@@ -158,7 +160,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
 
   var yaw = u01(q.x);
   if (sp == 2u) { yaw = fract(atan2(xz.y - (floor(xz.y / 1.4) + 0.5) * 1.4, xz.x - (floor(xz.x / 1.4) + 0.5) * 1.4) / TAU); }
-  let dry = max(glDryness(xz, maps.w), 0.7 * (1.0 - smoothstep(0.15, 0.6, cover)));
+  let dry = max(dryField, 0.7 * (1.0 - smoothstep(0.15, 0.6, cover)));
   let thin = clamp(inverseSqrt(max(keep, 1.0e-4)), 1.0, 5.0);
   let lod = select(select(2u, 1u, d < vp.grass2.y), 0u, d < vp.grass2.x);
 
@@ -167,7 +169,7 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   b.height = height;
   b.halfWidth = 0.0005 * widthMm * thin * select(1.0, 1.35, lod == 2u);
   b.nrm = pack2x16snorm(nrm.xz);
-  b.tint = pack4x8unorm(vec4f(sqrt(saturate(grassTintFromMaps(xz, maps) * 2.0)), f32(code) / 255.0));
+  b.tint = pack4x8unorm(vec4f(sqrt(saturate(grassTintFromMapsDry(xz, maps, dryField) * 2.0)), f32(code) / 255.0));
   b.info = u32(yaw * 4095.0) | (sp << 12u) | (u32(dry * 255.0) << 15u) | ((q.z >> 23u) << 23u);
   let idx = atomicAdd(&counters[1u + lod], 1u);
   let cap = vp.caps[lod];

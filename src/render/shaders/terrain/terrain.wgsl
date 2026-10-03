@@ -65,7 +65,9 @@ fn fs(in : VsOut) -> FsOut {
   let fpXZ = max(length(dx.xz), length(dy.xz));
   let ts = terrainSampleAt(w.xz, fpXZ);
   let maps = ts.maps;
-  let lw = terrainLayerWeights(w.xz, w.y, ts.normal.y, maps, tp.waterLevel);
+  // One glDryness for the whole pixel: it feeds both the layer weights and the grass macro colour (see grassTintFromMapsDry).
+  let dryField = glDryness(w.xz, maps.w);
+  let lw = terrainLayerWeightsDry(w.xz, w.y, ts.normal.y, maps, tp.waterLevel, dryField);
 
   var wt = array<f32, 8>(lw.lo.x, lw.lo.y, lw.lo.z, lw.lo.w, lw.hi.x, lw.hi.y, lw.hi.z, lw.hi.w);
   var total = 0.0;
@@ -119,7 +121,7 @@ fn fs(in : VsOut) -> FsOut {
         tone *= turfTone * (1.0 + GT_STREAK_AMP * streak);
         r -= 0.07 * streak;
       }
-      albedo += b * layerMacroColor(lid[k], w.xz, w.y, maps) * tone;
+      albedo += b * layerMacroColorDry(lid[k], w.xz, w.y, maps, dryField) * tone;
       rough += b * r;
       cavity += b * d.ao;
       dn += b * d.dn;
