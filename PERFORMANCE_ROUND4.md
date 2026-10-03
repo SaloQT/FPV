@@ -111,6 +111,28 @@ The two hot kernels are both close to their **bit-exact floor**:
 - The BVH traversal is ~19 ms and, per the rejected experiments above, the cost is the slab arithmetic and
   the thread-local stack, not the node loads and not the visit count.
 
+## The `pre` and `post` intervals are not GPU work
+
+`pre` (4.2 ms) and `post` (4.5 ms) together look like 8.7 ms — 10% of the frame — of never-examined time.
+They are not. The six COARSE intervals sum exactly to the reported frame time, and the decisive evidence is
+that **deleting real work from `pre` did not shrink `pre`**: disabling the whole vegetation pre-pass (grass
+and tree culling plus instance generation, a real compute workload) left `pre` at 4.243 ms against a ~4.2 ms
+baseline. Work that does not respond to removing work is not work.
+
+The cause is in the harness: `harness-perf.mjs` awaits `device.queue.onSubmittedWorkDone()` after **every**
+frame. The GPU therefore drains completely between frames, and the submit/drain turnaround is attributed by
+the timestamp queries to the first interval of the next frame (`pre`) and the last of the current one
+(`post`). The independent check agrees: CPU submission is 1.75 ms, reported GPU time is 82.2 ms, and
+measured wall time is 93.7 ms — about 11.5 ms of turnaround that the real app hides by pipelining.
+
+So the optimisable GPU work in a frame is about **74.6 ms** (G-buffer 13.4 + RT 60 + lighting 1.0 +
+sky 0.16), and the real app at ultra 4K runs nearer **13.4 fps** than the 12.3 the harness reports.
+
+This does not invalidate anything above. The overhead is a fixed per-frame constant, so it cancels in every
+paired A/B, and every acceptance decision in this document was made on paired deltas. Only the absolute
+baseline was pessimistic. (A pipelined harness variant was attempted and could not work: the GPU-timer ring
+holds three frames, so timings must be drained per frame or the samples are lost.)
+
 ## The G-buffer, probed
 
 The G-buffer pass is 12.7–13.6 ms (~15%) and had never been examined. Two ceilings were measured in it:
