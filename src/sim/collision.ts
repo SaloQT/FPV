@@ -254,7 +254,9 @@ export class CollisionWorld {
           if (pen > 0) this.addContact(i, nn[0], nn[1], nn[2], pen, this.p.terrainFriction, this.p.terrainRestitution, q);
         }
       }
-      for (let k = 0; k < nNear; k++) this.sphereBox(i, this.nearBox[k], wx, wy, wz, r, q);
+      // addContact is a no-op once full; skip only pure obstacle narrowphase.
+      // Keep visiting spheres so terrain sampler calls retain their order/count.
+      for (let k = 0; k < nNear && this.nc < MAX_CONTACTS; k++) this.sphereBox(i, this.nearBox[k], wx, wy, wz, r, q);
     }
   }
 
