@@ -87,9 +87,10 @@ function normals(mod) {
   return performance.now() - start;
 }
 const overlapColliders = Array.from({ length: 6000 }, () => ({ kind: 'box', center: [0, 0, 0], half: [10000, 10000, 10000], yaw: 0 }));
-function overlappingCollision(mod) {
+const partialOverlapColliders = overlapColliders.map((c, i) => i < 1000 ? c : ({ kind: 'box', center: [1000000 + i * 8, 0, 0], half: [1, 1, 1], yaw: 0 }));
+function overlappingCollision(mod, partial = false) {
   const world = new mod.CollisionWorld(mod.QUAD_5IN_6S.collision);
-  world.setColliders(overlapColliders);
+  world.setColliders(partial ? partialOverlapColliders : overlapColliders);
   const pos = [0, 30, 0], vel = [0, 0, 0], q = [0, 0, 0, 1], w = [0, 0, 0], invI = [250, 180, 200];
   const start = performance.now();
   for (let i = 0; i < 10000; i++) {
@@ -101,7 +102,7 @@ function overlappingCollision(mod) {
 }
 function median(v) { const x = [...v].sort((a, b) => a - b); return (x[5] + x[6]) / 2; }
 const results = {};
-for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['dense_flight_4000_steps_1024_boxes', m => flight(m, false, true)], ['dense_ground_4000_steps_1024_boxes', m => flight(m, true, true)], ['same_cell_200000_normals', normals], ['adversarial_10000_collision_resolves_6000_overlapping_boxes', overlappingCollision]]) {
+for (const [name, fn] of [['flight_4000_steps', m => flight(m, false)], ['ground_4000_steps', m => flight(m, true)], ['dense_flight_4000_steps_1024_boxes', m => flight(m, false, true)], ['dense_ground_4000_steps_1024_boxes', m => flight(m, true, true)], ['same_cell_200000_normals', normals], ['adversarial_10000_collision_resolves_6000_overlapping_boxes', overlappingCollision], ['adversarial_10000_collision_resolves_1000_overlap_5000_far', m => overlappingCollision(m, true)]]) {
   for (let i = 0; i < 6; i++) { fn(before); fn(after); }
   const oldMs = [], newMs = [];
   for (let i = 0; i < 12; i++) {
