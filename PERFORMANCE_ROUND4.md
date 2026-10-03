@@ -52,6 +52,115 @@ avoid the work is worth finding. Percentages are of the ~84.6 ms control in that
 **So the frame is: BVH traversal ≈19 ms (23%), à-trous weight ALU ≈12–13 ms (15%), G-buffer 12.7 ms,
 primitive intersection 2.5 ms, and the rest small.** The two hot kernels are the whole story.
 
+Two of those numbers do not survive the 20-term sweep below, and both are marked here rather than left to
+be discovered later: "BVH traversal ≈19 ms" comes from deleting all traversal, which also changes every
+hit and therefore the downstream work, and the 15 ms of "node-load divergence" in the original reading of
+the sweep turned out to be half the GI rays terminating early. The rebuilt pass-timer map is in **What the
+frame is actually made of** at the end of this file; trust that one over this table's first row.
+
+## The 20-term sweep: the BVH node loads are warp divergence, not bandwidth
+
+A second sweep of 20 terms at 4K/ultra, control `w00` = **82.253 ms**, one term deleted per probe, output
+wrong on purpose. The full pass timers, because the frame total turns out to be a misleading instrument:
+
+| probe | term removed | frame ms | gbuffer | rt | giRays | reading |
+|---|---|---|---|---|---|---|
+| w00 | *control* | 82.253 | 12.880 | 59.525 | 28.14 | — |
+| w01 | à-trous source fetch | 79.422 | 12.706 | 57.067 | 27.95 | −2.83 |
+| w02 | à-trous normal fetch + `octDecode` | 79.157 | 13.165 | 56.166 | 28.19 | **−3.10**, largest fetch |
+| w03 | à-trous depth fetch | 81.803 | 12.860 | 59.106 | 28.49 | cheap |
+| w04 | à-trous accumulate (control) | 82.891 | 13.155 | 59.821 | 28.81 | +0.64 → free |
+| w05 | `sigmaL` sqrt | 84.860 | 13.198 | 61.524 | 28.96 | +2.61 → the noise floor |
+| w07 | BVH slab arithmetic | 142.446 | 12.496 | 120.532 | 63.98 | **invalid**, see below |
+| w08 | BVH node index pinned to node 0 | 67.163 | 13.115 | 44.176 | 13.58 | **−15.09, the headline** |
+| w11 | constant ray direction | 67.498 | 13.090 | 44.264 | 12.11 | confirms w08 |
+| w12 | sky radiance on miss | 82.299 | 12.906 | 59.487 | 28.04 | free |
+| w13 | constant basis | 89.290 | 13.018 | 66.331 | 34.60 | slower; workload changed |
+| w14 | per-texel probe irradiance | 83.373 | 13.168 | 60.093 | 28.11 | free |
+| w15 | terrain sample | 84.406 | 13.618 | 60.681 | 28.65 | no gbuffer change |
+| w16 | layer weights | 84.236 | 12.591 | 61.546 | 28.52 | no gbuffer change |
+| w17 | per-layer detail textures | 83.415 | **10.772** | 62.420 | 28.00 | **valid: 2.11 ms** |
+| w18 | micro fbm noise | 82.682 | 12.511 | 60.142 | 28.26 | free |
+| w19 | clump tone | 84.835 | 13.127 | 61.556 | 29.12 | no gbuffer change |
+| w20 | motion vector | — | — | — | — | failed twice, not re-run |
+
+Four things fall out of this table, and three of them are about the method rather than the renderer.
+
+**1. `w08` does not show what it first appeared to show, and the correction matters more than the number.**
+Pinning every node index to node 0 saves 15.09 ms, which reads like "node loads are 18% of the frame and it is
+all warp divergence". But look at the `giRays` column: it falls 28.14 → 13.58 at the same time. A degenerate
+tree returns a near hit almost immediately, so **half the GI rays terminate early — the probe halved the
+work**. And the whole `rt` delta is that one effect: `rt` drops 15.35 ms while `giRays` alone drops
+14.56 ms, so the other six RT passes are unchanged to within 0.8 ms in total. `w11` does the same thing
+by a different route (one constant ray direction makes the whole warp descend in lockstep) and lands within
+0.3 ms of the same figure, which is what made the divergence story look so convincing. Both probes
+measure *the GI pass doing half as much traversal*, not the price of a coalesced node fetch. **The 15 ms
+was never a measurement of divergence, and no fix for divergence was ever justified by it.** The honest
+statement is the plain one: GI ray tracing is 28.1 ms, 34% of the frame, and it is the largest pass.
+The traversal inside it is most of that, but the sweep does not cleanly separate traversal from shading,
+prim intersection and the terrain DDA inside that pass.
+
+**2. w07 is invalid as a cost measure, and it is worth saying why.** Deleting the slab test looks like it
+should isolate the arithmetic. It does not: the slab test *is* the culling mechanism. Without it every
+subtree is descended to its leaves, giRays goes 28 → 64 and the frame goes to 142 ms. A probe that
+destroys the workload it is measuring cannot price the term. The only thing w07 tells us is that the box
+test prunes roughly three quarters of all traversal work.
+
+**3. The frame total is the wrong instrument for a G-buffer probe; the pass timer is the right one.**
+w17 removes the per-layer detail textures. Its frame time went *up* by 1.2 ms, which reads as "free" or
+"worse" — but its `gbuffer` timer went 12.880 → 10.772 with giRays flat at 28.0, so the workload really
+is preserved and the detail textures really cost **2.11 ms**. The frame rose because a flatter G-buffer
+makes the RT pass work harder downstream. Any probe that feeds a pass whose output another pass reads is
+contaminated in the total, and only the patched pass's own timer is workload-independent. Re-reading
+w15/w16/w19 that way **retires them all**: their gbuffer timers are 13.6/12.6/13.1 against a 12.88
+control, i.e. none of them removed any measurable G-buffer work at all. Of ~12.9 ms of G-buffer, 2.1 ms
+is the detail textures and the other ~10.8 ms is not terrain sampling, layer weights, clump tone, micro
+fbm or per-texel probe irradiance.
+
+**4. The noise floor is ±2.6 ms.** w05 and w13 are single-term deletions that came out *slower* than
+control by 2.6 ms and 7.0 ms, with no plausible mechanism, and w04 — a deliberate no-op — came out +0.64
+ms. So `pre` and `post` are rock steady across all 18 probes (4.19/4.51 ± 0.15, which is what proves they
+are turnaround) while everything downstream of the G-buffer swings by several ms between identical
+workloads. Any single-run probe delta below ~2.6 ms is not evidence.
+
+**The general lesson, which cost two wrong conclusions.** A probe that makes a kernel terminate early
+looks exactly like a probe that makes a kernel faster, and the only tell is a *sibling* timer in the same
+pass. `giRays` is what exposed w08 and w11; the per-pass `gbuffer` timer is what exposed w17's true sign.
+Every future probe here has to be judged on whether its own pass's timer moved while the workload stayed
+put — not on the frame total, and not on the size of the number.
+
+**Not re-run:** w20 (the terrain motion vector) failed twice on a fragment-pipeline validation error
+that I did not chase, and w17's first attempt failed the same way. w17 was fixed and re-run; w20 was not,
+because a motion vector is inside the ~10.8 ms of G-buffer that the six valid G-buffer probes all failed to
+localise, and one more of them would not change the picture.
+
+## What the frame is actually made of
+
+Rebuilt from the pass timers of the same control, because it is the version of this map that survives the
+correction above. The RT pass's 59.5 ms is not one thing:
+
+| pass | ms | % of the 82.25 ms frame |
+|---|---|---|
+| GI ray tracing (`giRays`) | 28.1 | **34%** |
+| à-trous denoising, 3 signals | 25.4 | **31%** |
+| G-buffer | 12.9 | 16% |
+| `pre` + `post` turnaround | 8.7 | 11% |
+| shadow rays | 2.2 | 3% |
+| specular rays | 1.5 | 2% |
+| probe update | 1.6 | 2% |
+| lighting | 1.0 | 1% |
+| sky + forward | 0.2 | ~0 |
+
+**Two kernels are 65% of the frame: GI ray tracing and à-trous denoising.** The à-trous half is
+irreducible bit-exactly — it is `pow`, two `exp` and a per-tap mat4 unprojection per tap, and none of
+those can be reassociated into cheaper arithmetic without changing the bits. The GI half is where the
+remaining headroom is, and it is where the next probe has to go: one that changes the *size* of the BVH
+node record and nothing else. Same nodes, same visits, same results, twice the scattered bytes. If that
+costs real time, node traffic is a lever and a 4-word node record (the GPU only ever reads 2 of the 8
+words) is a bit-exact 4× reduction of it. If it costs nothing, the tree already sits in cache, the
+traversal is ALU- or dependency-bound, and the BVH is done and the GI pass's cost is in its shading and
+terrain work instead. Either answer is worth having, and neither is knowable without measuring.
+
 ## Landed
 
 `e5fafdd` — hoist `tapWeight(j)` out of the à-trous inner loop. The 5×5 kernel recomputed each of the 5
