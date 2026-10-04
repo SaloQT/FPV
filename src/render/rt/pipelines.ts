@@ -43,7 +43,7 @@ export async function createPipelines(rc: RenderContext, L: RtLayouts): Promise<
     return make(`${s} atrous ${i}`, 'atrous', defines, localLayout(toR32 ? L.atrousR32 : L.atrousRgba));
   }));
   const [aux, latch, probe, probePlan, probeCompact, ...rest] = await Promise.all([
-    make('aux', 'aux', { GRP: 1 }, localLayout(L.aux)),
+    make('aux', 'aux_pass', { GRP: 1 }, localLayout(L.aux)),
     make('latch', 'latch', { GRP: 1 }, localLayout(L.latch)),
     make('probe update', 'probe_update', { GRP: 2 }, worldLayout(L.probe)),
     make('probe plan', 'probe_plan', { GRP: 1 }, localLayout(L.probePlan)),
