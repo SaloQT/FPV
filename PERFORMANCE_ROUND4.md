@@ -394,3 +394,35 @@ G-buffer and blue-noise inputs so only kind/prim/distance crosses the boundary. 
 (max channel difference 0/255 on every oracle frame) and 2,342 tests pass — and it recovers **1.5 ms of the
 16**, for 132 MB of VRAM and a second dispatch. Kept on its own branch, not merged: the shape is right and
 the work is sound, but the payoff does not justify it, and the number it was built for is not there.
+
+## Round 5: the grass level-of-detail thresholds were 2.4x too coarse
+
+The projected-size grass LOD (e273760) was landed on reasoning alone and never checked against the
+distance bands it replaced. The mechanism is right; the two numbers were wrong.
+
+At 1080p with the app's 100-degree lens a blade one metre tall at one metre covers `proj[1][1] * screenH/2`
+= 453 pixels per metre. The mean height over the species table in `grass_cull.wgsl` is about 0.25 m, so the
+ultra tier's old bands — LOD0 inside 10.8 m, LOD1 inside 33.6 m — sit at **10.3 px and 3.3 px** of projected
+height. The landed thresholds were 24 px and 8 px, which puts the same blade at 4.6 m and 13.9 m: **the
+whole sward dropped a full level.** Measured per-LOD instance counts at one fixed camera, 1080p:
+
+| build | LOD0 (15 v) | LOD1 (7 v) | LOD2 (4 v) |
+| --- | --- | --- | --- |
+| fixed distance bands | 0 | 86 142 | 229 268 |
+| projected size, 24/8 px | 7 351 | 72 346 | 235 713 |
+| projected size, 10.3/3.3 px | 58 211 | 123 594 | 133 605 |
+
+On the flying track at 4K the landed build put **every** visible blade in LOD2 — 372 412 of 372 412, no LOD0
+and no LOD1 at all — where the distance bands split them 73 894 / 100 194 / 198 324. LOD2 is a flat
+four-vertex card with no tip vertex and a dithered cover; that is what the sward was drawn with, across the
+whole visible field, from the air.
+
+Cost is not the reason to prefer the old numbers, and the recalibration does not give them back:
+at 4K on the track the fix draws 2.07 M blade vertices against the distance bands' 2.60 M, 20% fewer, and
+the frame time is the same to within noise (p50 75.34 ms against 75.23 ms, p90 identical to three digits).
+The recalibration buys back the near field — 58 211 LOD0 blades against none — for nothing.
+
+`grassLod.test.ts` now ties the two together. Nothing else connected a number in WGSL to the instance
+capacity budgeted from distance bands in TypeScript, which is why a threshold raised "to be safe" moved
+every blade a level with no test noticing. The test re-derives the distance at which a typical blade crosses
+each threshold and asks that it still land on the tier's bands; it fails on 24/8.

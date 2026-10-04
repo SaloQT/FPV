@@ -20,8 +20,15 @@ const DISPATCH_ROW : u32 = 4096u;
 // Projected blade height (px) at which a blade changes level: 15 vertices down to GRASS_LOD0_PX, 7 down to
 // GRASS_LOD1_PX, a single quad below that. These are apparent size, so they hold at any resolution or lens.
 // GRASS_LOD_BLEND is the width of each threshold's dither band as a fraction of the threshold.
-const GRASS_LOD0_PX : f32 = 24.0;
-const GRASS_LOD1_PX : f32 = 8.0;
+//
+// The two numbers are calibrated so that a blade of the mean species height (about 0.25 m) crosses each threshold
+// at the same distance the old fixed distance bands did, at 1080p and the app's 100-degree lens:
+// proj[1][1] * screenH/2 = 453 px per metre at 1 m, so 10.3 px is 0.25 * 453 / 10.8 m and 3.3 px is
+// 0.25 * 453 / 33.6 m, the ultra tier's two bands. Anything much larger and the whole sward drops a level at once:
+// the far half of the field becomes flat single quads, which is where the card-like look comes from. The point of
+// choosing by size rather than by distance is only that a 4 cm blade no longer pays for 15 vertices out to 10.8 m.
+const GRASS_LOD0_PX : f32 = 10.3;
+const GRASS_LOD1_PX : f32 = 3.3;
 const GRASS_LOD_BLEND : f32 = 0.55;
 
 // Fraction of the slots that survive at distance d: full density inside the full-density radius, then constant screen-space density.
@@ -173,7 +180,8 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   // h * proj[1][1] * screenH/2 / z pixels, so a fixed pixel height keeps the tessellation matched to how
   // big the blade actually is: the same blade keeps its 15 vertices at 12 m on a 1080p screen and drops to
   // one quad at 30 m, but at 4K it is still one quad at 12 m and only earns the detail from 6 m. A
-  // distance threshold cannot do that - it hands a 25 px blade at 8K a single quad.
+  // distance threshold cannot do that - it hands a 25 px blade at 8K a single quad. The thresholds are
+  // calibrated back to the old distance bands for a typical blade; see GRASS_LOD0_PX.
   let viewZ = max(abs(dot(frame.view[2].xyz, vec3f(xz.x, y, xz.y)) + frame.view[2].w), 1.0e-3);
   let px = height * frame.proj[1][1] * frame.screen.y * 0.5 / viewZ;
   // Each threshold is dithered over a band instead of being a hard cut, so the ring a hard cut draws is
