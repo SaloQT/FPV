@@ -1,5 +1,6 @@
 import { ACTION_LABELS, AXIS_LABELS, DEFAULT_BINDINGS, keyLabel, type Bindings, type KeyAxisId } from '../input/bindings';
-import { defaultGamepadConfig, type PadButtons } from '../input/gamepadMap';
+import { defaultGamepadConfig } from '../input/gamepadMap';
+import { PAD_ACTIONS, PAD_ACTION_INFO, describeBind, type ActionBind } from '../input/padActions';
 import type { InputAction } from '../input/types';
 
 export interface HelpRow {
@@ -12,18 +13,6 @@ export interface HelpSection {
   title: string;
   rows: readonly HelpRow[];
 }
-
-/** Button names of the standard gamepad layout, by index. */
-const PAD_BUTTON_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Back', 'Start', 'L3', 'R3'];
-
-const PAD_BUTTON_LABELS: Record<keyof PadButtons, string> = {
-  arm: 'Arm / disarm',
-  turtle: 'Turtle mode (hold)',
-  camera: 'Cycle camera',
-  respawn: 'Respawn',
-  modeCycle: 'Cycle flight mode',
-  menu: 'Menu and settings',
-};
 
 const FLIGHT: readonly InputAction[] = ['arm-toggle', 'respawn', 'reset-track', 'mode-cycle', 'pause'];
 const WORLD: readonly InputAction[] = ['camera-cycle', 'new-track', 'time-back', 'time-forward'];
@@ -42,12 +31,23 @@ export function keyCaps(codes: readonly string[]): string[] {
   return caps;
 }
 
+/** Button names of the standard gamepad layout, by index. */
+const PAD_BUTTON_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Back', 'Start', 'L3', 'R3'];
+
+/** A button reads by its face name where the standard layout has one, and by number otherwise; a switch reads as an axis. */
+function padKey(bind: ActionBind): string {
+  if (bind.kind === 'button') return PAD_BUTTON_NAMES[bind.index] ?? `Button ${bind.index + 1}`;
+  return describeBind(bind);
+}
+
+/** What the pad does out of the box, so the sheet matches what a pilot with no pad settings sees. */
 function padRows(): HelpRow[] {
-  const buttons = defaultGamepadConfig().buttons;
+  const actions = defaultGamepadConfig().actions;
   const rows: HelpRow[] = [{ keys: ['Sticks'], label: 'Roll, pitch, yaw, throttle (calibrate in Settings)' }];
-  for (const id of Object.keys(PAD_BUTTON_LABELS) as (keyof PadButtons)[]) {
-    const name = PAD_BUTTON_NAMES[buttons[id]];
-    if (name !== undefined) rows.push({ keys: [name], label: PAD_BUTTON_LABELS[id] });
+  for (const action of PAD_ACTIONS) {
+    const bind = actions[action];
+    if (bind.kind === 'none') continue;
+    rows.push({ keys: [padKey(bind)], label: PAD_ACTION_INFO[action].label });
   }
   return rows;
 }

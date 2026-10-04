@@ -131,7 +131,7 @@
 .fpv-panel-foot { display: flex; align-items: center; gap: 10px; padding: 14px 26px; border-top: 1px solid var(--fpv-line); background: rgba(0, 0, 0, 0.18); }
 
 .fpv-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 320px); align-items: center; gap: 6px 22px; padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
-.fpv-section-body > .fpv-row:first-child, .fpv-section-body > .fpv-pad:first-child { border-top: 0; }
+.fpv-section-body > .fpv-row:first-child, .fpv-section-body > .fpv-pad:first-child, .fpv-section-body > .fpv-rates:first-child .fpv-row:first-child { border-top: 0; }
 .fpv-label { font-weight: 550; }
 .fpv-row-ctl { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .fpv-row--toggle .fpv-row-ctl { justify-content: flex-end; }
@@ -185,6 +185,47 @@
 .fpv-bar-fill { position: absolute; top: 0; bottom: 0; background: var(--fpv-accent); }
 .fpv-bar-mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: rgba(255, 255, 255, 0.4); }
 .fpv-bar-value { font: 12px var(--fpv-mono); text-align: right; color: var(--fpv-muted); }
+
+/* Axis binding: a chip on the stick row that arms detection, then names the axis it found. */
+.fpv-bar-row--bind { grid-template-columns: 64px 1fr 44px auto; }
+.fpv-pad-bindlist { display: grid; }
+.fpv-pad-bindlist > .fpv-row:first-child { border-top: 0; }
+.fpv-pad-kind { flex: 0 0 108px; }
+.fpv-pad-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.fpv-pad-btn {
+  min-width: 44px; padding: 4px 8px; font: 12px var(--fpv-mono); color: var(--fpv-muted);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 5px;
+}
+.fpv-pad-btn--on { color: var(--fpv-text); background: color-mix(in srgb, var(--fpv-accent) 22%, transparent); border-color: var(--fpv-accent); }
+.fpv-pad-bind {
+  display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; min-width: 104px;
+  font: 12px var(--fpv-mono); color: var(--fpv-muted);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px; cursor: pointer; white-space: nowrap;
+}
+.fpv-pad-bind:hover:not(:disabled) { color: var(--fpv-text); border-color: rgba(255, 255, 255, 0.3); }
+.fpv-pad-bind:focus-visible { outline: 2px solid var(--fpv-accent); outline-offset: 1px; }
+.fpv-pad-bind:disabled { opacity: 0.4; cursor: default; }
+.fpv-pad-bind-role { display: none; }
+.fpv-pad-bind-value { color: var(--fpv-text); }
+.fpv-pad-bind--listening {
+  color: var(--fpv-text); border-color: var(--fpv-accent);
+  background: color-mix(in srgb, var(--fpv-accent) 18%, transparent);
+}
+.fpv-pad-bind--listening .fpv-pad-bind-value { animation: fpv-pad-pulse 1.1s ease-in-out infinite; }
+.fpv-pad-bind--confirmed { border-color: var(--fpv-accent); }
+.fpv-pad-bind--confirmed .fpv-pad-bind-value { color: var(--fpv-accent); }
+@keyframes fpv-pad-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .fpv-pad-bind--listening .fpv-pad-bind-value { animation: none; } }
+
+/* Stick rates: the preset, type and separate-pitch rows, then one group of sliders per axis. */
+.fpv-rates { display: grid; }
+.fpv-rates-group { display: grid; }
+.fpv-rates-subtitle { margin: 14px 0 0; font-size: 12px; font-weight: 600; color: var(--fpv-muted); }
+.fpv-rates .fpv-row--off .fpv-label, .fpv-rates .fpv-row--off .fpv-value { color: var(--fpv-muted); opacity: 0.6; }
+.fpv-rates-response { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--fpv-line); border-radius: 6px; background: rgba(0, 0, 0, 0.16); }
+.fpv-rates-line { margin: 0; font: 12.5px var(--fpv-mono); color: var(--fpv-text); font-variant-numeric: tabular-nums; }
+.fpv-rates-line + .fpv-rates-line { margin-top: 4px; }
 
 .fpv-help {
   position: fixed;
@@ -279,6 +320,8 @@
   .fpv-row--action { grid-template-columns: minmax(0, 1fr); }
   .fpv-pad-raw { grid-template-columns: minmax(0, 1fr); }
   .fpv-bar-row { grid-template-columns: 56px 1fr 40px; gap: 8px; }
+  /* Four columns do not fit a phone: the binding chip drops to its own full-width line. */
+  .fpv-bar-row--bind .fpv-pad-bind { grid-column: 1 / -1; justify-content: center; margin-top: 2px; }
   .fpv-help-head { padding: 14px 16px 8px; }
   .fpv-help-scroll { padding: 0 16px 16px; }
   .fpv-perf { top: 100px; left: 8px; }

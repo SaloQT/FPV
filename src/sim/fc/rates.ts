@@ -8,6 +8,9 @@
  */
 export type RateType = 'actual' | 'betaflight' | 'quick';
 
+/** Every rate type the flight controller can fly, in menu order. */
+export const RATE_TYPES: readonly RateType[] = ['actual', 'betaflight', 'quick'];
+
 export interface AxisRates {
   rcRate: number;
   superRate: number;

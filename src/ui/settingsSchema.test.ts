@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { defaultAppSettings, isSameValue } from './settingsSchema';
+import { SALOQT_RATES } from '../sim/fc/ratePresets';
+import { defaultAppSettings, isSameValue, migrateStored, sanitizeSettings } from './settingsSchema';
+
+describe('stored rates', () => {
+  it('starts a pilot with no saved rates on the SALOQT preset', () => {
+    expect(defaultAppSettings().rates).toEqual(SALOQT_RATES);
+  });
+
+  it('fills SALOQT in over a payload saved before the rates setting existed', () => {
+    const stored = { quality: 'medium', laps: 7, gamepad: { deadzone: 0.1 } };
+    const out = sanitizeSettings(migrateStored(stored), defaultAppSettings());
+    expect(out.rates).toEqual(SALOQT_RATES);
+    // The keys the pilot did save are untouched.
+    expect(out.quality).toBe('medium');
+    expect(out.laps).toBe(7);
+    expect(out.gamepad.deadzone).toBe(0.1);
+  });
+
+  it('keeps a hand-tuned profile and never aliases the default', () => {
+    const base = defaultAppSettings();
+    const out = sanitizeSettings({ rates: { type: 'betaflight', separatePitch: false, roll: { rcRate: 1.4, superRate: 0.5, expo: 0.2 } } }, base);
+    expect(out.rates.type).toBe('betaflight');
+    expect(out.rates.separatePitch).toBe(false);
+    expect(out.rates.roll.rcRate).toBe(1.4);
+    expect(out.rates.yaw).toEqual(SALOQT_RATES.yaw);
+    out.rates.roll.rcRate = 9;
+    expect(base.rates.roll.rcRate).toBe(SALOQT_RATES.roll.rcRate);
+  });
+});
 
 describe('isSameValue', () => {
   it('compares primitives strictly', () => {

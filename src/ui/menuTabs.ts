@@ -1,6 +1,8 @@
 import { localSolarHours, withLocalSolarHours } from '../game/clock';
 import { formatHours } from '../game/units';
 import type { GamepadConfig, StickRole } from '../input/gamepadMap';
+import { STICK_LAYOUTS, STICK_LAYOUT_LABELS } from '../input/gamepadMap';
+import { RATES_PANEL } from './menuRates';
 import type { AppSettings } from './settingsSchema';
 import {
   bearing, button, choice, fixed, numberChoice, percent, slider, solarDate, toggle, withSolarDate,
@@ -41,7 +43,8 @@ const THROTTLE_MODES: readonly SelectOption[] = [
   { value: 'auto', label: 'Automatic' }, { value: 'direct', label: 'Direct (stick = throttle)' }, { value: 'latched', label: 'Latched (stick ramps)' },
   { value: 'hover', label: 'Hover-centred' },
 ];
-const ORDERS: readonly SelectOption[] = [{ value: 'AETR', label: 'AETR (RadioMaster, Jumper, FrSky)' }, { value: 'TAER', label: 'TAER (Spektrum, Futaba)' }];
+const LAYOUTS: readonly SelectOption[] = STICK_LAYOUTS.map((id) => ({ value: id, label: STICK_LAYOUT_LABELS[id] }));
+const LAYOUT_HINT = 'Where roll, pitch, yaw and throttle come from when you have not rebound them by hand. A device that does not match, such as the X-56 Rhino whose axis order is set by its driver, still works: check the raw axes and click the control to rebind it.';
 
 function gpSlider(key: 'deadzone' | 'expo' | 'hoverThrottle', label: string, min: number, max: number, step: number, format: (v: number) => string, hint?: string): SliderControl {
   return {
@@ -50,7 +53,7 @@ function gpSlider(key: 'deadzone' | 'expo' | 'hoverThrottle', label: string, min
   };
 }
 
-function gpChoice(key: 'profile' | 'throttleMode' | 'radioOrder', label: string, options: readonly SelectOption[], hint?: string): SelectControl {
+function gpChoice(key: 'profile' | 'throttleMode' | 'layout', label: string, options: readonly SelectOption[], hint?: string): SelectControl {
   return {
     kind: 'select', id: `gamepad.${key}`, label, hint, options,
     read: (s) => s.gamepad[key], write: (v, s) => ({ gamepad: { ...s.gamepad, [key]: v } as GamepadConfig }),
@@ -127,11 +130,12 @@ export function buildTabs(presets: readonly MenuPreset[]): readonly MenuTab[] {
         { kind: 'gamepad', id: 'gamepad', label: 'Gamepad' },
         gpChoice('profile', 'Device type', PROFILES),
         gpChoice('throttleMode', 'Throttle mode', THROTTLE_MODES),
-        gpChoice('radioOrder', 'Radio channel order', ORDERS, 'Only used for radios and USB transmitters.'),
+        gpChoice('layout', 'Stick layout', LAYOUTS, LAYOUT_HINT),
         gpSlider('deadzone', 'Deadzone', 0, 0.4, 0.01, percent),
         gpSlider('expo', 'Expo', 0, 1, 0.05, percent),
         gpSlider('hoverThrottle', 'Hover throttle', 0.1, 0.6, 0.01, percent, 'Throttle at stick centre in hover-centred mode.'),
-        gpInvert('roll', 'Invert roll'), gpInvert('pitch', 'Invert pitch'), gpInvert('yaw', 'Invert yaw'), gpInvert('throttle', 'Invert throttle'))),
+        gpInvert('roll', 'Invert roll'), gpInvert('pitch', 'Invert pitch'), gpInvert('yaw', 'Invert yaw'), gpInvert('throttle', 'Invert throttle')),
+      section('Stick rates', RATES_PANEL)),
     tab('simulation', 'Simulation',
       section('Flight',
         choice('mode', 'Flight mode', MODES, 'Acro is rate mode; Angle self-levels; Horizon self-levels near centre.'),

@@ -5,6 +5,7 @@
 import type { AppSettings } from '../ui/settingsSchema';
 import type { MenuAction } from '../ui/menuSchema';
 import { CAMERA_MODES } from '../game/cameraRig';
+import { rateProfileOf } from '../sim/fc/ratePresets';
 import { applyBootTime, createPreview, onStateChange, onTimeNudged, restartRun, wireFlow } from './flow';
 import { applyWind, newTrack, newWorld, refreshColliders } from './scene';
 import { renderSettings, type AppCtx } from './state';
@@ -90,6 +91,7 @@ export function wireSettings(ctx: AppCtx): () => void {
       applyWind(ctx);
       refreshColliders(ctx);
     }
+    if (changed.includes('rates')) ctx.physics.fc.setRates(rateProfileOf(s.rates));
   });
   applyBootTime(ctx);
   return off;

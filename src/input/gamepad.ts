@@ -1,5 +1,6 @@
 import type { FlightMode } from '../contracts';
 import { createPadSample, mapGamepad, resolveThrottleMode, type GamepadConfig, type PadLike, type PadSample } from './gamepadMap';
+import { PAD_ACTIONS, type PadAction } from './padActions';
 
 /** How long after the last stick movement the pad still overrides keyboard and mouse. */
 export const ACTIVITY_WINDOW_MS = 2000;
@@ -15,17 +16,21 @@ export type PadProvider = () => ArrayLike<PadLike | null | undefined>;
 
 /** One-poll edge flags, valid until the next `poll`. Nothing fires on the poll that first sees a pad. */
 export interface PadEdges {
-  arm: boolean;
-  camera: boolean;
-  respawn: boolean;
-  modeCycle: boolean;
-  menu: boolean;
+  /** A press edge for every action whose binding is not a switch. */
+  aux: Record<PadAction, boolean>;
   armSwitchOn: boolean;
   armSwitchOff: boolean;
   modeSwitchChanged: boolean;
 }
 
 const NO_AXES: readonly number[] = [];
+const NO_BUTTONS: readonly { readonly pressed: boolean; readonly value: number }[] = [];
+
+function emptyEdges(): Record<PadAction, boolean> {
+  const out = {} as Record<PadAction, boolean>;
+  for (const action of PAD_ACTIONS) out[action] = false;
+  return out;
+}
 
 export function browserPads(): ArrayLike<PadLike | null> {
   return typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
@@ -38,22 +43,20 @@ function usable(p: PadLike | null | undefined): p is PadLike {
 /** Polls the Gamepad API once per frame and reports the mapped sample, activity and button edges without allocating. */
 export class GamepadInput {
   readonly sample: PadSample = createPadSample();
-  readonly edges: PadEdges = { arm: false, camera: false, respawn: false, modeCycle: false, menu: false, armSwitchOn: false, armSwitchOff: false, modeSwitchChanged: false };
+  readonly edges: PadEdges = { aux: emptyEdges(), armSwitchOn: false, armSwitchOff: false, modeSwitchChanged: false };
   connected = false;
   /** True while the pad has moved within the activity window. */
   active = false;
   padId = '';
   /** Live raw axes of the selected pad, for the calibration readout. */
   raw: ArrayLike<number> = NO_AXES;
+  /** Live raw button states of the selected pad, so the settings screen can spot a button press. */
+  buttons: ArrayLike<PadLike['buttons'][number]> = NO_BUTTONS;
   private index = -1;
   private hasPrev = false;
   private lastActiveMs = -Infinity;
   private readonly prevAxes = new Float32Array(MAX_TRACKED_AXES);
-  private prevArm = false;
-  private prevCamera = false;
-  private prevRespawn = false;
-  private prevModeCycle = false;
-  private prevMenu = false;
+  private readonly prevAux: Record<PadAction, boolean> = emptyEdges();
   private prevArmSwitch = false;
   private prevMode: FlightMode = 'acro';
 
@@ -61,19 +64,22 @@ export class GamepadInput {
 
   poll(cfg: GamepadConfig, nowMs: number): void {
     const e = this.edges;
-    e.arm = e.camera = e.respawn = e.modeCycle = e.menu = e.armSwitchOn = e.armSwitchOff = e.modeSwitchChanged = false;
+    for (const action of PAD_ACTIONS) e.aux[action] = false;
+    e.armSwitchOn = e.armSwitchOff = e.modeSwitchChanged = false;
     const pad = this.select(this.provider());
     if (pad === null) {
       this.connected = false;
       this.active = false;
       this.hasPrev = false;
       this.raw = NO_AXES;
+      this.buttons = NO_BUTTONS;
       return;
     }
     if (!this.connected) this.hasPrev = false;
     this.connected = true;
     this.padId = pad.id ?? '';
     this.raw = pad.axes;
+    this.buttons = pad.buttons;
     const s = this.sample;
     mapGamepad(pad, cfg, s);
     let moved = Math.abs(s.roll) > STICK_ACTIVITY || Math.abs(s.pitch) > STICK_ACTIVITY || Math.abs(s.yaw) > STICK_ACTIVITY;
@@ -89,20 +95,17 @@ export class GamepadInput {
     if (moved) this.lastActiveMs = nowMs;
     this.active = nowMs - this.lastActiveMs <= ACTIVITY_WINDOW_MS;
     if (this.hasPrev) {
-      e.arm = s.arm && !this.prevArm;
-      e.camera = s.camera && !this.prevCamera;
-      e.respawn = s.respawn && !this.prevRespawn;
-      e.modeCycle = s.modeCycle && !this.prevModeCycle;
-      e.menu = s.menu && !this.prevMenu;
+      for (const action of PAD_ACTIONS) {
+        e.aux[action] = s.aux[action] && !this.prevAux[action];
+        this.prevAux[action] = s.aux[action];
+      }
       e.armSwitchOn = s.hasArmSwitch && s.armSwitch && !this.prevArmSwitch;
       e.armSwitchOff = s.hasArmSwitch && !s.armSwitch && this.prevArmSwitch;
       e.modeSwitchChanged = s.hasModeSwitch && s.modeSwitch !== this.prevMode;
+    } else {
+      // Keep the previous state in step on the first poll so a held control does not read as a fresh press next poll.
+      for (const action of PAD_ACTIONS) this.prevAux[action] = s.aux[action];
     }
-    this.prevArm = s.arm;
-    this.prevCamera = s.camera;
-    this.prevRespawn = s.respawn;
-    this.prevModeCycle = s.modeCycle;
-    this.prevMenu = s.menu;
     this.prevArmSwitch = s.armSwitch;
     this.prevMode = s.modeSwitch;
     this.hasPrev = true;

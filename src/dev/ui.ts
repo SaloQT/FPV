@@ -63,7 +63,8 @@ function readTab(): TabId | undefined {
 
 /** A radio that wiggles its sticks so the calibration readout has something to show. */
 function fakePad() {
-  const pad = { connected: true, padId: 'Dev Radio (Vendor: 1209 Product: 4f54)', raw: new Float32Array(8), sample: { roll: 0, pitch: 0, yaw: 0, throttleDirect: 0, profile: 'radio' as const } };
+  const buttons = Array.from({ length: 10 }, () => ({ pressed: false, value: 0 }));
+  const pad = { connected: true, padId: 'Dev Radio (Vendor: 1209 Product: 4f54)', raw: new Float32Array(8), buttons, sample: { roll: 0, pitch: 0, yaw: 0, throttleDirect: 0, profile: 'radio' as const } };
   return {
     view: pad,
     animate(nowMs: number): void {
@@ -73,6 +74,12 @@ function fakePad() {
       pad.sample.pitch = pad.raw[1];
       pad.sample.throttleDirect = (pad.raw[2] + 1) / 2;
       pad.sample.yaw = pad.raw[3];
+      // A couple of buttons blink so the button readout has something to show too.
+      for (let i = 0; i < buttons.length; i++) {
+        const on = Math.sin(t * 1.7 + i * 1.3) > 0.9;
+        buttons[i].pressed = on;
+        buttons[i].value = on ? 1 : 0;
+      }
     },
   };
 }
