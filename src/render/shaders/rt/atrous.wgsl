@@ -60,6 +60,18 @@ fn dstValue(v : vec4f, px : vec2i) -> vec4f {
 #endif
 }
 
+// Signed distance along n of the world point a tap sees, as a function of its uv and linear depth only - the
+// world position is never formed. worldFromDepth(uv, d) is (M * (x, y, d, 1)).xyz / w with M = invViewProj, so
+//   dot(n, world) = (A.x*x + A.y*y + A.z*d + A.w) / (R.x*x + R.y*y + R.z*d + R.w)
+// where A pairs n with each column of M and R is M's w row. That is two three-term dot products and one
+// divide, against a 4x4 matrix-vector product (16 mul, 12 add) and its divide per tap. A depends on the
+// texel's normal, so the caller builds it once per texel; R is the same every frame.
+fn planeStop(uv : vec2f, linearZ : f32, A : vec4f, R : vec4f, near : f32) -> f32 {
+  let d = near / linearZ;
+  let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  return (dot(A.xy, ndc) + A.z * d + A.w) / (dot(R.xy, ndc) + R.z * d + R.w);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (any(gid.xy >= rp.dims.xy)) { return; }
@@ -73,7 +85,13 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   }
   let an = textureLoad(auxNormal, px, 0);
   let n = octDecode(an.xy);
-  let pos = worldFromLinear(pixelUv(rtSrc(px)), z);
+  // The edge stop compares each tap against this texel's own plane, so the centre's own dot(n, pos) is the
+  // origin both sides are measured from.
+  let m = frame.invViewProj;
+  let planeA = vec4f(dot(n, m[0].xyz), dot(n, m[1].xyz), dot(n, m[2].xyz), dot(n, m[3].xyz));
+  let planeR = vec4f(m[0].w, m[1].w, m[2].w, m[3].w);
+  let near = frame.params.z;
+  let plane0 = planeStop(pixelUv(rtSrc(px)), z, planeA, planeR, near);
 
   // The 3x3 moment sum that steers sigmaL is a pure function of momTex, the texel and the RT size, and momTex is the same texture for all
   // three iterations of a frame - so only the first iteration computes it. Later iterations read it back (a f32 value stored to a f32 buffer
@@ -121,8 +139,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       if (zq <= 0.0) { continue; }
       let s = textureLoad(srcTex, q, 0);
       let nq = octDecode(textureLoad(auxNormal, q, 0).xy);
-      let pq = worldFromLinear(pixelUv(rtSrc(q)), zq);
-      let wz = exp(-abs(dot(n, pq - pos)) / zTol);
+      // dot(n, pq - pos), with neither world position formed.
+      let wz = exp(-abs(planeStop(pixelUv(rtSrc(q)), zq, planeA, planeR, near) - plane0) / zTol);
       // dot^16 as four multiplies rather than pow(x, 16.0): the same function without the transcendental
       // (which a driver expands to a log2/exp2 pair plus a polynomial). Squaring twice and multiplying keeps
       // the taps independent, so they are not serialised down one dependency chain.
