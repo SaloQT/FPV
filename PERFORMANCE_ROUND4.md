@@ -353,3 +353,44 @@ Both c4 and c7 were reasoned predictions that the measurement contradicted:
 
 Both were caught only because the ceiling was measured first. Neither would have been caught by writing
 the "obvious" optimisation and benchmarking it — that is the whole argument for probing before porting.
+
+## The GI pass: a 16 ms hole that is not a hole
+
+The single largest unexplained number in the renderer. It took eight probes to characterise, and the
+answer is not the one the arithmetic suggested, so it is written down in full.
+
+`p25` removes the secondary shadow ray that `shadeSurface` fires for hits inside 250 m, and the frame goes
+from ~81 ms to ~65 ms — **16 ms, 20% of the frame**, reproducible to within 0.5 ms across two runs and
+three controls. That reads as "the shadow ray costs 16 ms". It does not:
+
+| probe | what went | frame | giRays |
+|---|---|---|---|
+| control ×5 | — | 80.3, 80.8, 80.9, 81.1, 81.4 | 29.0–29.5 |
+| p25 ×2 | `keyVisibility`'s **call** removed | **64.7, 65.1** | **14.9** |
+| p28 | its BVH half skipped, function still inlined | 80.9 | 29.4 |
+| p29 | its terrain-DDA half removed | 79.8 | 28.1 |
+| p33 | transmit stack alone 32→8 | 79.8 | 28.8 |
+| p34 | canopy optical-depth body gutted | 81.4 | 29.5 |
+| p316 / p38 | both stacks 32→16 / 32→8 | 82.0 / 82.4 | worse |
+| p35 | the GI ray loop's **shading** removed | 64.9 | **12.7** |
+
+Removing either half of the shadow ray is worth ~0 and ~0.5 ms, and its two most plausible internal costs
+(the stack arrays and the canopy noise integration) are worth nothing. But removing the call is worth 16 ms,
+and removing the shading around it is worth 16 ms too. **p25 is not measuring the shadow ray; it is
+measuring all of GI hit shading, of which the shadow ray is a part that happens to be inside the removed
+region.**
+
+That splits the GI pass cleanly: `traceScene` is 12.7 ms, hit shading is ~16 ms. The remaining puzzle is
+that *no individual piece of the shading registers*: the per-hit terrain material (p27), the radiance-probe
+samples (p26), the shadow ray's two halves (p28/p29) and the canopy integration (p34) are each 0–0.9 ms.
+Six terms that are each below the noise floor add up to 16 ms. **This is the failure mode of the ceiling-probe
+method, in its purest form** — the method finds the big single term, and here there is no big single term. To
+make GI shading cheaper it has to get cheaper as a whole, not by deleting a piece.
+
+The register-cliff theory that the split was built on (a second inlined traversal capping occupancy) is
+**not supported**. `feat/gi-split` implements the split anyway: an 8-byte per-ray hit record in two
+`rg32float` storage textures, the ray origin and direction rebuilt in the shade dispatch from the same
+G-buffer and blue-noise inputs so only kind/prim/distance crosses the boundary. It is byte-identical
+(max channel difference 0/255 on every oracle frame) and 2,342 tests pass — and it recovers **1.5 ms of the
+16**, for 132 MB of VRAM and a second dispatch. Kept on its own branch, not merged: the shape is right and
+the work is sound, but the payoff does not justify it, and the number it was built for is not there.
