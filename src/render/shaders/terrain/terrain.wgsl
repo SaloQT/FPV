@@ -110,9 +110,11 @@ fn fs(in : VsOut) -> FsOut {
   var best = 0.0;
   var bestLayer = GL_DIRT;
   let cutoff = 0.03 * max(total, 1e-4);
+  // Same weights for every layer this pixel blends, so evaluate them once here.
+  let planeW = dsProjectionWeights(ctx);
   for (var k = 0; k < 3; k++) {
     if (lwt[k] > cutoff) {
-      let d = dsLayerDetail(lid[k], ctx);
+      let d = dsLayerDetail(lid[k], ctx, planeW);
       let p = lwt[k] * (0.45 + 1.1 * d.height);
       let b = p * p * p;
       var tone = d.tone;

@@ -127,17 +127,21 @@ fn dsAccumulate(acc : ptr<function, DsTex>, t : DsTex, w : f32) {
   (*acc).b += w * t.b;
 }
 
-fn dsLayerDetail(layer : i32, c : DsCtx) -> DsLayer {
+// How the three projection planes share a pixel's detail weight, from the surface normal alone. It does not
+// depend on the layer, and a pixel blends up to three layers, so the caller evaluates it once per pixel
+// (dsProjectionWeights) and hands it in rather than recomputing the same pow and two normalisations per layer.
+fn dsProjectionWeights(c : DsCtx) -> vec3f {
+  if (!c.planes) { return vec3f(0.0, 1.0, 0.0); }
+  var w = pow(abs(c.n), vec3f(6.0));
+  w = w / (w.x + w.y + w.z);
+  w = max(w - vec3f(0.1), vec3f(0.0));
+  return w / (w.x + w.y + w.z);
+}
+
+fn dsLayerDetail(layer : i32, c : DsCtx, w : vec3f) -> DsLayer {
   let inv = 1.0 / dsLayerTile(layer);
   let tpp = c.footprint * inv * DS_SIZE;
   let hex = tpp < DS_HEX_MAX_TPP;
-  var w = vec3f(0.0, 1.0, 0.0);
-  if (c.planes) {
-    w = pow(abs(c.n), vec3f(6.0));
-    w = w / (w.x + w.y + w.z);
-    w = max(w - vec3f(0.1), vec3f(0.0));
-    w = w / (w.x + w.y + w.z);
-  }
   var acc : DsTex;
   acc.a = vec4f(0.0);
   acc.b = vec4f(0.0);

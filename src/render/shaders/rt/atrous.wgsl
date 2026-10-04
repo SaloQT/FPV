@@ -14,6 +14,9 @@
 const ITER : f32 = ${ITER};
 const LUMA_FLOOR : f32 = 0.01;
 const AO_VIEW_NITS : f32 = 4000.0;
+// ITER is a pipeline-creation constant, so this is evaluated once when the module is built rather than per pixel.
+// The tighter 0.6^ITER schedule is the point of the iteration: the later passes accept less luma difference.
+const SIGMA_ITER : f32 = 4.0 * pow(0.6, ITER);
 
 fn tapWeight(i : i32) -> f32 {
   let a = abs(i);
@@ -88,7 +91,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 #else
   let varSum = varBuf[u32(px.y) * u32(dims.x) + u32(px.x)];
 #endif
-  let sigmaL = 4.0 * pow(0.6, ITER) * sqrt(max(varSum, 0.0)) + LUMA_FLOOR;
+  let sigmaL = SIGMA_ITER * sqrt(max(varSum, 0.0)) + LUMA_FLOOR;
   let lc = tapLuma(centre);
   let zTol = 0.005 * z + 0.02;
 
@@ -120,9 +123,16 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       let nq = octDecode(textureLoad(auxNormal, q, 0).xy);
       let pq = worldFromLinear(pixelUv(rtSrc(q)), zq);
       let wz = exp(-abs(dot(n, pq - pos)) / zTol);
-      let wn = pow(max(dot(n, nq), 0.0), 16.0);
-      let wl = exp(-abs(lc - tapLuma(s)) / sigmaL);
-      let w = tapWeight(i) * twj * wz * wn * wl;
+      // dot^16 as four multiplies rather than pow(x, 16.0): the same function without the transcendental
+      // (which a driver expands to a log2/exp2 pair plus a polynomial). Squaring twice and multiplying keeps
+      // the taps independent, so they are not serialised down one dependency chain.
+      let nd = max(dot(n, nq), 0.0);
+      let nd2 = nd * nd;
+      let wn = nd2 * nd2 * nd2 * nd2;
+      // Both remaining stops only attenuate, so exp(a) * exp(b) is one exp(a + b) rather than two
+      // transcendentals per tap. The exponent is a sum of two non-positive terms, so it stays <= 0 and
+      // cannot overflow.
+      let w = tapWeight(i) * twj * wz * wn * exp(-abs(lc - tapLuma(s)) / sigmaL);
 #ifdef SHADOW
       sum += s.x * w;
 #else
