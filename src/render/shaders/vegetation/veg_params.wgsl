@@ -7,7 +7,7 @@ struct VegParams {
   quad : vec4f,     // xyz = quad position, w = total thrust (N); 0 disables prop wash and trample
   quadVel : vec4f,  // xyz = quad velocity (m/s)
   grass : vec4f,    // x = patch size (m), y = grass distance, z = full-density radius, w = blades per m2
-  grass2 : vec4f,   // x = LOD0 max distance, y = LOD1 max distance, z = water level (-1e9 when none), w = slots per patch
+  grass2 : vec4f,   // x,y unused (level of detail is chosen by projected size in grass_cull.wgsl), z = water level (-1e9 when none), w = slots per patch
   cells : vec4i,    // xy = first cell of the camera-centred patch grid, z = cells per side, w = seed
   caps : vec4u,     // xyz = grass instance capacity of LOD0..2, w = chunk capacity
   tree : vec4f,     // x = LOD distance scale, y = max draw distance (m), z = smallest bounding radius kept (pixels), w = unused

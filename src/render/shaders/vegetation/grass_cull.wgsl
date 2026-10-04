@@ -17,6 +17,13 @@
 const CHUNK : u32 = 64u;
 const DISPATCH_ROW : u32 = 4096u;
 
+// Projected blade height (px) at which a blade changes level: 15 vertices down to GRASS_LOD0_PX, 7 down to
+// GRASS_LOD1_PX, a single quad below that. These are apparent size, so they hold at any resolution or lens.
+// GRASS_LOD_BLEND is the width of each threshold's dither band as a fraction of the threshold.
+const GRASS_LOD0_PX : f32 = 24.0;
+const GRASS_LOD1_PX : f32 = 8.0;
+const GRASS_LOD_BLEND : f32 = 0.55;
+
 // Fraction of the slots that survive at distance d: full density inside the full-density radius, then constant screen-space density.
 fn grassKeep(d : f32) -> f32 {
   let far = vp.grass.y;
@@ -162,7 +169,20 @@ fn blades_main(@builtin(workgroup_id) wg : vec3u, @builtin(local_invocation_inde
   if (sp == 2u) { yaw = fract(atan2(xz.y - (floor(xz.y / 1.4) + 0.5) * 1.4, xz.x - (floor(xz.x / 1.4) + 0.5) * 1.4) / TAU); }
   let dry = max(dryField, 0.7 * (1.0 - smoothstep(0.15, 0.6, cover)));
   let thin = clamp(inverseSqrt(max(keep, 1.0e-4)), 1.0, 5.0);
-  let lod = select(select(2u, 1u, d < vp.grass2.y), 0u, d < vp.grass2.x);
+  // Level of detail by projected size, not by distance. A blade h metres tall at view depth z covers
+  // h * proj[1][1] * screenH/2 / z pixels, so a fixed pixel height keeps the tessellation matched to how
+  // big the blade actually is: the same blade keeps its 15 vertices at 12 m on a 1080p screen and drops to
+  // one quad at 30 m, but at 4K it is still one quad at 12 m and only earns the detail from 6 m. A
+  // distance threshold cannot do that - it hands a 25 px blade at 8K a single quad.
+  let viewZ = max(abs(dot(frame.view[2].xyz, vec3f(xz.x, y, xz.y)) + frame.view[2].w), 1.0e-3);
+  let px = height * frame.proj[1][1] * frame.screen.y * 0.5 / viewZ;
+  // Each threshold is dithered over a band instead of being a hard cut, so the ring a hard cut draws is
+  // spread over neighbouring blades and the sward reads the same either side of it. The random is a stable
+  // hash of the blade's own slot, so a blade keeps its level frame to frame and nothing flickers.
+  let rLod = fract(u01(h.x) * 0.7548776662 + u01(h.z) * 0.5698402910);
+  let e0 = GRASS_LOD0_PX * (1.0 + (rLod - 0.5) * GRASS_LOD_BLEND);
+  let e1 = GRASS_LOD1_PX * (1.0 + (rLod - 0.5) * GRASS_LOD_BLEND);
+  let lod = select(select(2u, 1u, px > e1), 0u, px > e0);
 
   var b : Blade;
   b.pos = vec3f(xz.x, y - 0.02, xz.y);
