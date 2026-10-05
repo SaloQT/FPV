@@ -81,6 +81,35 @@ describe('determinism', () => {
 });
 
 describe('output shape', () => {
+  it('refines beyond the hydraulic grid while retaining full-size finite material maps', () => {
+    const stages: string[] = [];
+    const d = generateTerrain({ seed: 1337, quality: 'medium' }, (stage) => {
+      if (stages[stages.length - 1] !== stage) stages.push(stage);
+    });
+    expect(d.resolution).toBe(1024);
+    expect(d.cellSize).toBe(3);
+    expect(d.origin).toEqual([-1536, -1536]);
+    const lastErosion = stages.lastIndexOf('Eroding slopes');
+    expect(lastErosion).toBeGreaterThan(0);
+    expect(stages[lastErosion + 1]).toBe('Refining terrain');
+    expect(stages.slice(lastErosion + 1)).toContain('Mapping materials');
+    expect(d.height).toHaveLength(1024 * 1024);
+    expect(d.minHeight).toBe(0);
+    expect(d.maxHeight).toBeCloseTo(220, 2);
+    for (const map of Object.values(d.maps)) {
+      expect(map).toHaveLength(d.height.length);
+      // Aggregate checks avoid a million individual assertion objects per map.
+      let valid = true;
+      let nonzero = false;
+      for (const v of map) {
+        if (!Number.isFinite(v) || v < 0 || v > 1) valid = false;
+        if (v > 0) nonzero = true;
+      }
+      expect(valid).toBe(true);
+      expect(nonzero).toBe(true);
+    }
+  }, SLOW);
+
   it('follows the TerrainData conventions', () => {
     const d = terrain(1337);
     expect(d.seed).toBe(1337);

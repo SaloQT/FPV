@@ -1,6 +1,8 @@
 /** Objects module: race gates, flags, cones, start pad and obstacles (track) plus the quad model. */
 import type { FrameInfo, RenderContext, RenderModule, SceneData } from '../contracts';
-import { createQuadRender, type QuadRender } from './quadRender';
+import { createQuadRender, type QuadRender, type RivalQuad } from './quadRender';
+
+export type { RivalQuad } from './quadRender';
 import { createTrackObjects, type TrackObjects } from './trackObjects';
 
 export type ObjectsModule = RenderModule & {
@@ -12,6 +14,8 @@ export type ObjectsModule = RenderModule & {
   setHideQuad(hide: boolean): void;
   /** Direction the air travels toward (world x, z) and speed in m/s; drives the flag cloth. */
   setWind(dirXZ: [number, number], speed: number): void;
+  /** Other quads to draw this and following frames (a spectator race); the list is read every frame, so it may change in place. */
+  setRivals(rivals: readonly RivalQuad[]): void;
 };
 
 export function createObjectsModule(): ObjectsModule {
@@ -22,6 +26,7 @@ export function createObjectsModule(): ObjectsModule {
   let active = -1;
   const passed: number[] = [];
   let wind: { dir: [number, number]; speed: number } | null = null;
+  let rivals: readonly RivalQuad[] = [];
 
   return {
     name: 'objects',
@@ -40,6 +45,7 @@ export function createObjectsModule(): ObjectsModule {
     update(rc: RenderContext, f: FrameInfo) {
       track?.update(rc, f);
       quad?.update(rc, f, hideQuad);
+      quad?.updateRivals(f, rivals);
     },
     encodeGBuffer(pass) {
       track?.encodeGBuffer(pass);
@@ -65,6 +71,9 @@ export function createObjectsModule(): ObjectsModule {
     setWind(dirXZ, speed) {
       wind = { dir: dirXZ, speed };
       track?.setWind(dirXZ, speed);
+    },
+    setRivals(list) {
+      rivals = list;
     },
     destroy() {
       if (ctx) {

@@ -105,3 +105,19 @@ export function packTerrainMaps(maps: TerrainData['maps'], n: number): Uint8Arra
   }
   return out;
 }
+
+/** Precompute the tracer's original clamped 2x2 max at every mip. These are the
+ * same conservative bounds as four shader fetches, with one fetch per node. */
+export function buildTraceBoundsPyramid(height: Float32Array, n: number): Float32Array[] {
+  return buildMaxPyramid(height, n).map((src, mip) => {
+    const size = Math.max(1, n >> mip), dst = new Float32Array(src.length);
+    for (let y = 0; y < size; y++) {
+      const row = y * size, next = Math.min(y + 1, size - 1) * size;
+      for (let x = 0; x < size; x++) {
+        const nx = Math.min(x + 1, size - 1);
+        dst[row + x] = Math.max(Math.max(src[row + x], src[row + nx]), Math.max(src[next + x], src[next + nx]));
+      }
+    }
+    return dst;
+  });
+}

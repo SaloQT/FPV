@@ -32,6 +32,7 @@ const QUALITY_CONTROL: SelectControl = {
 const MODES: readonly SelectOption[] = [{ value: 'acro', label: 'Acro' }, { value: 'angle', label: 'Angle' }, { value: 'horizon', label: 'Horizon' }];
 const TRACKS: readonly SelectOption[] = [
   { value: 'race', label: 'Race' }, { value: 'freestyle', label: 'Freestyle' }, { value: 'mountain', label: 'Mountain' }, { value: 'sprint', label: 'Sprint' },
+  { value: 'technical', label: 'Technical' }, { value: 'acro', label: 'Acro' }, { value: 'industrial', label: 'Industrial' },
 ];
 const TIME_SCALES = [
   { value: 0, label: 'Frozen' }, { value: 1, label: 'Real time' }, { value: 10, label: '10x' }, { value: 60, label: '60x (1 min per s)' },

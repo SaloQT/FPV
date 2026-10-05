@@ -4,7 +4,7 @@ import { clamp, shapeStick } from './curves';
 import { GamepadInput, type PadProvider } from './gamepad';
 import { padThrottle, resolveThrottleMode } from './gamepadMap';
 import type { PadAction } from './padActions';
-import { KeyboardStick, type KeyboardAxes } from './keyboardStick';
+import { KEYBOARD_YAW_LIMIT, KeyboardStick, type KeyboardAxes } from './keyboardStick';
 import { MouseStick } from './mouseStick';
 import { PointerInput, type OrbitDelta } from './pointer';
 import type { InputAction, InputSettingsStore, InputSource } from './types';
@@ -63,6 +63,7 @@ export class InputManager implements InputSource {
   private isArmed = false;
   private enabled = true;
   private lastMenuMs = -Infinity;
+  private keyboardThrottle = true;
 
   constructor(
     target: HTMLElement | Window,
@@ -96,6 +97,12 @@ export class InputManager implements InputSource {
 
   setThrottle(value: number): void {
     this.kb.throttle = clamp(value, 0, 1);
+    this.keyboardThrottle = true;
+  }
+
+  recenter(): void {
+    this.mouse.reset();
+    this.kb.roll = this.kb.pitch = this.kb.yaw = 0;
   }
 
   /** While disabled (menu open) game keys are not captured or suppressed, sticks read zero, and only menu/help/perf actions fire. */
@@ -134,14 +141,18 @@ export class InputManager implements InputSource {
     const out = this.out;
     if (this.enabled) {
       this.readAxes();
-      this.kb.update(step, this.axes);
-      this.mouse.update(step, cfg.mouseCentering, cfg.mouseSensitivity, cfg.invertY);
       const s = pad.sample;
       const padOn = pad.connected && pad.active;
+      if (padOn) this.keyboardThrottle = false;
+      else if (this.axes.throttleUp || this.axes.throttleDown || this.axes.throttleCut) this.keyboardThrottle = true;
+      this.kb.update(step, this.axes, this.keyboardThrottle);
+      // Disarmed, a released keyboard throttle is back at zero at once, so arming is never refused while it eases down.
+      if (!this.isArmed && this.keyboardThrottle && !this.axes.throttleUp && !this.axes.throttleDown) this.kb.throttle = 0;
+      this.mouse.update(step, cfg.mouseCentering, cfg.mouseSensitivity, cfg.invertY);
       if (padOn) this.kb.throttle = padThrottle(resolveThrottleMode(cfg.gamepad, s.profile), s, this.kb.throttle, step, cfg.gamepad.hoverThrottle);
       out.roll = padOn ? s.roll : clamp(this.kb.roll + shapeStick(this.mouse.x, cfg.mouseDeadzone, cfg.mouseExpo), -1, 1);
       out.pitch = padOn ? s.pitch : clamp(this.kb.pitch + shapeStick(this.mouse.y, cfg.mouseDeadzone, cfg.mouseExpo), -1, 1);
-      out.yaw = padOn ? s.yaw : this.kb.yaw;
+      out.yaw = padOn ? s.yaw : this.kb.yaw * KEYBOARD_YAW_LIMIT;
       out.turtle = anyHeld(this.held, this.bindings.axes.turtle) || (pad.connected && s.aux.turtle);
     } else {
       out.roll = out.pitch = out.yaw = 0;

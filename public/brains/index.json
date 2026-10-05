@@ -1,0 +1,56 @@
+{
+ "brains": [
+  {
+   "file": "ace.json",
+   "name": "ace",
+   "stats": {
+    "steps": 4606918656,
+    "iterations": 8787,
+    "seconds": 3900.5905868,
+    "gatesPerMinute": 41.23878479003906,
+    "bestLap": 12.507500648498535,
+    "evalLap": 40.2127500000287,
+    "meanReturn": 593.159923735119
+   }
+  },
+  {
+   "file": "dash.json",
+   "name": "dash",
+   "stats": {
+    "steps": 2326790144,
+    "iterations": 4438,
+    "seconds": 1920.7029864,
+    "gatesPerMinute": 36.39793395996094,
+    "bestLap": 11.90000057220459,
+    "evalLap": 42.91853125003236,
+    "meanReturn": 579.4788818359375
+   }
+  },
+  {
+   "file": "rookie.json",
+   "name": "rookie",
+   "stats": {
+    "steps": 303038464,
+    "iterations": 578,
+    "seconds": 240.0107918,
+    "gatesPerMinute": 24.776458740234375,
+    "bestLap": 24.059751510620117,
+    "evalLap": 54.998874999823,
+    "meanReturn": 575.0702457264957
+   }
+  },
+  {
+   "file": "steady.json",
+   "name": "steady",
+   "stats": {
+    "steps": 3321888768,
+    "iterations": 6336,
+    "seconds": 2700.4247749,
+    "gatesPerMinute": 40.04859924316406,
+    "bestLap": 13.534250259399414,
+    "evalLap": 36.27306250006477,
+    "meanReturn": 641.735248447205
+   }
+  }
+ ]
+}

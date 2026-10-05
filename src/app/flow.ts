@@ -1,12 +1,13 @@
 /**
  * The session flow around the sim: the race-start beeps and switch, the clock mode a saved choice starts with, the result
- * card's buttons, the live sky for the menus, the pause badge, the mouse-capture hint and the start screen's track preview.
+ * card's buttons and leaderboard, the live sky for the menus, the pause badge, the mouse-capture hint and the start screen's track
+ * preview.
  */
 import type { FinishChoice } from '../ui/finish';
 import { bootTime, hourOf, skyReadout } from '../ui/clockModel';
 import type { LiveSky } from '../ui/menuHost';
 import type { GameState } from '../game/stateMachine';
-import { WorldPreview, shareableWorld } from './preview';
+import { WorldPreview, worldLink } from './preview';
 import { buildTrackOnly, buildWorldQuietly, landWorld, newTrack } from './scene';
 import type { AppCtx } from './state';
 
@@ -59,6 +60,9 @@ export function finishChoice(ctx: AppCtx, choice: FinishChoice): void {
     case 'menu':
       ctx.session.openMenu();
       break;
+    case 'builder':
+      ctx.builder.open();
+      break;
   }
 }
 
@@ -74,12 +78,21 @@ export function onTimeNudged(ctx: AppCtx): void {
   if (ctx.ui.options.get().timeMode === 'real') ctx.ui.options.patch({ timeMode: 'cycle', cycleScale: 1 });
 }
 
+/** The leaderboard entry of the last finish, shown again when the finish card comes back after the menu. */
+let lastFinish: ReturnType<AppCtx['builder']['record']> = null;
+
 /** Called from the session's state hook after the menu logic. */
 export function onStateChange(ctx: AppCtx, state: GameState, prev: GameState): void {
   const { ui, session } = ctx;
   if (state === 'finished') {
     session.snapshot(ctx.snap);
-    ui.finish.show(ctx.snap.race);
+    // Record only the real finish (from flying); coming back to the card from the menu shows the same result again. The quad's
+    // pilot is you, or the brain that flew any of the run (in a brain race the rivals are recorded by BrainHub.onResult).
+    if (prev === 'flying') {
+      const brain = ctx.brains.runPilot();
+      lastFinish = ctx.builder.record(brain ?? 'You', brain === null ? 'you' : 'brain', ctx.snap.race);
+    }
+    ui.finish.show(ctx.snap.race, ctx.builder.finishBoard(lastFinish));
   } else {
     ui.finish.hide();
   }
@@ -111,6 +124,7 @@ export function wireFlow(ctx: AppCtx): void {
   ui.menu.setLive(() => liveSky(ctx));
   ui.help.setLive(() => ({ sky: liveSky(ctx), longitudeDeg: ctx.store.get().observer.longitudeDeg }));
   ui.onFinish = (choice) => finishChoice(ctx, choice);
+  ctx.brains.onResult = (name, snap) => ctx.builder.record(name, 'brain', snap);
   document.addEventListener('pointerlockchange', () => updateHints(ctx));
   document.addEventListener('pointerlockerror', () => updateHints(ctx));
 }
@@ -132,7 +146,10 @@ export function createPreview(ctx: AppCtx): WorldPreview {
     ctx.store.get(),
   );
   ctx.ui.menu.setPreview(preview.current());
-  ctx.ui.menu.setSharedWorld(() => shareableWorld(ctx.world, preview.current().status, ctx.session.started));
+  ctx.ui.menu.setSharedWorld(() => {
+    const w = worldLink(ctx.world, preview.current().status, ctx.session.started);
+    return w === false ? { fileTrack: true, terrainSeed: ctx.world.terrainSeed, quality: ctx.world.quality } : w;
+  });
   // A link to an N-key track: the boot world is built from the seed, so the link's own track replaces it before the first flight.
   const link = ctx.params.trackSeed;
   if (link !== undefined && link !== ctx.world.seed) preview.launch(link);

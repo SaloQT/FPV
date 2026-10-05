@@ -19,6 +19,8 @@ import { SettingsStore, type StorageLike } from '../ui/settingsStore';
 import { SimClock as AstroClock } from '../world/astro';
 import { menuAction, startAudioOnGesture, wireSession, wireSettings } from './actions';
 import { AppAudio } from './audio';
+import { BrainHub } from './brains';
+import { BuilderHub } from './builder';
 import { startBench } from './bench';
 import { failApp, installGlobalErrorHandlers } from './failure';
 import { SETTLE_RENDERS, makePerfSource } from './frame';
@@ -29,7 +31,7 @@ import { benchSettingsPatch, parsePerfParams, perfSettingsPatch, withBench, type
 import { createAppModules, installRecovery } from './recover';
 import { measureRefresh } from './refresh';
 import { ScenarioPilot } from './scenario';
-import { loadWorld, trackRequest, worldDeps } from './scene';
+import { loadWorld, recipeRequest, trackRequest, worldDeps } from './scene';
 import type { AppCtx, AppMods } from './state';
 import { advanceFrames, installHooks, markReady } from './testHooks';
 import { createUi } from './ui';
@@ -60,9 +62,13 @@ function memoryCopyOfSaved(): StorageLike {
   };
 }
 
-/** The first world: the terrain of `seed`, and the track of `tseed` when the URL names one (a share link to an N-key track), also with `autostart=1`. */
-export function initialWorldRequest(settings: AppSettings, params: Pick<AppParams, 'trackSeed'>): WorldRequest {
-  return { ...trackRequest(settings, params.trackSeed), terrainSeed: settings.seed, quality: settings.quality };
+/**
+ * The first world: the terrain of `seed`, and the track of `tseed` when the URL names one (a share link to an N-key track), also with
+ * `autostart=1`. A track-builder link (`trk=`) builds its recipe on that terrain instead.
+ */
+export function initialWorldRequest(settings: AppSettings, params: Pick<AppParams, 'trackSeed' | 'recipe'>): WorldRequest {
+  const track = params.recipe !== undefined ? recipeRequest(params.recipe) : trackRequest(settings, params.trackSeed);
+  return { ...track, terrainSeed: settings.seed, quality: settings.quality };
 }
 
 function createStore(search: string, perf: PerfParams): { store: SettingsStore; params: ReturnType<typeof parseParams> } {
@@ -147,10 +153,13 @@ async function start(canvas: HTMLCanvasElement, osdCanvas: HTMLCanvasElement, ro
   loading.setProgress('Uploading the scene', 0.94);
   loadWorld(ctx, world);
   installHooks(ctx);
+  void ctx.brains.init(location.search);
 
   if (params.autostart) {
     ctx.session.closeMenu();
     ctx.ui.menu.hide();
+  } else if (params.mode === 'builder') {
+    ctx.builder.open();
   } else {
     ctx.ui.menu.showStart();
   }
@@ -208,19 +217,23 @@ function assemble(p: Parts): AppCtx {
   const audio = new AppAudio(settings);
 
   let self: AppCtx | null = null;
+  const brains = new BrainHub(() => self);
+  const builder = new BuilderHub(() => self);
   const ui = createUi(p.root, p.osdCanvas, settings, input.gamepad, {
     onChange: (patch) => store.patch(patch),
     onAction: (action) => {
       if (self) menuAction(self, action);
     },
     perfSource: makePerfSource(() => self),
+    brains,
+    builder,
   });
 
   const aspect = canvas.clientHeight > 0 ? canvas.clientWidth / canvas.clientHeight : 16 / 9;
   const ctx: AppCtx = {
-    params, canvas, root: p.root, store, renderer: p.renderer, mods: p.mods, physics, ground, wind, input, session, rig, astro, audio, ui,
-    loading: p.loading,
-    world, busy: false, hidden: document.hidden, camPreferred: params.cam ?? 'fpv', aspect, time: 0,
+    params, canvas, root: p.root, store, renderer: p.renderer, mods: p.mods, physics, ground, wind, input, session, rig, astro, audio, ui, brains, builder,
+    loading: p.loading, colliders: [],
+    world, preview: null, busy: false, hidden: document.hidden, camPreferred: params.cam ?? 'fpv', aspect, time: 0,
     frame: { dt: 0, time: 0, camera: rig.camera, astro: astro.state(), quad: null },
     snap,
     orbit: { dx: 0, dy: 0, wheel: 0 },

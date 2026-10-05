@@ -106,7 +106,9 @@ export function qualityProfile(tier: RenderQuality): QualityProfile {
     case 'high':
       return { tier, rtDivisor: 2, giRays: 2, rtMaxSteps: 96, rtSpecular: true, probes: { dim: [32, 16, 32], raysPerProbe: 64, spacing: 5 }, grassBladesPerM2: 400, grassDistance: 80, terrainViewDistance: 3500, cloudSteps: 32, bloom: true, taa: true, detailOctaves: 4 };
     case 'ultra':
-      return { tier, rtDivisor: 1, giRays: 2, rtMaxSteps: 128, rtSpecular: true, probes: { dim: [48, 24, 48], raysPerProbe: 96, spacing: 4 }, grassBladesPerM2: 900, grassDistance: 120, terrainViewDistance: 5000, cloudSteps: 48, bloom: true, taa: true, detailOctaves: 5 };
+      // RT at half resolution: the jittered half-res trace plus temporal accumulation lands within 0.4/255 mean of a full-res 8-ray
+      // reference at 4K and halves the frame; the time goes into a longer, denser near sward and finer clouds instead.
+      return { tier, rtDivisor: 2, giRays: 2, rtMaxSteps: 128, rtSpecular: true, probes: { dim: [48, 24, 48], raysPerProbe: 96, spacing: 4 }, grassBladesPerM2: 900, grassDistance: 180, terrainViewDistance: 5000, cloudSteps: 64, bloom: true, taa: true, detailOctaves: 5 };
   }
 }
 
@@ -137,7 +139,7 @@ export interface GBuffer {
  *
  *  binding 0  sampler  linearClamp            binding 1  sampler linearRepeat
  *  binding 2  texture_2d<f32> terrainHeight   r32float, N x N, mip 0 only, sample with textureLoad (manual bilinear)
- *  binding 3  texture_2d<f32> terrainMaxPyr   r32float, N x N with full mip chain: mip m = max over 2^m x 2^m texels
+ *  binding 3  texture_2d<f32> terrainMaxPyr   r32float, N x N with full mip chain of conservative closed-span terrain trace bounds
  *  binding 4  texture_2d<f32> terrainNormal   rgba8unorm, xyz = world normal*0.5+0.5, a = terrain horizon AO
  *  binding 5  texture_2d<f32> terrainMaps     rgba8unorm, r = soil, g = flow, b = deposit, a = wetness
  *  binding 6  texture_2d<f32> transmittanceLUT   rgba16float 256x64   (Hillaire 2020 parameterisation)

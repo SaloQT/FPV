@@ -41,6 +41,57 @@ describe('InputManager mouse', () => {
     expect(r.input.poll(1 / 240).pitch).toBeGreaterThan(0.2);
   });
 
+  it('falls back when raw pointer lock throws synchronously', async () => {
+    const r = makeRig();
+    const original = r.canvas.requestPointerLock.bind(r.canvas);
+    Object.assign(r.canvas, { requestPointerLock: (options?: unknown) => {
+      if (options) throw new Error('raw input unsupported');
+      return original();
+    } });
+    r.input.requestPointerLock();
+    expect(r.input.pointerLocked).toBe(true);
+    expect(r.canvas.lockRequests).toBe(1);
+  });
+
+  it('releases a delayed lock granted after the menu opens', () => {
+    const r = makeRig();
+    Object.assign(r.canvas, { requestPointerLock: () => new Promise<void>(() => {}) });
+    r.input.requestPointerLock();
+    r.input.setEnabled(false);
+    r.doc.pointerLockElement = r.canvas;
+    r.doc.dispatchEvent(new Event('pointerlockchange'));
+    expect(r.input.pointerLocked).toBe(false);
+    expect(r.doc.exitCalls).toBe(1);
+    expect(r.input.takeActions()).toEqual([]);
+  });
+
+  it('recenter puts a held mouse stick and the keyboard sticks back at centre', () => {
+    const r = makeRig({ mouseCentering: 0 });
+    r.lock();
+    r.doc.dispatchEvent(moveEvent(90, -60));
+    r.press('KeyD');
+    const before = r.run(0.3);
+    expect(before.roll).toBeGreaterThan(0.2);
+    expect(before.pitch).toBeLessThan(-0.1);
+    r.release('KeyD');
+    r.input.recenter();
+    const after = r.input.poll(0);
+    expect(after.roll).toBe(0);
+    expect(after.pitch).toBe(0);
+    expect(after.yaw).toBe(0);
+  });
+
+  it('uses mousemove again after recapturing when raw events stop', () => {
+    const r = makeRig({ mouseCentering: 0 });
+    r.lock();
+    r.doc.dispatchEvent(moveEvent(30, 0, 0, 'pointerrawupdate'));
+    r.input.setEnabled(false);
+    r.input.setEnabled(true);
+    r.lock();
+    r.doc.dispatchEvent(moveEvent(30, 0));
+    expect(r.input.poll(1 / 240).roll).toBeCloseTo(0.1, 9);
+  });
+
   it('ignores movement while the pointer is not locked', () => {
     const r = makeRig();
     r.doc.dispatchEvent(moveEvent(200, 200));
@@ -102,6 +153,17 @@ describe('InputManager mouse', () => {
     r.doc.dispatchEvent(moveEvent(30, 0));
     expect(r.input.poll(1 / 240).roll).toBeCloseTo(0.1, 9);
   });
+
+  it('accepts the next ordinary move immediately when a previously active raw stream stops', () => {
+    const r = makeRig({ mouseCentering: 0 });
+    r.lock();
+    r.doc.dispatchEvent(moveEvent(30, 0, 0, 'pointerrawupdate'));
+    r.doc.dispatchEvent(moveEvent(30, 0));
+    expect(r.input.poll(1 / 240).roll).toBeCloseTo(0.1, 9);
+    r.clock.t += 100;
+    r.doc.dispatchEvent(moveEvent(30, 0));
+    expect(r.input.poll(1 / 240).roll).toBeCloseTo(0.2, 9);
+  });
 });
 
 describe('InputManager pointer lock loss', () => {
@@ -149,7 +211,7 @@ describe('InputManager disabled (menu open)', () => {
     r.input.setEnabled(true);
     expect(r.run(0.3).yaw).toBe(0);
     r.press('KeyD');
-    expect(r.run(0.3).yaw).toBe(1);
+    expect(r.run(0.3).yaw).toBe(0.42);
   });
 });
 
@@ -200,7 +262,7 @@ describe('InputManager gamepad merge policy', () => {
     s = r.run(1);
     expect(s.yaw).toBe(0);
     s = r.run(1.5);
-    expect(s.yaw).toBe(1);
+    expect(s.yaw).toBe(0.42);
   });
 
   it('a latched pad throttle keeps integrating while the stick is held for longer than the activity window', () => {
@@ -218,7 +280,7 @@ describe('InputManager gamepad merge policy', () => {
     const r = makeRig();
     r.pads[0] = padWith([0, 0, -1, 0]);
     r.press('KeyD');
-    expect(r.run(0.5).yaw).toBe(1);
+    expect(r.run(0.5).yaw).toBe(0.42);
   });
 
   it('shares one throttle latch: a radio sets it absolutely and it stays when the pad goes idle', () => {
@@ -230,6 +292,20 @@ describe('InputManager gamepad merge policy', () => {
     expect(r.run(4).throttle).toBeCloseTo(0.7, 3);
     r.press('KeyX');
     expect(r.run(0.1).throttle).toBe(0);
+  });
+
+  it('keyboard throttle takes over from an idle radio and then decays on key release', () => {
+    const r = makeRig();
+    r.pads[0] = padWith([0, 0, -1, 0]);
+    r.run(0.1);
+    r.pads[0] = padWith([0, 0, 0.4, 0]);
+    r.run(0.1);
+    expect(r.run(4).throttle).toBeCloseTo(0.7, 3);
+    r.press('KeyW');
+    const held = r.run(0.1).throttle;
+    expect(held).toBeGreaterThan(0.7);
+    r.release('KeyW');
+    expect(r.run(0.5).throttle).toBeLessThan(held);
   });
 
   it('pad buttons emit the same actions as the keys', () => {

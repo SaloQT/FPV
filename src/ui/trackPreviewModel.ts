@@ -75,10 +75,16 @@ export const GATE_COLORS: Readonly<Record<GateKind, string>> = {
   hoop: '#c58bff',
   dive: '#ff7ab6',
   flag: '#ffe14d',
+  window: '#7af0ff',
+  ladder: '#a8ff5c',
+  tunnel: '#ff9f40',
+  hurdle: '#f0f0f0',
+  drop: '#ff4df0',
 };
 
 export const GATE_KIND_LABELS: Readonly<Record<GateKind, string>> = {
   start: 'Start', finish: 'Finish', square: 'Square', arch: 'Arch', hoop: 'Hoop', dive: 'Dive', flag: 'Flag',
+  window: 'Window', ladder: 'Ladder', tunnel: 'Tunnel', hurdle: 'Hurdle', drop: 'Drop',
 };
 
 /** Screen direction of a heading: yaw 0 faces north (up), positive yaw turns counter-clockwise (toward west, left). */

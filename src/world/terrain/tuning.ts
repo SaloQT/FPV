@@ -21,6 +21,8 @@ export const TUNING = {
   },
   /** Droplet erosion. Arrays are indexed by distance from the finest level (0 = finest); deeper levels get none. */
   droplets: {
+    /** Simulate drainage at landscape scale, then refine; fine render grids must not multiply particle work. */
+    maxResolution: 512,
     perCell: [0.35, 0.9] as readonly number[],
     lifetime: [48, 40] as readonly number[],
     inertia: 0.05,

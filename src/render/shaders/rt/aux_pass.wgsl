@@ -1,6 +1,7 @@
 // Aux pass: linear depth and normal/roughness/metalness of the full-res pixel each RT texel represents this frame (rtSourcePixel).
 // Read by the trace passes, the temporal/a-trous filters and (via the same pixel mapping) the bilateral upsample in lighting.
 #include "rt/rt_common.wgsl"
+#include "common/world_bindings.wgsl"
 
 @group(${GRP}) @binding(1) var gDepth : texture_depth_2d;
 @group(${GRP}) @binding(2) var gNormal : texture_2d<f32>;
@@ -14,8 +15,16 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let px = vec2i(gid.xy);
   let src = rtSrc(px);
   let z = linearDepth(textureLoad(gDepth, src, 0));
-  let nrm = textureLoad(gNormal, src, 0);
-  let wet = textureLoad(gMisc, src, 0).b;
+  var nrm = textureLoad(gNormal, src, 0);
+  let misc = textureLoad(gMisc, src, 0);
+  let wet = misc.b;
+  // Thin grass alternates with the ground as coverage and sample pixels change. A blade's shading normal is unsuitable
+  // for ray bias and history validation: use the underlying sward plane, while deferred lighting keeps the blade normal.
+  let grass = u32(misc.r * 255.0 + 0.5) == 2u && misc.g > 0.0;
+  if (grass && z > 0.0 && (rp.cfg.w & FLAG_TERRAIN) != 0u) {
+    let pos = worldFromLinear(pixelUv(src), z);
+    nrm = vec4f(octEncode(terrainNormalAt(pos.xz)), nrm.zw);
+  }
   textureStore(rtDepthOut, px, vec4f(z, 0.0, 0.0, 0.0));
   textureStore(rtNormalOut, px, vec4f(nrm.xy, nrm.z * mix(1.0, 0.4, wet), nrm.w));
 }

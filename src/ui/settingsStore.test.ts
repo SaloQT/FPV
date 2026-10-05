@@ -33,6 +33,7 @@ describe('defaults', () => {
     const d = defaultAppSettings();
     for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) expect(d[k as keyof AppSettings]).toEqual(v);
     expect(d.mouseCentering).toBe(0.6);
+    expect(d.invertY).toBe(true);
     expect(d.camVibration).toBe(0.15);
     expect(d.physicsHz).toBe(4000);
     expect(d.gamepad).toEqual(defaultGamepadConfig());
@@ -57,9 +58,9 @@ describe('patch and subscribe', () => {
     const store = new SettingsStore(new MemoryStorage());
     const seen: string[][] = [];
     store.subscribe((_s, changed) => void seen.push([...changed]));
-    store.patch({ fov: 120, invertY: true });
+    store.patch({ fov: 120, invertY: false });
     expect(store.get().fov).toBe(120);
-    expect(store.get().invertY).toBe(true);
+    expect(store.get().invertY).toBe(false);
     expect(seen).toEqual([['fov', 'invertY']]);
   });
 
@@ -202,10 +203,10 @@ describe('persistence', () => {
   it('writes a versioned payload and a second store loads it', () => {
     const mem = new MemoryStorage();
     const a = new SettingsStore(mem);
-    a.patch({ fov: 110, invertY: true, seed: 42, trackStyle: 'sprint', windSpeed: 7 });
+    a.patch({ fov: 110, invertY: false, seed: 42, trackStyle: 'sprint', windSpeed: 7 });
     expect(stored(mem).version).toBe(SETTINGS_VERSION);
     const b = new SettingsStore(mem);
-    expect(b.get()).toMatchObject({ fov: 110, invertY: true, seed: 42, trackStyle: 'sprint', windSpeed: 7 });
+    expect(b.get()).toMatchObject({ fov: 110, invertY: false, seed: 42, trackStyle: 'sprint', windSpeed: 7 });
   });
 
   it('round-trips every key that is persisted', () => {
@@ -253,11 +254,11 @@ describe('persistence', () => {
 
   it('validates and clamps what it loads and drops unknown keys', () => {
     const mem = new MemoryStorage();
-    mem.data.set(SETTINGS_KEY, JSON.stringify({ version: 1, settings: { fov: 9000, quality: 'nope', invertY: true, evil: 'x', renderScale: 0.5 } }));
+    mem.data.set(SETTINGS_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings: { fov: 9000, quality: 'nope', invertY: false, evil: 'x', renderScale: 0.5 } }));
     const s = new SettingsStore(mem).get();
     expect(s.fov).toBe(150);
     expect(s.quality).toBe(DEFAULT_SETTINGS.quality);
-    expect(s.invertY).toBe(true);
+    expect(s.invertY).toBe(false);
     expect(s.renderScale).toBe(0.5);
     expect('evil' in s).toBe(false);
   });
@@ -268,6 +269,19 @@ describe('persistence', () => {
     const s = new SettingsStore(mem).get();
     expect(s.fov).toBe(88);
     expect('vsync' in s).toBe(false);
+  });
+
+  it('turns on Invert vertical for old saves once, and preserves later opt-outs', () => {
+    for (const payload of [{ invertY: false, fov: 88 }, { version: 1, settings: { invertY: false, fov: 88 } }]) {
+      const mem = new MemoryStorage();
+      mem.data.set(SETTINGS_KEY, JSON.stringify(payload));
+      const store = new SettingsStore(mem);
+      expect(store.get()).toMatchObject({ invertY: true, fov: 88 });
+      expect(stored(mem).version).toBe(SETTINGS_VERSION);
+      expect(new SettingsStore(mem).get().invertY).toBe(true);
+      store.patch({ invertY: false });
+      expect(new SettingsStore(mem).get().invertY).toBe(false);
+    }
   });
 
   it('reads a newer version best-effort', () => {
@@ -318,7 +332,7 @@ describe('reset', () => {
   it('restores the defaults, clears storage and notifies with the changed keys', () => {
     const mem = new MemoryStorage();
     const store = new SettingsStore(mem);
-    store.patch({ fov: 70, invertY: true });
+    store.patch({ fov: 70, invertY: false });
     const seen: string[][] = [];
     store.subscribe((_s, changed) => void seen.push([...changed]));
     store.reset();

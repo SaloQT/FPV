@@ -1,0 +1,30 @@
+/* The AI pilots tab extras and the spectator race leaderboard. Same look as ui.css; kept separate so each file has one owner. */
+
+.fpv-brain-info { margin: 6px 0 0; }
+.fpv-brain-list { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 8px; }
+.fpv-brain-pick { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.fpv-brain-actions { display: flex; gap: 8px; }
+.fpv-row--list .fpv-row-ctl { flex-direction: column; align-items: flex-start; }
+
+.fpv-board {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  min-width: 260px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(15, 18, 25, 0.78);
+  color: #eef1f6;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.fpv-board[hidden] { display: none !important; }
+.fpv-board-title { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; color: #a0a9b8; margin-bottom: 4px; }
+.fpv-board-rows { margin: 0; padding-left: 20px; }
+.fpv-board-row { display: grid; grid-template-columns: 10px 1fr auto auto; gap: 8px; align-items: center; }
+.fpv-board-row--followed { color: #4db4ff; font-weight: 600; }
+.fpv-board-dot { width: 9px; height: 9px; border-radius: 50%; }
+.fpv-board-progress { color: #a0a9b8; font-size: 12px; }
+.fpv-board-time { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; min-width: 64px; text-align: right; }

@@ -25,10 +25,14 @@ export function wireSession(ctx: AppCtx): void {
   const { session, ui, audio, mods } = ctx;
   session.onStateChange = (state, prev) => {
     if (state === 'menu') {
-      if (session.started) ui.menu.showSettings();
+      // The track builder runs in the menu state with the menu hidden.
+      if (ctx.builder.active) ui.menu.hide();
+      else if (session.started) ui.menu.showSettings();
       else ui.menu.showStart();
     } else if (prev === 'menu') {
       ui.menu.hide();
+      // Flying again (Fly it, a brain race, a pad's menu button): the builder steps aside and the track stays.
+      ctx.builder.left();
     }
     if ((prev === 'crashed' || prev === 'finished') && (state === 'ready' || state === 'flying')) audio.reset();
     onStateChange(ctx, state, prev);
@@ -66,12 +70,14 @@ export function wireSession(ctx: AppCtx): void {
         break;
     }
   };
+  session.onTrackReset = () => ctx.brains.trackReset();
   wireFlow(ctx);
 }
 
 /** Everything that follows a setting live. Only the keys that changed are looked at. */
 export function wireSettings(ctx: AppCtx): () => void {
   const preview = createPreview(ctx);
+  ctx.preview = preview;
   const off = ctx.store.subscribe((s, changed) => {
     ctx.ui.menu.setSettings(s);
     preview.settingsChanged(changed);
@@ -91,7 +97,7 @@ export function wireSettings(ctx: AppCtx): () => void {
       applyWind(ctx);
       refreshColliders(ctx);
     }
-    if (changed.includes('rates')) ctx.physics.fc.setRates(rateProfileOf(s.rates));
+    if (changed.includes('rates') && !ctx.brains.holdsRates) ctx.physics.fc.setRates(rateProfileOf(s.rates));
   });
   applyBootTime(ctx);
   return off;
@@ -113,6 +119,9 @@ export function menuAction(ctx: AppCtx, action: MenuAction): void {
       break;
     case 'new-track':
       void newWorld(ctx, true);
+      break;
+    case 'open-builder':
+      ctx.builder.open();
       break;
     case 'reset-settings':
       ctx.store.reset();

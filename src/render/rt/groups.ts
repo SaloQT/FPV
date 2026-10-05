@@ -15,6 +15,9 @@ export interface RtGroups {
   probeCompact: Pair | null;
   latch: GPUBindGroup;
   trace: Partial<Record<Signal, Pair>>;
+  giHits: Pair | null;
+  giShade: Pair | null;
+  giVisibility: Pair | null;
   temporal: Partial<Record<Signal, Pair>>;
   /** [parity][iteration] */
   atrous: Partial<Record<Signal, [GPUBindGroup[], GPUBindGroup[]]>>;
@@ -85,7 +88,27 @@ export function buildGroups(s: GroupSources): RtGroups {
     });
   }) : null;
 
-  const groups: RtGroups = { aux, probe, probePlan, probeCompact, latch, trace: {}, temporal: {}, atrous: {} };
+  const splitGroup = (p: number, shade: boolean) => {
+    const lit = probes.sets[p ^ 1], hits = tex.giHits!;
+    return d.createBindGroup({ label: 'rt gi '+(shade ? 'shade' : 'hits')+' '+p, layout: (shade ? L.giShade : L.giHits)!, entries: [
+      buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims), view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
+      view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view),
+      view(8, shade ? tex.raw0.view : hits[0].view), view(9, shade ? tex.raw1.view : hits[1].view),
+      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), ...(shade ? [view(12, hits[0].view), view(13, hits[1].view),
+        ...(tex.giVisibility ? [view(14, tex.giVisibility[0].view), view(15, tex.giVisibility[1].view)] : [])] : []),
+    ] });
+  };
+  const giHits = tex.giHits ? both(p => splitGroup(p, false)) : null;
+  const giShade = tex.giHits ? both(p => splitGroup(p, true)) : null;
+  const giVisibility = tex.giVisibility ? both(p => {
+    const lit = probes.sets[p ^ 1], hits = tex.giHits!, visibility = tex.giVisibility!;
+    return d.createBindGroup({ label: 'rt gi visibility '+p, layout: L.giVisibility!, entries: [
+      buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims), view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
+      view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view), view(8, visibility[0].view), view(9, visibility[1].view),
+      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), view(12, hits[0].view), view(13, hits[1].view),
+    ] });
+  }) : null;
+  const groups: RtGroups = { aux, probe, probePlan, probeCompact, latch, giHits, giShade, giVisibility, trace: {}, temporal: {}, atrous: {} };
   for (const sig of SIGNALS) {
     const h = history[sig];
     if (!h) continue;

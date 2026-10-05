@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { TrackData, TrackGate, TrackObstacle, Vec3 } from '../../contracts';
 import { PATH_CLEARANCE, REGION_RADIUS, TIER_LIMITS, placeVegetation, type InstanceSet } from './placement';
 import { MAX_SLOPE_DEG, MIN_SOIL } from './placementRules';
 import { rockAssets } from './rockGen';
@@ -283,5 +284,51 @@ describe('placeVegetation without a track', () => {
     const a = placeVegetation(terrain, null, limits), b = placeVegetation(terrain, null, limits);
     sameInstances(a.plants, b.plants, limits.plants);
     sameInstances(a.rocks, b.rocks, a.rocks.count);
+  }, SLOW);
+});
+
+describe('placeVegetation around industrial obstacles and a tunnel', () => {
+  const { terrain, track } = testScene();
+  const fields = new TerrainFields(terrain);
+  const limits = { plants: 6000, rocks: 900 };
+
+  /** The race track with large composite obstacles and a tunnel gate set 14-20 m off the racing line, where plants would grow. */
+  function industrial(): TrackData {
+    const kinds: [TrackObstacle['kind'], Vec3][] = [['bridge', [22, 7, 5]], ['scaffold', [12, 6, 2]], ['container', [6.1, 5.2, 2.44]], ['tower', [5, 24, 5]], ['beam', [12, 5, 0.5]]];
+    const obstacles: TrackObstacle[] = [...track.obstacles];
+    const gates: TrackGate[] = [...track.gates];
+    const n = track.path.length;
+    kinds.forEach(([kind, size], k) => {
+      const i = Math.floor(((k + 0.5) / kinds.length) * n);
+      const a = track.path[i];
+      const b = track.path[(i + 1) % n];
+      const yaw = Math.atan2(-(b[0] - a[0]), -(b[2] - a[2]));
+      const x = a[0] + Math.cos(yaw) * (14 + size[0] / 2 * 0.2);
+      const z = a[2] - Math.sin(yaw) * (14 + size[0] / 2 * 0.2);
+      obstacles.push({ kind, pos: [x, fields.height(x, z), z], yaw, size });
+    });
+    const a = track.path[Math.floor(n * 0.3)];
+    gates.push({ index: gates.length, kind: 'tunnel', pos: [a[0] + 20, fields.height(a[0] + 20, a[2]) + 1.8, a[2]], yaw: 0.4, roll: 0, pitch: 0, width: 2.6, height: 2.4, depth: 8 });
+    return { ...track, gates, obstacles };
+  }
+
+  it('keeps plants and rocks off every keep-out disc, with several discs along the long structures', () => {
+    const t = industrial();
+    const discs = blockerDiscs(t);
+    expect(discs.length).toBeGreaterThan(t.gates.length + t.obstacles.length + 3);
+    const p = placeVegetation(terrain, t, limits);
+    const plants = natural(p.plants, p.obstacleTrees);
+    let worst = Infinity;
+    for (let i = 0; i < plants.count; i++) {
+      const plan = variantPlan(plants.variant[i]);
+      const reach = 0.8 * (plan ? Math.max(plan.crownR[0], plan.crownR[2]) : 0) * plants.scale[i] + 1;
+      for (const b of discs) worst = Math.min(worst, Math.hypot(plants.pos[i * 3] - b.x, plants.pos[i * 3 + 2] - b.z) - b.r - reach);
+    }
+    expect(worst).toBeGreaterThanOrEqual(-EPS);
+    worst = Infinity;
+    for (let i = 0; i < p.rocks.count; i++) {
+      for (const b of discs) worst = Math.min(worst, Math.hypot(p.rocks.pos[i * 3] - b.x, p.rocks.pos[i * 3 + 2] - b.z) - b.r - p.rocks.scale[i] - 0.5);
+    }
+    expect(worst).toBeGreaterThanOrEqual(-EPS);
   }, SLOW);
 });

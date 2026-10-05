@@ -1,11 +1,18 @@
 /**
  * World building: terrain, then a track that fits it. `generateTrack` throws when a terrain has no valid layout, so the
- * builder retries with other seeds, then other styles, then another terrain. Pure logic over injected generators.
+ * builder retries with other seeds, then other styles, then another terrain. A custom track (a track-builder recipe) keeps its
+ * style and retries the recipe's seed instead. Pure logic over injected generators.
  */
-import type { ProgressFn, RenderQuality, TerrainData, TerrainParams, TerrainSampler, TrackData, TrackParams } from '../contracts';
+import { GENERATED_STYLES, type GeneratedStyle, type ProgressFn, type RenderQuality, type TerrainData, type TerrainParams, type TerrainSampler, type TrackData, type TrackParams, type TrackRecipe } from '../contracts';
+import { sanitizeRecipe } from '../world/track/recipe';
 
 export type TrackStyle = TrackData['style'];
-export const ALL_STYLES: readonly TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
+export type { GeneratedStyle };
+export const ALL_STYLES: readonly GeneratedStyle[] = GENERATED_STYLES;
+/** The styles the game shipped with: a request for one falls back only to the others of these, so it stays a plain course. */
+export const ORIGINAL_STYLES: readonly GeneratedStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
+/** The styles built from manoeuvres: a request for one falls back to the other feature styles first, then to the originals. */
+export const FEATURE_STYLES: readonly GeneratedStyle[] = ['technical', 'acro', 'industrial'];
 
 /** Seeds tried with the requested style before falling back to other styles. */
 export const SEED_ATTEMPTS = 8;
@@ -27,6 +34,8 @@ export interface TrackRequest {
   gateCount: number;
   laps: number;
   difficulty: number;
+  /** Style 'custom': the track builder's recipe (its seed, gate count, laps and difficulty win over the fields above). */
+  recipe?: TrackRecipe;
 }
 
 export interface WorldRequest extends TrackRequest {
@@ -61,26 +70,49 @@ export interface Attempt {
   style: TrackStyle;
 }
 
-/** The order in which (seed, style) pairs are tried on one terrain. */
+/** Styles tried, in order, after every seed of `style` failed. */
+export function fallbackStyles(style: TrackStyle): GeneratedStyle[] {
+  if (style === 'custom') return [];
+  const family = ORIGINAL_STYLES.includes(style) ? ORIGINAL_STYLES : [...FEATURE_STYLES, ...ORIGINAL_STYLES];
+  return family.filter((s) => s !== style);
+}
+
+/**
+ * The order in which (seed, style) pairs are tried on one terrain. A custom track only retries seeds (seed + i, as an unsigned
+ * 32-bit recipe seed): another style would throw the recipe away.
+ */
 export function* trackAttempts(seed: number, style: TrackStyle): Generator<Attempt> {
+  if (style === 'custom') {
+    for (let i = 0; i < SEED_ATTEMPTS; i++) yield { seed: (seed + i) >>> 0, style };
+    return;
+  }
   for (let i = 0; i < SEED_ATTEMPTS; i++) yield { seed: seed + i, style };
-  for (const other of ALL_STYLES) {
-    if (other === style) continue;
+  for (const other of fallbackStyles(style)) {
     for (let i = 0; i < STYLE_FALLBACK_SEEDS; i++) yield { seed: seed + i, style: other };
   }
+}
+
+/** The generator parameters (and the request a share link would carry) for one attempt. */
+function attemptRequest(req: TrackRequest, a: Attempt): TrackRequest {
+  const base = { seed: a.seed, style: a.style, gateCount: req.gateCount, laps: req.laps, difficulty: req.difficulty };
+  if (a.style !== 'custom') return base;
+  return { ...base, recipe: { ...sanitizeRecipe(req.recipe), seed: a.seed } };
 }
 
 /** Generates a track on `sampler`, retrying per `trackAttempts`. Throws an Error listing the failures when nothing fits. */
 export function buildTrack(sampler: TerrainSampler, req: TrackRequest, deps: Pick<WorldDeps, 'generateTrack'>): TrackResult {
   const failures: string[] = [];
   let attempts = 0;
-  for (const a of trackAttempts(req.seed, req.style)) {
+  const custom = req.style === 'custom';
+  const first = custom ? sanitizeRecipe(req.recipe).seed : req.seed;
+  for (const a of trackAttempts(first, req.style)) {
     attempts++;
     try {
-      const made = deps.generateTrack({ seed: a.seed, style: a.style, gateCount: req.gateCount, laps: req.laps, difficulty: req.difficulty }, sampler);
+      const request = attemptRequest(req, a);
+      const made = deps.generateTrack({ ...request }, sampler);
       // The laps setting is for circuits: on a point-to-point track the timer would send the pilot back to gate 0 for every extra lap.
       const track = made.closed || made.laps <= 1 ? made : { ...made, laps: 1 };
-      return { track, seed: a.seed, style: a.style, attempts, request: { seed: a.seed, style: a.style, gateCount: req.gateCount, laps: req.laps, difficulty: req.difficulty } };
+      return { track, seed: a.seed, style: a.style, attempts, request };
     } catch (e) {
       failures.push(`${a.style}/${a.seed}: ${(e as Error).message}`);
     }

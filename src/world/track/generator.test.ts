@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { TerrainSampler, TrackData } from '../../contracts';
+import type { GeneratedStyle, TerrainSampler, TrackData } from '../../contracts';
 import { generateTrack } from './generator';
 import { STYLE_SPECS, type TrackStyle } from './styles';
 import { makeTestSampler } from './testTerrain';
@@ -7,7 +7,7 @@ import { validateTrack } from './validate';
 
 const SLOW = 60000;
 
-const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
+const STYLES: GeneratedStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
 const SEEDS = 200;
 
 let sampler: TerrainSampler;

@@ -1,5 +1,6 @@
 import type { RaceSnapshot } from '../game/gateTimer';
 import { formatSplit, formatTime } from '../game/units';
+import { leaderRows, type LeaderEntry, type LeaderRow } from './leaderboard';
 
 export interface FinishRow {
   label: string;
@@ -67,4 +68,37 @@ export function buildFinishView(r: RaceSnapshot): FinishView {
     rows,
     splits,
   };
+}
+
+/** The leaderboard part of the result card: the track's board around the finish just flown. */
+export interface FinishBoardView {
+  title: string;
+  /** "New track record!", "3rd of 12", ... (empty when nothing was recorded). */
+  headline: string;
+  rows: LeaderRow[];
+  /** The track came from the track builder: the card offers the way back to it. */
+  backToBuilder: boolean;
+}
+
+export function ordinal(n: number): string {
+  const t = n % 100;
+  const s = t >= 11 && t <= 13 ? 'th' : n % 10 === 1 ? 'st' : n % 10 === 2 ? 'nd' : n % 10 === 3 ? 'rd' : 'th';
+  return `${n}${s}`;
+}
+
+/**
+ * The top `limit` finishes of a board, plus the fresh one in its place when it ranked below them. `rank` is the fresh finish's
+ * place from 1 (0: not kept, or nothing recorded).
+ */
+export function finishBoardView(title: string, entries: readonly LeaderEntry[], fresh: LeaderEntry | null, rank: number, backToBuilder: boolean, limit = 5): FinishBoardView {
+  const all = leaderRows(entries, fresh);
+  const rows = all.slice(0, limit);
+  if (rank > limit && all[rank - 1] !== undefined) rows.push(all[rank - 1]);
+  let headline = '';
+  if (fresh !== null) {
+    if (rank === 1) headline = entries.length > 1 ? 'New track record!' : 'First finish on this track';
+    else if (rank > 1) headline = `${ordinal(rank)} of ${entries.length} on this track`;
+    else headline = 'Not fast enough for the leaderboard';
+  }
+  return { title, headline, rows, backToBuilder };
 }

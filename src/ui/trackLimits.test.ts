@@ -5,7 +5,7 @@ import { describeStyle, effectiveGates, effectiveLaps, gateRange, lapsApply } fr
 
 const SLOW = 60000;
 
-const STYLES = ['race', 'freestyle', 'mountain', 'sprint'] as const;
+const STYLES = ['race', 'freestyle', 'mountain', 'sprint', 'technical', 'acro', 'industrial'] as const;
 
 describe('track limits', () => {
   it('clamp the gate count into what the style builds', () => {
@@ -20,11 +20,14 @@ describe('track limits', () => {
     expect(describeStyle('race')).toBe('Circuit, 10 to 18 gates, 500 to 900 m a lap');
     expect(describeStyle('sprint')).toBe('Point to point, 8 to 12 gates, 300 to 500 m');
     expect(describeStyle('mountain')).toBe('Point to point, 15 to 25 gates, 1.5 to 3 km');
+    expect(describeStyle('technical')).toBe('Circuit, 10 to 24 gates, 350 to 1400 m a lap');
+    expect(describeStyle('acro')).toBe('Point to point, 6 to 18 gates, 300 to 1800 m');
+    expect(describeStyle('industrial')).toBe('Circuit, 10 to 22 gates, 450 to 1600 m a lap');
   });
 
   it('only circuits take laps', () => {
-    expect(lapsApply('race')).toBe(true);
-    for (const s of ['freestyle', 'mountain', 'sprint'] as const) {
+    for (const s of ['race', 'technical', 'industrial'] as const) expect(lapsApply(s)).toBe(true);
+    for (const s of ['freestyle', 'mountain', 'sprint', 'acro'] as const) {
       expect(lapsApply(s)).toBe(false);
       expect(effectiveLaps(s, 5)).toBe(1);
     }

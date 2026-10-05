@@ -3,7 +3,7 @@
  * and colliders, the start pad, wind, the session's track. All entry points leave the app consistent or throw before
  * touching it, so a failed rebuild keeps the old world flying.
  */
-import type { ProgressFn, TrackData } from '../contracts';
+import type { ProgressFn, TrackData, TrackRecipe } from '../contracts';
 import { generateTerrainAsync, createTerrainSampler } from '../world/terrain';
 import { generateTrack, trackColliders } from '../world/track';
 import type { AppSettings } from '../ui/settingsSchema';
@@ -25,6 +25,11 @@ const wholePercent = (d: number): number => Math.round(d * 100) / 100;
 
 export function trackRequest(s: Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty'>, seed: number = s.seed): TrackRequest {
   return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: wholePercent(s.difficulty) };
+}
+
+/** The request that builds a track-builder recipe: the generator takes the seed, gates, laps and difficulty from the recipe itself. */
+export function recipeRequest(recipe: TrackRecipe): TrackRequest {
+  return { seed: recipe.seed, style: 'custom', gateCount: recipe.gateCount, laps: recipe.laps, difficulty: recipe.difficulty, recipe };
 }
 
 /** Wind from the settings into the model, then to physics and the render modules (objects and vegetation keep the arrays). */
@@ -55,6 +60,8 @@ export function refreshColliders(ctx: AppCtx): void {
   const colliders = trackColliders(world.track, world.sampler);
   for (const c of ctx.mods.vegetation.vegetationColliders()) colliders.push(c);
   ctx.physics.setColliders(colliders);
+  ctx.colliders = colliders;
+  ctx.brains.setColliders(colliders);
 }
 
 /** Puts `world` on screen and in the physics, on the pad, disarmed. */
@@ -98,11 +105,16 @@ async function withOverlay(ctx: AppCtx, title: string, job: (progress: (stage: s
 
 /**
  * New track on the same terrain (N key, menu "new track"): the seed moves on by one. If the settings now ask for another
- * world seed or quality, the whole world is rebuilt instead.
+ * world seed or quality, the whole world is rebuilt instead. A track-builder track keeps its recipe and terrain: only the
+ * recipe's seed moves on.
  */
 export function newTrack(ctx: AppCtx): Promise<boolean> {
   const s = ctx.store.get();
   const w = ctx.world;
+  const recipe = w.track.recipe;
+  if (recipe !== undefined) {
+    return withOverlay(ctx, 'Placing track', async () => ({ ...w, ...buildTrack(w.sampler, recipeRequest({ ...recipe, seed: (recipe.seed + 1) >>> 0 }), worldDeps) }));
+  }
   const terrainChanged = s.quality !== w.quality || s.seed !== w.baseSeed;
   if (terrainChanged) return newWorld(ctx);
   const seed = w.seed + 1;

@@ -1,3 +1,4 @@
+import type { PilotRace, StepPilot } from '../ai/brainPilot';
 import type { Physics, QuadState, Quat, StickInput, TrackData, Vec3 } from '../contracts';
 import type { InputAction, InputSource } from '../input/types';
 import { createPlacement, padPlacement, respawnPlacement, type GroundHeightFn, type Placement } from './checkpoint';
@@ -11,6 +12,7 @@ import {
 } from './sessionTypes';
 import { GameStateMachine, type GameEvent, type GameState } from './stateMachine';
 import { FixedStepper } from './stepper';
+import { StuckWatch } from './stuck';
 
 const IDLE_SPEED = 0.3;
 const IDLE_SPIN = 0.5;
@@ -50,6 +52,10 @@ export class GameSession {
   onAction: ((action: InputAction) => void) | null = null;
   /** Fired as each beep of the race start comes up: 3, 2, 1, then 0 for GO. */
   onCountdown: ((n: number) => void) | null = null;
+  /** Fired when the race restarts from the pad (restart, new track, a fresh start after a finish). */
+  onTrackReset: (() => void) | null = null;
+  /** Flies the quad in place of the pilot's sticks (a trained brain); null hands the sticks back. */
+  pilot: StepPilot | null = null;
 
   private readonly machine = new GameStateMachine();
   private readonly now: () => number;
@@ -57,6 +63,7 @@ export class GameSession {
   private readonly render: QuadState;
   private readonly placement = createPlacement();
   private readonly countdown = new StartCountdown();
+  private readonly pilotRace: PilotRace = { track: null, nextGate: 0 };
   private readonly prevPos: Vec3 = [0, 0, 0];
   private readonly prevVel: Vec3 = [0, 0, 0];
   private readonly prevAngVel: Vec3 = [0, 0, 0];
@@ -68,6 +75,8 @@ export class GameSession {
   private armedTime = 0;
   private crashTime = -Infinity;
   private wasCrashed = false;
+  /** A brain pilot is only respawned once its quad is properly stuck, so it gets to recover from a knock. */
+  private readonly stuck = new StuckWatch();
   private idleTime = 0;
   private airArm = false;
   private throttleHighAt = -Infinity;
@@ -160,6 +169,7 @@ export class GameSession {
     this.armedTime = 0;
     this.place(padPlacement(this.track, this.placement), 'reset');
     this.countdownPending = this.raceStart;
+    this.onTrackReset?.();
   }
 
   /** Consumes one input action. `update` calls this for everything the input source queued. */
@@ -214,6 +224,7 @@ export class GameSession {
     for (const action of this.input.takeActions()) this.handleAction(action);
     this.tickCountdown(dt);
     this.holdAfterFinish();
+    this.armForPilot();
     cmd.armed = this.input.armed;
     if (this.machine.state !== 'paused') this.clock.advance(dt);
     this.stats.stepsThisFrame = 0;
@@ -328,6 +339,13 @@ export class GameSession {
     cmd.throttle = HOVER_THROTTLE;
   }
 
+  /** A brain arms the quad itself on the pad once the race start lets it, and after an auto-disarm. */
+  private armForPilot(): void {
+    if (!this.pilot || this.input.armed || this.countdown.locked) return;
+    const st = this.machine.state;
+    if (st === 'ready' || st === 'flying') this.input.setArmed(true);
+  }
+
   /** Teleports the quad. A mid-air checkpoint arms it on the spot, with hover throttle once the flight controller accepted it. */
   private place(p: Placement, event: GameEvent | null): void {
     this.physics.reset(p.pos, p.yaw);
@@ -339,12 +357,15 @@ export class GameSession {
     this.stepper.reset();
     this.wasCrashed = false;
     this.crashTime = -Infinity;
+    this.stuck.reset(s);
     this.idleTime = 0;
     this.countdown.cancel();
     this.airArm = p.airborne;
     this.input.setThrottle(0);
+    this.input.recenter();
     this.input.setArmed(p.airborne);
     this.cmd.armed = p.airborne;
+    this.pilot?.reset();
     this.send(event ?? (p.airborne ? 'respawn-air' : 'respawn-ready'));
   }
 
@@ -356,6 +377,12 @@ export class GameSession {
     copy3(this.prevAngVel, s.angVel);
     for (let i = 0; i < 4; i++) this.prevQuat[i] = s.quat[i];
     const t = this.simTime;
+    if (this.pilot && this.machine.state !== 'finished') {
+      const race = this.pilotRace;
+      race.track = this.track;
+      race.nextGate = this.timer.nextGate;
+      this.pilot.control(s, cmd, race, dt);
+    }
     if (this.airArm) cmd.throttle = 0;
     this.physics.step(dt, cmd);
     this.simTime = t + dt;
@@ -380,10 +407,25 @@ export class GameSession {
     const s = this.physics.state;
     if (s.armed) this.armedTime += simDt;
     const launching = s.armed && !this.cmd.turtle && this.cmd.throttle > TAKEOFF_THROTTLE;
-    if (this.machine.state === 'ready') {
+    const state = this.machine.state;
+    if (this.pilot && !this.airArm && (state === 'flying' || state === 'crashed')) {
+      if (this.stuck.update(s, simDt)) {
+        this.respawn();
+        return;
+      }
+    } else {
+      this.stuck.reset(s);
+    }
+    if (state === 'ready') {
       if (launching) this.send('takeoff');
-    } else if (this.machine.state === 'crashed') {
-      if (this.simTime - this.crashTime >= RESPAWN_OFFER_S) {
+    } else if (state === 'crashed') {
+      if (this.pilot) {
+        // The brain flies on after a knock: back to flying as soon as the hit is over and it has throttle up.
+        if (!s.crashed && launching) {
+          this.send('takeoff');
+          return;
+        }
+      } else if (this.simTime - this.crashTime >= RESPAWN_OFFER_S) {
         if (this.autoRespawn) {
           this.respawn();
           return;

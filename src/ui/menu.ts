@@ -1,13 +1,14 @@
 import { DEFAULT_BINDINGS, type Bindings } from '../input/bindings';
 import { skyReadout, hourOf } from './clockModel';
 import { blurActive, el, setHidden, setText } from './dom';
+import { brainTab, type BrainMenuHost } from './menuBrains';
 import { extendTabs } from './menuExtras';
 import type { ControlHost, LiveSky, PadView } from './menuHost';
 import type { MenuAction, MenuPreset, TabId } from './menuSchema';
 import { SettingsPanel, type SettingsOrigin } from './menuSettings';
 import { StartPanel } from './menuStart';
 import { buildTabs } from './menuTabs';
-import { shareUrl, shareWorld, type ShareWorld } from './seedModel';
+import { menuShareUrl, type SharedWorld } from './seedModel';
 import { PilotOptionsStore } from './pilotOptions';
 import { sanitizeSettings, type AppSettings } from './settingsSchema';
 import type { PreviewState } from './trackPreviewModel';
@@ -33,6 +34,8 @@ export interface MenuOptions {
   options?: PilotOptionsStore;
   /** The address share links are built on; defaults to the page's own. */
   shareBase?: () => string;
+  /** The app's trained-brain hub; adds the AI pilots tab. */
+  brains?: BrainMenuHost;
 }
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]';
@@ -50,7 +53,7 @@ export class MenuUI {
   private origin: SettingsOrigin = 'pause';
   private frame = 0;
   private live: (() => LiveSky | null) | null = null;
-  private sharing: (() => ShareWorld | null) | null = null;
+  private sharing: (() => SharedWorld) | null = null;
   private readonly options: PilotOptionsStore;
   private readonly clock = el('div', 'fpv-menu-clock');
   private readonly clockWhen = el('strong', 'fpv-menu-clock-time', '');
@@ -68,10 +71,12 @@ export class MenuUI {
       patchOptions: (patch) => this.options.patch(patch),
       onOptions: (fn) => this.options.subscribe(fn),
       live: () => this.live?.() ?? null,
-      shareLink: () => shareUrl((opts.shareBase ?? (() => location.href))(), shareWorld(this.settings, this.sharing?.() ?? null)),
+      shareLink: () => menuShareUrl((opts.shareBase ?? (() => location.href))(), this.settings, this.sharing?.() ?? null),
     };
-    this.start = new StartPanel(host, opts.bindings ?? DEFAULT_BINDINGS, () => opts.onAction('start'), () => this.openSettings('start'));
-    this.panel = new SettingsPanel(extendTabs(buildTabs(opts.presets), opts.presets), host, () => this.back());
+    this.start = new StartPanel(host, opts.bindings ?? DEFAULT_BINDINGS, () => opts.onAction('start'), () => this.openSettings('start'), () => opts.onAction('open-builder'));
+    const tabs = extendTabs(buildTabs(opts.presets), opts.presets);
+    this.panel = new SettingsPanel(opts.brains ? [...tabs, brainTab(opts.brains)] : tabs, host, () => this.back());
+    this.addBuilderButton();
     this.clock.append(this.clockWhen, this.clockSky);
     this.element = el('div', 'fpv-menu', this.start.root, this.panel.root, this.clock);
     this.element.addEventListener('keydown', (e) => this.trapTab(e));
@@ -99,8 +104,11 @@ export class MenuUI {
     this.live = live;
   }
 
-  /** The world share links describe (terrain seed, the track's own seed and request); null falls back to the settings. */
-  setSharedWorld(world: (() => ShareWorld | null) | null): void {
+  /**
+   * The world share links describe (terrain seed, the track's own seed and request); null falls back to the settings, and a track
+   * from a file links to the builder on its terrain.
+   */
+  setSharedWorld(world: (() => SharedWorld) | null): void {
     this.sharing = world;
   }
 
@@ -126,6 +134,19 @@ export class MenuUI {
   dispose(): void {
     cancelAnimationFrame(this.frame);
     this.element.remove();
+  }
+
+  /** The pause dialog's way into the track builder: a footer button beside Restart run. */
+  private addBuilderButton(): void {
+    const foot = this.panel.root.querySelector('.fpv-panel-foot');
+    if (foot === null) return;
+    const b = el('button', 'fpv-btn fpv-btn--default', 'Track builder');
+    b.type = 'button';
+    b.title = 'Design a track from variables, race brains on it and keep leaderboards';
+    b.addEventListener('click', () => this.opts.onAction('open-builder'));
+    const spacer = foot.querySelector('.fpv-spacer');
+    if (spacer !== null) spacer.after(b);
+    else foot.append(b);
   }
 
   private openSettings(origin: SettingsOrigin): void {

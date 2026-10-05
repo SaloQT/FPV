@@ -27,14 +27,22 @@ struct BvhStackEntry { node : u32, entry : f32 }
 fn traceBvh(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> BvhHit {
   var best = BvhHit(tMax, NO_NODE);
   let inv = 1.0 / select(d, vec3f(1e-8), abs(d) < vec3f(1e-8));
-  var stack : array<BvhStackEntry, 32>;
+  var stack : array<u32, 32>;
   var sp = 0u;
-  if (rp.scene.y != NO_NODE) { stack[sp] = BvhStackEntry(rp.scene.y, 0.0); sp++; }
-  if (rp.scene.x != NO_NODE) { stack[sp] = BvhStackEntry(rp.scene.x, 0.0); sp++; }
+  if (rp.scene.y != NO_NODE) { stack[sp] = rp.scene.y; sp++; }
+  if (rp.scene.x != NO_NODE) { stack[sp] = rp.scene.x; sp++; }
   var visits = 0u;
-  while (sp > 0u && visits < cap) {
-    sp--;
-    let top = stack[sp];
+  var descend = false;
+  var top : BvhStackEntry;
+  while ((sp > 0u || descend) && visits < cap) {
+    if (!descend) {
+      sp--;
+      let popped = stack[sp];
+      var entry = 0.0;
+      if (popped != rp.scene.x && popped != rp.scene.y) { entry = nodeEntry(popped, o, inv, tMax); }
+      top = BvhStackEntry(popped, entry);
+    }
+    descend = false;
     if (top.entry > best.t) { continue; }
     visits++;
     let n = top.node;
@@ -56,12 +64,14 @@ fn traceBvh(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> BvhHit {
     let nearT = select(tr, tl, leftFirst);
     let farT = select(tl, tr, leftFirst);
     if (farT < NO_HIT) {
-      stack[sp] = BvhStackEntry(select(n0.w, n0.w + 1u, leftFirst), farT);
+      stack[sp] = select(n0.w, n0.w + 1u, leftFirst);
       sp++;
     }
     if (nearT < NO_HIT) {
-      stack[sp] = BvhStackEntry(select(n0.w + 1u, n0.w, leftFirst), nearT);
-      sp++;
+      // The near child is the very next pop. Carry it directly while the far
+      // child stays on the stack; preserve the original overflow check above.
+      top = BvhStackEntry(select(n0.w + 1u, n0.w, leftFirst), nearT);
+      descend = true;
     }
   }
   return best;
@@ -77,10 +87,15 @@ fn traceBvhTransmit(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> f32 {
   if (rp.scene.x != NO_NODE) { stack[sp] = rp.scene.x; sp++; }
   var tau = 0.0;
   var visits = 0u;
-  while (sp > 0u && visits < cap) {
-    sp--;
+  var descend = false;
+  var n = 0u;
+  while ((sp > 0u || descend) && visits < cap) {
+    if (!descend) {
+      sp--;
+      n = stack[sp];
+    }
+    descend = false;
     visits++;
-    let n = stack[sp];
     let n0 = bvhNodes[n * 2u];
     let count = bvhNodes[n * 2u + 1u].w;
     if (count > 0u) {
@@ -104,8 +119,8 @@ fn traceBvhTransmit(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> f32 {
       sp++;
     }
     if (select(tr, tl, leftFirst) < NO_HIT) {
-      stack[sp] = select(n0.w + 1u, n0.w, leftFirst);
-      sp++;
+      n = select(n0.w + 1u, n0.w, leftFirst);
+      descend = true;
     }
   }
   return exp(-tau);

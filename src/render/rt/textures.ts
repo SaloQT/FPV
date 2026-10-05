@@ -4,7 +4,7 @@ export interface Img { texture: GPUTexture; view: GPUTextureView }
 /** Temporal state of one denoised signal: accumulated value (rgba16f) and moments (m1, m2, history length, variance), both ping-ponged. */
 export interface History { hist: [Img, Img]; mom: [Img, Img] }
 
-const BYTES_PER_TEXEL = { r32float: 4, rgba16float: 8 } as const;
+const BYTES_PER_TEXEL = { r32float: 4, rg32float: 8, rgba16float: 8 } as const;
 
 export class RtTextures {
   readonly auxDepth: [Img, Img];
@@ -18,6 +18,8 @@ export class RtTextures {
   readonly shadow: History;
   readonly gi: History;
   spec: History | null = null;
+  giHits: [Img, Img] | null = null;
+  giVisibility: [Img, Img] | null = null;
   /**
    * Per-texel a-trous scratch (one f32 per RT texel): the neighbourhood moment sum, which every iteration of a signal would otherwise
    * recompute from the same moments texture. A f32 buffer round-trips a f32 value bit-exactly, so the later iterations read back exactly
@@ -42,6 +44,14 @@ export class RtTextures {
   /** The specular history is only allocated once the quality tier asks for it. */
   ensureSpec(): History {
     return (this.spec ??= this.history('spec'));
+  }
+
+  ensureGiHits(): [Img, Img] {
+    return (this.giHits ??= [this.make('rt gi hit 0', 'rg32float'), this.make('rt gi hit 1', 'rg32float')]);
+  }
+
+  ensureGiVisibility(): [Img, Img] {
+    return (this.giVisibility ??= [this.make('rt gi visibility 0', 'r32float'), this.make('rt gi visibility 1', 'r32float')]);
   }
 
   private history(name: string): History {

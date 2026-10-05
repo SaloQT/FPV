@@ -11,9 +11,10 @@ import {
   MIN_BOTTOM_CLEARANCE,
   MIN_GATE_SPACING,
   MIN_PATH_AGL,
-  STYLE_SPECS,
   WATER_MARGIN,
 } from './styles';
+import { trackSpec } from './recipe';
+import { checkFeatureCurvature, checkFeatureGates, checkFeatureSeparation, checkFramesClear, featureZones } from './validateFeatures';
 import { MAX_OBSTACLES, MIN_PATH_SEPARATION, SEPARATION_PROBE, checkGates, checkSeparation, checkStartAndObstacles } from './validateParts';
 
 export interface TrackStats {
@@ -48,7 +49,8 @@ export function validateTrack(track: TrackData, sampler: TerrainSampler, kappa?:
   const err = (m: string): void => {
     if (errors.length < 40) errors.push(m);
   };
-  const spec = STYLE_SPECS[track.style];
+  const spec = trackSpec(track);
+  const features = spec.features === true;
   const d = sampler.data;
   const extent = d.resolution * d.cellSize;
   const cx = d.origin[0] + extent / 2;
@@ -77,6 +79,9 @@ export function validateTrack(track: TrackData, sampler: TerrainSampler, kappa?:
   if (track.closed !== spec.closed) err(`closed flag ${track.closed} but ${track.style} tracks are ${spec.closed ? 'closed' : 'open'}`);
   if (track.style === 'race' && gates[0]?.kind !== 'start') err('race track must begin with a start gate');
   if (track.style === 'sprint' && gates[n - 1]?.kind !== 'finish') err('sprint track must end with a finish gate');
+  if (features && gates[0]?.kind !== 'start') err(`${track.style} track must begin with a start gate`);
+  if (features && !track.closed && gates[n - 1]?.kind !== 'finish') err(`open ${track.style} track must end with a finish gate`);
+  if (track.style === 'custom' && !track.recipe) err('custom track without its recipe');
   if (!Number.isInteger(track.laps) || track.laps < 1) err(`laps ${track.laps} is not a positive integer`);
   if (m < 10 || n === 0) {
     err('path or gates missing');
@@ -97,8 +102,10 @@ export function validateTrack(track: TrackData, sampler: TerrainSampler, kappa?:
     if (sampler.heightAt(g.pos[0], g.pos[2]) < waterFloor - 1e-6) err(`gate ${i}: in or next to water`);
     const slope = gateSiteSlope(sampler, g.pos[0], g.pos[2]);
     stats.maxGateSlopeDeg = Math.max(stats.maxGateSlopeDeg, (slope * 180) / Math.PI);
-    if (slope > (dive ? MAX_DIVE_GATE_SLOPE : MAX_GATE_SLOPE) + 1e-3) err(`gate ${i}: site slope ${((slope * 180) / Math.PI).toFixed(1)} deg`);
+    // Dives and drop rings are in the air, so they may stand over steeper ground (the layout picks their sites the same way).
+    if (slope > (dive || g.kind === 'drop' ? MAX_DIVE_GATE_SLOPE : MAX_GATE_SLOPE) + 1e-3) err(`gate ${i}: site slope ${((slope * 180) / Math.PI).toFixed(1)} deg`);
     if (Math.hypot(g.pos[0] - cx, g.pos[2] - cz) > spec.corridor * extent + 1e-3) err(`gate ${i}: outside the ${spec.corridor} extent corridor`);
+    if (features) continue;
     if (!dive && g.pitch !== 0) err(`gate ${i}: only dive gates may be pitched`);
     for (let j = 0; j < i; j++) {
       const s = Math.hypot(g.pos[0] - gates[j].pos[0], g.pos[1] - gates[j].pos[1], g.pos[2] - gates[j].pos[2]);
@@ -142,12 +149,19 @@ export function validateTrack(track: TrackData, sampler: TerrainSampler, kappa?:
   if (track.length < spec.minLength || track.length > spec.maxLength) err(`length ${track.length.toFixed(0)} m outside ${spec.minLength}..${spec.maxLength}`);
 
   const k = kappa ?? pathCurvature(path, track.closed, 2);
-  for (let i = 0; i < m; i++) if (k[i] > stats.maxCurvature) stats.maxCurvature = k[i];
-  if (stats.maxCurvature > MAX_CURVATURE) err(`path curvature ${stats.maxCurvature.toFixed(3)} exceeds ${MAX_CURVATURE.toFixed(3)} (radius ${(1 / stats.maxCurvature).toFixed(1)} m)`);
-
   const index = new PathIndex(path);
+  const zones = features ? featureZones(track, index) : null;
+  // On a feature track maxCurvature is the tightest turn outside every zone; the zones have their own limits.
+  for (let i = 0; i < m; i++) if (k[i] > stats.maxCurvature && (!zones || zones.sampleZone[i] < 0)) stats.maxCurvature = k[i];
+  if (zones) checkFeatureCurvature(k, zones, err);
+  else if (stats.maxCurvature > MAX_CURVATURE) err(`path curvature ${stats.maxCurvature.toFixed(3)} exceeds ${MAX_CURVATURE.toFixed(3)} (radius ${(1 / stats.maxCurvature).toFixed(1)} m)`);
+
   checkGates(track, sampler, index, err);
-  checkSeparation(track, index, stats, err);
+  if (zones) {
+    checkFeatureGates(track, sampler, zones, stats, err);
+    checkFeatureSeparation(track, index, zones, stats, err);
+    checkFramesClear(track, sampler, index, err);
+  } else checkSeparation(track, index, stats, err);
   checkStartAndObstacles(track, sampler, index, stats, err);
   if (outside) err('path leaves the corridor');
   return { ok: errors.length === 0, errors, stats };

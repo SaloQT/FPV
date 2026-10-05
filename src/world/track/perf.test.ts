@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import type { TrackParams } from '../../contracts';
 import { generateTrack } from './generator';
+import { randomRecipe } from './recipe';
 import type { TrackStyle } from './styles';
 import { makeTestSampler } from './testTerrain';
 import { validateTrack } from './validate';
 
-const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint'];
+const STYLES: TrackStyle[] = ['race', 'freestyle', 'mountain', 'sprint', 'technical', 'acro', 'industrial'];
 /** Process CPU time, not wall clock: a test run in parallel with other CPU-bound jobs waits for a core without using one. */
 const BUDGET_CPU_MS = 500;
 const REPEATS = 3;
@@ -35,6 +37,18 @@ describe('performance on a 1024 x 1024 terrain', () => {
         expect(best, `${style} seed ${seed}`).toBeLessThan(BUDGET_CPU_MS);
         expect(gates).toBeGreaterThanOrEqual(6);
       }
+    }
+  }, 120_000);
+
+  it('generates custom recipe tracks in under 500 ms of CPU time each', () => {
+    for (let s = 1; s <= 8; s++) {
+      const params: TrackParams = { seed: 0, style: 'custom', recipe: randomRecipe(s) };
+      let best = Infinity;
+      for (let r = 0; r < REPEATS; r++) {
+        best = Math.min(best, cpuMs(() => generateTrack(params, sampler)));
+        if (best < BUDGET_CPU_MS / 4) break;
+      }
+      expect(best, `recipe ${s}`).toBeLessThan(BUDGET_CPU_MS);
     }
   }, 120_000);
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { hashSeed, MAX_SEED, parseSeed, randomSeed, RANDOM_SEED_RANGE, seedFieldText, seedNumberNote, shareUrl, shareWorld, type ShareWorld } from './seedModel';
+import { defaultRecipe, randomRecipe, recipeKey } from '../world/track/recipe';
+import {
+  decodeRecipe, encodeRecipe, fromBase64Url, hashSeed, MAX_SEED, menuShareUrl, parseSeed, randomSeed, RANDOM_SEED_RANGE, seedFieldText, seedNumberNote, shareUrl, shareWorld,
+  toBase64Url, type ShareWorld,
+} from './seedModel';
 
 describe('parseSeed', () => {
   it('reads plain numbers as written', () => {
@@ -96,5 +100,74 @@ describe('shareWorld', () => {
   it('prefers the world on screen', () => {
     const w: ShareWorld = { terrainSeed: 7, trackSeed: 10, style: 'freestyle', gateCount: 12, laps: 1, difficulty: 0.5, quality: 'low' };
     expect(shareWorld(s, w)).toBe(w);
+  });
+});
+
+describe('menuShareUrl', () => {
+  const s = { seed: 7, trackStyle: 'race' as const, gateCount: 12, laps: 3, difficulty: 0.5, quality: 'low' as const };
+
+  it('links a file track to the builder on its own terrain, not to the settings world', () => {
+    const u = new URL(menuShareUrl('https://x.test/?cam=free', s, { fileTrack: true, terrainSeed: 99, quality: 'high' }));
+    expect(Object.fromEntries(u.searchParams)).toEqual({ seed: '99', quality: 'high', mode: 'builder' });
+  });
+
+  it('is shareUrl of shareWorld otherwise', () => {
+    const w: ShareWorld = { terrainSeed: 7, trackSeed: 10, style: 'freestyle', gateCount: 12, laps: 1, difficulty: 0.5, quality: 'low' };
+    expect(menuShareUrl('https://x.test/', s, w)).toBe(shareUrl('https://x.test/', w));
+    expect(menuShareUrl('https://x.test/', s, null)).toBe(shareUrl('https://x.test/', shareWorld(s, null)));
+  });
+});
+
+describe('base64url', () => {
+  it('round-trips any text, with no characters a query string escapes', () => {
+    for (const text of ['', 'a', 'ab', 'abc', '{"seed":1}', 'Split-S über alles ✈', '?&=+/']) {
+      const code = toBase64Url(text);
+      expect(code).toMatch(/^[A-Za-z0-9_-]*$/);
+      expect(fromBase64Url(code)).toBe(text);
+    }
+  });
+
+  it('refuses what is not base64url', () => {
+    expect(fromBase64Url('abc$')).toBeNull();
+    expect(fromBase64Url('a')).toBeNull();
+    expect(fromBase64Url(toBase64Url('x').replace(/./, '/'))).toBeNull();
+  });
+});
+
+describe('recipe links', () => {
+  it('carry a recipe through trk= unchanged', () => {
+    const r = randomRecipe(31337);
+    const back = decodeRecipe(encodeRecipe(r));
+    expect(back).not.toBeNull();
+    expect(recipeKey(back ?? defaultRecipe())).toBe(recipeKey(r));
+  });
+
+  it('give null for damaged or cut-off values', () => {
+    const code = encodeRecipe(defaultRecipe());
+    expect(decodeRecipe('')).toBeNull();
+    expect(decodeRecipe('%%%')).toBeNull();
+    expect(decodeRecipe(code.slice(0, code.length >> 1))).toBeNull();
+    expect(decodeRecipe(toBase64Url('[1,2]'))).toBeNull();
+    expect(decodeRecipe(toBase64Url('"text"'))).toBeNull();
+  });
+
+  it('write the recipe and the terrain, not the generator fields', () => {
+    const recipe = defaultRecipe();
+    const w: ShareWorld = { terrainSeed: 99, trackSeed: 100, style: 'custom', gateCount: recipe.gateCount, laps: recipe.laps, difficulty: recipe.difficulty, quality: 'high', recipe };
+    const u = new URL(shareUrl('https://sim.example/fpv/?seed=1#x', w, { mode: 'builder' }));
+    expect(u.searchParams.get('seed')).toBe('99');
+    expect(u.searchParams.get('quality')).toBe('high');
+    expect(u.searchParams.get('mode')).toBe('builder');
+    expect(decodeRecipe(u.searchParams.get('trk') ?? '')).not.toBeNull();
+    for (const k of ['tseed', 'style', 'gates', 'laps', 'diff']) expect(u.searchParams.has(k), k).toBe(false);
+    expect(u.hash).toBe('');
+  });
+
+  it('add the extra keys to a plain link too', () => {
+    const w: ShareWorld = { terrainSeed: 5, trackSeed: 5, style: 'technical', gateCount: 10, laps: 2, difficulty: 0.4, quality: 'low' };
+    const u = new URL(shareUrl('https://sim.example/', w, { mode: 'builder' }));
+    expect(u.searchParams.get('mode')).toBe('builder');
+    expect(u.searchParams.get('style')).toBe('technical');
+    expect(u.searchParams.has('trk')).toBe(false);
   });
 });

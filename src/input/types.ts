@@ -24,6 +24,8 @@ export interface InputSource {
   setArmed(armed: boolean): void;
   /** Overwrites the latched throttle (0..1), e.g. to cut it after a crash or preset a hover value on respawn. */
   setThrottle(value: number): void;
+  /** Centres the mouse and keyboard roll, pitch and yaw (on respawn); a key still held deflects them again on the next poll. */
+  recenter(): void;
   readonly pointerLocked: boolean;
   /** False while a menu is open: sticks read zero, game keys pass through to the page, and only menu/help/perf actions fire. */
   setEnabled(enabled: boolean): void;

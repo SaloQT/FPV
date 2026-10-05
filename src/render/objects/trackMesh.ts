@@ -1,7 +1,8 @@
-/** Bakes the whole track (gates, obstacles, start pad) into one world-space mesh plus the cloth flags that animate on top. */
+/** Bakes the whole track (gates, ladder rails, obstacles, start pad) into one world-space mesh plus the cloth flags that animate on top. */
 import type { TerrainSampler, TrackData } from '../../contracts';
 import { plate } from './extrude';
-import { buildGate, type GlowStrip } from './gateMeshes';
+import { ladderGroups } from '../../world/track/kindGeometry';
+import { buildGate, buildLadderRails, type GlowStrip } from './gateMeshes';
 import { KIND, type ClothFlag } from './materials';
 import { MeshBuilder, affineMul, affineRotY, affineTranslate, type MeshData } from './meshBuilder';
 import { buildObstacle } from './obstacleMeshes';
@@ -46,7 +47,8 @@ export function buildTrackMesh(track: TrackData, sampler: TerrainSampler): Track
     flags.push(...built.flags);
     strips.push(...built.strips);
   }
-  track.obstacles.forEach((o, i) => buildObstacle(b, o, i, flags));
+  for (const group of ladderGroups(track.gates)) buildLadderRails(b, track.gates, group, sampler);
+  track.obstacles.forEach((o, i) => buildObstacle(b, o, i, flags, sampler));
   buildPad(b, track, sampler);
   return { mesh: b.finish(), flags, strips };
 }

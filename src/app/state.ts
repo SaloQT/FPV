@@ -3,6 +3,7 @@
  * globals. Everything allocated per frame lives here once (reused frame input, snapshot, orbit delta, scratch contexts).
  */
 import type { AudioUpdateContext } from '../audio';
+import type { ObstacleCollider } from '../contracts';
 import type { CameraMode, CameraRig, CameraSettings } from '../game/cameraRig';
 import type { GameSession } from '../game/session';
 import type { SessionSnapshot } from '../game/sessionTypes';
@@ -19,8 +20,11 @@ import type { AppSettings } from '../ui/settingsSchema';
 import type { SettingsStore } from '../ui/settingsStore';
 import type { SimClock as AstroClock } from '../world/astro';
 import type { AppAudio } from './audio';
+import type { BrainHub } from './brains';
+import type { BuilderHub } from './builder';
 import type { AppParams } from './params';
 import type { PadGround } from './padGround';
+import type { WorldPreview } from './preview';
 import type { AppUi } from './ui';
 import type { WindModel } from './wind';
 import type { World } from './world';
@@ -48,9 +52,17 @@ export interface AppCtx {
   readonly audio: AppAudio;
   readonly ui: AppUi;
   readonly loading: LoadingOverlay;
+  /** Trained brains: flying the player's quad and the spectator race. */
+  readonly brains: BrainHub;
+  /** The track builder mode: recipe, builds, its camera, saved tracks and the per-track leaderboards. */
+  readonly builder: BuilderHub;
 
   /** The world on screen; replaced by `scene.ts` when a new track or terrain is built. */
   world: World;
+  /** The start screen's live preview (set by wireSettings); the builder hands it the worlds it puts on screen. */
+  preview: WorldPreview | null;
+  /** What the quad can hit (track boxes, trees, rocks); `refreshColliders` replaces it. */
+  colliders: ObstacleCollider[];
   /** A rebuild is running: the frame loop idles until it is done. */
   busy: boolean;
   /** The tab is hidden: the loop idles. */

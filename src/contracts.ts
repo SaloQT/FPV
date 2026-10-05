@@ -71,7 +71,38 @@ export type ProgressFn = (stage: string, fraction: number) => void;
 
 // ───────────────────────────── Track ─────────────────────────────
 
-export type GateKind = 'square' | 'arch' | 'hoop' | 'dive' | 'flag' | 'start' | 'finish';
+/**
+ * Gate kinds. Every kind has one of three opening shapes (src/world/track/gate.ts insideOpening, mirrored in game/gateCross.ts,
+ * ai/spec.ts gateShape and ai/gpu/world.wgsl): rectangle (square, start, finish, flag, window, ladder, tunnel, hurdle), arch, or
+ * ellipse (hoop, dive, drop). The GPU trainer and the brains' observation only see the shape, so new kinds stay flyable.
+ *
+ * - window: a rectangular opening cut in a solid wall panel (upright).
+ * - ladder: one rung of a stacked ladder of gates (rectangle, side rails); consecutive rungs are flown up or down in turn.
+ * - tunnel: a rectangular entry with a sleeve of walls and roof running `depth` metres along the travel axis (upright).
+ * - hurdle: a wide, low opening under a bar close to the ground.
+ * - drop: a horizontal ring flown straight down through (pitch -PI/2).
+ */
+export type GateKind = 'square' | 'arch' | 'hoop' | 'dive' | 'flag' | 'start' | 'finish' | 'window' | 'ladder' | 'tunnel' | 'hurdle' | 'drop';
+
+/**
+ * Manoeuvres the generator builds out of several gates. A gate that belongs to one carries the tag in `TrackGate.feature` (for
+ * the map legend, the builder and leaderboards); the tag changes nothing about how the gate is flown or timed.
+ *
+ * - split-s: a gate, then a lower gate facing back the way you came (half loop down).
+ * - power-loop: a gate under a bar, then a gate behind and above... flown as a vertical loop that comes back over the bar.
+ * - corkscrew: gates rolled progressively around the line.
+ * - ladder: two to four ladder rungs stacked vertically, flown up then down (or down then up).
+ * - dive: a steep drop through one or more pitched gates.
+ * - drop: a horizontal ring flown straight down.
+ * - slalom: flags or gates alternating left and right of a straight line.
+ * - hairpin: a 180 degree turn around a pylon or wall.
+ * - tunnel: a tunnel gate (sometimes two in a row).
+ * - window: a window-in-wall gate.
+ * - hurdle: one or more hurdles in a row.
+ */
+export type TrackFeature = 'split-s' | 'power-loop' | 'corkscrew' | 'ladder' | 'dive' | 'drop' | 'slalom' | 'hairpin' | 'tunnel' | 'window' | 'hurdle';
+
+export const TRACK_FEATURES: readonly TrackFeature[] = ['split-s', 'power-loop', 'corkscrew', 'ladder', 'dive', 'drop', 'slalom', 'hairpin', 'tunnel', 'window', 'hurdle'];
 
 export interface TrackGate {
   index: number;
@@ -87,18 +118,81 @@ export interface TrackGate {
   /** Opening width and height in meters (inner clear size). */
   width: number;
   height: number;
+  /** The manoeuvre this gate is part of, when it is one. */
+  feature?: TrackFeature;
+  /** Tunnel gates: length of the sleeve along the travel axis, metres (default 6). */
+  depth?: number;
 }
 
+/**
+ * Track obstacles. All collide as yaw-aligned boxes (src/world/track/colliders.ts), which is what the physics and the GPU trainer
+ * support. `pos` is on the ground. `size` is the full extents x, y, z of the footprint box (radius, height, radius for the round
+ * pole, cone, tree and flagpole).
+ *
+ * - tower: a tall lattice tower (scaffold-like frame with a platform on top).
+ * - container: a shipping container, sometimes stacked (size y up to two containers high).
+ * - pillar: a tall square column.
+ * - beam: a horizontal beam on two posts; size y is the height of the beam's top (fly under or over it).
+ * - bridge: a deck on two piers spanning size x; fly under it.
+ * - scaffold: an open frame of poles and planks, several bays long.
+ */
+export type ObstacleKind = 'pole' | 'cone' | 'tree' | 'rock' | 'wall' | 'flagpole' | 'tower' | 'container' | 'pillar' | 'beam' | 'bridge' | 'scaffold';
+
 export interface TrackObstacle {
-  kind: 'pole' | 'cone' | 'tree' | 'rock' | 'wall' | 'flagpole';
+  kind: ObstacleKind;
   pos: Vec3;
   yaw: number;
   size: Vec3; // extents in meters (x,y,z of the collision box, or radius,height,radius for round things)
 }
 
+/**
+ * Generator styles. race, freestyle, mountain and sprint are the original four: their tracks must not change (share links and
+ * training worlds depend on them). technical, acro and industrial are the crazy ones, built from TrackFeatures and the new gate
+ * and obstacle kinds. custom is a track-builder recipe (TrackParams.recipe).
+ */
+export type TrackStyle = 'race' | 'freestyle' | 'mountain' | 'sprint' | 'technical' | 'acro' | 'industrial' | 'custom';
+export type GeneratedStyle = Exclude<TrackStyle, 'custom'>;
+
+/** The styles the settings menu and the N key offer (custom tracks come from the track builder). */
+export const GENERATED_STYLES: readonly GeneratedStyle[] = ['race', 'freestyle', 'mountain', 'sprint', 'technical', 'acro', 'industrial'];
+
+/**
+ * A track-builder recipe: everything that decides a custom track besides the terrain. Pure data, JSON-safe and compact, so it
+ * goes into share links and leaderboard keys. The generator is a pure function of (recipe, terrain).
+ */
+export interface TrackRecipe {
+  version: 1;
+  /** Seed of the layout's own random stream. */
+  seed: number;
+  /** A circuit (laps) or a point-to-point run. */
+  closed: boolean;
+  /** Laps of a circuit (1 for a run). 1..10. */
+  laps: number;
+  /** Gates wanted (a feature counts each of its gates). 4..40. */
+  gateCount: number;
+  /** Rough length of one lap or of the run, metres. 200..3000. */
+  length: number;
+  /** 0..1: gate size, turn tightness and how hard the features are. */
+  difficulty: number;
+  /** 0..1: how much the line climbs and falls between gates. */
+  elevation: number;
+  /** 0..1: how sharply the course winds (0 sweeping, 1 tight and twisty). */
+  twist: number;
+  /** 0..1: how many obstacles are scattered along the course. */
+  obstacles: number;
+  /** Relative weights of the plain gate kinds used between features (missing = 0; all zero = squares). */
+  gates: Partial<Record<GateKind, number>>;
+  /** Relative weights of the manoeuvres (missing = 0). */
+  features: Partial<Record<TrackFeature, number>>;
+  /** 0..1: share of the gate budget spent on features. */
+  featureShare: number;
+  /** Relative weights of the obstacle kinds scattered by `obstacles` (missing = 0; all zero = trees and rocks). */
+  objects: Partial<Record<ObstacleKind, number>>;
+}
+
 export interface TrackData {
   seed: number;
-  style: 'race' | 'freestyle' | 'mountain' | 'sprint';
+  style: TrackStyle;
   gates: TrackGate[];
   obstacles: TrackObstacle[];
   /** Smooth centreline polyline (about 1 m spacing) an ideal pilot would fly; closed when `closed`. */
@@ -109,11 +203,15 @@ export interface TrackData {
   /** Start / launch pad position (on the ground) and heading. */
   start: { pos: Vec3; yaw: number };
   laps: number;
+  /** The recipe a custom track was built from (style 'custom'). */
+  recipe?: TrackRecipe;
 }
 
 export interface TrackParams {
   seed: number;
-  style: TrackData['style'];
+  style: TrackStyle;
+  /** Required for style 'custom': the track builder's recipe (its seed, gate count, laps and difficulty win over the fields here). */
+  recipe?: TrackRecipe;
   /** Desired number of gates (the generator may return slightly fewer if the terrain is hostile). */
   gateCount?: number;
   laps?: number;
@@ -252,7 +350,7 @@ export interface Settings {
   timeScale: number; // 1 = real time, 60 = a minute per second, ...
   observer: Observer;
   seed: number;
-  trackStyle: TrackData['style'];
+  trackStyle: GeneratedStyle;
   mouseSensitivity: number;
 }
 

@@ -1,4 +1,5 @@
 import type { RenderQuality, TerrainData, TrackData } from '../../contracts';
+import { obstacleKeepOuts, tunnelKeepOuts } from '../../world/track/kindGeometry';
 import { PathIndex } from '../../world/track/pathIndex';
 import { deriveSeed } from '../../world/track/rng';
 import { hash2, smoothstep } from './noise';
@@ -96,14 +97,16 @@ function push(s: InstanceSet, x: number, y: number, z: number, p: Pick, nrm: num
   s.scale[i] = p.scale; s.yaw[i] = p.yaw; s.variant[i] = p.variant; s.tint[i] = p.tint; s.nrm[i] = nrm; s.pathDist[i] = pathDist;
 }
 
-/** Ground that stays free of plants and rocks: gate openings, obstacles and the launch pad. */
+/** Ground that stays free of plants and rocks: gate openings and tunnel sleeves, obstacles and the launch pad. */
 function buildBlockers(track: TrackData | null, x0: number, z0: number, x1: number, z1: number): SpatialHash {
   const h = new SpatialHash(x0, z0, x1, z1, 32, 64);
   if (!track) return h;
-  for (const g of track.gates) h.add(g.pos[0], g.pos[2], 0.5 * Math.hypot(g.width, g.height) + 2, 0);
-  for (const o of track.obstacles) {
-    h.add(o.pos[0], o.pos[2], o.kind === 'wall' ? 0.5 * Math.hypot(o.size[0], o.size[2]) : Math.max(o.size[0], o.size[2] * 0.5), 0);
+  for (const g of track.gates) {
+    h.add(g.pos[0], g.pos[2], 0.5 * Math.hypot(g.width, g.height) + 2, 0);
+    if (g.kind === 'tunnel') for (const d of tunnelKeepOuts(g)) h.add(d.x, d.z, d.r, 0);
   }
+  // Long structures (bridges, scaffolds, beams) get several discs along their length (kindGeometry.ts obstacleKeepOuts).
+  for (const o of track.obstacles) for (const d of obstacleKeepOuts(o)) h.add(d.x, d.z, d.r, 0);
   h.add(track.start.pos[0], track.start.pos[2], 8, 0);
   return h;
 }

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type FlightMode, type Observer, type RenderQuality, type Settings, type TrackData } from '../contracts';
+import { DEFAULT_SETTINGS, GENERATED_STYLES, type FlightMode, type GeneratedStyle, type Observer, type RenderQuality, type Settings } from '../contracts';
 import { defaultGamepadConfig, type GamepadConfig } from '../input/gamepadMap';
 import { sanitizeGamepadConfig } from '../input/gamepadConfig';
 import { defaultRateSettings, sanitizeRateSettings, type RateSettings } from '../sim/fc/ratePresets';
@@ -42,7 +42,7 @@ export interface UiSettings {
 export type AppSettings = Settings & UiSettings;
 
 export const SETTINGS_KEY = 'fpv.settings.v1';
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 
 /** Keys that are not written to storage: the sim clock always starts from the default time of day. */
 export const TRANSIENT_KEYS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>(['timeMs']);
@@ -54,7 +54,7 @@ export function defaultAppSettings(): AppSettings {
     mouseCentering: 0.6,
     mouseExpo: 0,
     mouseDeadzone: 0.02,
-    invertY: false,
+    invertY: true,
     camVibration: 0.15,
     masterVolume: 0.8,
     motorVolume: 1,
@@ -117,7 +117,7 @@ function name(v: unknown, fb: string): string {
 
 export const QUALITY_TIERS: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
 export const FLIGHT_MODES: readonly FlightMode[] = ['acro', 'angle', 'horizon'];
-export const TRACK_STYLES: readonly TrackData['style'][] = ['race', 'freestyle', 'mountain', 'sprint'];
+export const TRACK_STYLES: readonly GeneratedStyle[] = GENERATED_STYLES;
 export const TIME_SCALES: readonly number[] = [0, 1, 10, 60, 600];
 /** Largest magnitude `Date` accepts (ms). */
 const MAX_TIME_MS = 8.64e15;
@@ -181,8 +181,11 @@ export function sanitizeSettings(raw: unknown, base: AppSettings): AppSettings {
 /** Storage payload: current versions are wrapped as `{version, settings}`; older builds saved the settings bare. */
 export function migrateStored(raw: unknown): Record<string, unknown> | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.version === 'number' && isRecord(raw.settings)) return raw.settings;
-  return raw;
+  if (typeof raw.version === 'number' && isRecord(raw.settings)) {
+    // Version 1 saved the old non-inverted default, indistinguishably from a chosen value.
+    return raw.version < 2 ? { ...raw.settings, invertY: true } : raw.settings;
+  }
+  return { ...raw, invertY: true };
 }
 
 /** Structural equality for plain JSON-like values; object key order does not matter. */

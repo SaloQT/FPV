@@ -52,7 +52,10 @@ describe('emission in the RT hit shading', () => {
 describe('fp16 safety of the RT passes', () => {
   // Every colour/moment/history store goes through fp16Safe: an Inf or NaN in one texel is reprojected into its neighbours for ever.
   const passes: [string, Record<string, string | number | boolean>][] = [
-    ['rt/gi.wgsl', { GRP: 2 }], ['rt/spec.wgsl', { GRP: 2 }], ['rt/probe_update.wgsl', { GRP: 2 }],
+    ['rt/gi.wgsl', { GRP: 2 }],
+    ['rt/gi.wgsl', { GRP: 2, GI_RECORDED: true, SHADE_ONLY: true }],
+    ['rt/gi.wgsl', { GRP: 2, GI_RECORDED: true, SHADE_ONLY: true, SHADE_VISIBILITY: true }],
+    ['rt/spec.wgsl', { GRP: 2 }], ['rt/probe_update.wgsl', { GRP: 2 }],
     ['rt/probe_update.wgsl', { GRP: 2, COMPACT: true }], ['rt/probe_plan.wgsl', { GRP: 1 }],
     ['rt/temporal.wgsl', { GRP: 1, SHADOW: true, CAP: '16.0' }], ['rt/temporal.wgsl', { GRP: 1, GI: true, CAP: '12.0' }], ['rt/temporal.wgsl', { GRP: 1, SPEC: true, CAP: '8.0' }],
     ['rt/atrous.wgsl', { GRP: 1, GI: true, ITER: '0.0', OUTFMT: 'rgba16float' }], ['rt/atrous.wgsl', { GRP: 1, GI: true, ITER: '2.0', OUTFMT: 'rgba16float', FINAL: true }],
