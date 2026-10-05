@@ -75,6 +75,7 @@ export class FakeInput implements InputSource {
   enabled = true;
   pointerLocked = false;
   throttleSets: number[] = [];
+  recenters = 0;
 
   poll(): StickInput {
     return this.stick;
@@ -93,6 +94,10 @@ export class FakeInput implements InputSource {
   setThrottle(value: number): void {
     this.throttleSets.push(value);
     this.stick.throttle = value;
+  }
+
+  recenter(): void {
+    this.recenters++;
   }
 
   setEnabled(enabled: boolean): void {

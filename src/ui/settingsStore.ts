@@ -78,20 +78,23 @@ export class SettingsStore {
     try {
       const text = this.storage.getItem(SETTINGS_KEY);
       if (text === null) return base;
-      const stored = migrateStored(JSON.parse(text));
+      const raw = JSON.parse(text);
+      const stored = migrateStored(raw);
       if (stored === null) return base;
       const loaded = sanitizeSettings(stored, base);
       loaded.timeMs = base.timeMs;
+      // Commit migrations once so subsequent explicit preferences are retained.
+      if (typeof raw.version !== 'number' || raw.version < SETTINGS_VERSION) this.save(loaded);
       return loaded;
     } catch {
       return base;
     }
   }
 
-  private save(): void {
+  private save(current: AppSettings = this.current): void {
     if (this.storage === null) return;
     const settings: Record<string, unknown> = {};
-    for (const key of SETTING_KEYS) if (!TRANSIENT_KEYS.has(key)) settings[key] = this.current[key];
+    for (const key of SETTING_KEYS) if (!TRANSIENT_KEYS.has(key)) settings[key] = current[key];
     try {
       this.storage.setItem(SETTINGS_KEY, JSON.stringify({ version: SETTINGS_VERSION, settings }));
     } catch {

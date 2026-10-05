@@ -11,12 +11,7 @@ const NODE_EPS : f32 = 1e-3;
 // Bound on the height of every cell inside node c at `lvl` (cells [c*2^lvl, (c+1)*2^lvl]): the 2x2 mip texels cover the closed span.
 fn nodeMax(c : vec2i, lvl : u32) -> f32 {
   let hi = vec2i((i32(frame.terrain.x) >> lvl) - 1);
-  let l = i32(lvl);
-  let a = textureLoad(terrainMaxPyr, min(c, hi), l).x;
-  let b = textureLoad(terrainMaxPyr, min(c + vec2i(1, 0), hi), l).x;
-  let d = textureLoad(terrainMaxPyr, min(c + vec2i(0, 1), hi), l).x;
-  let e = textureLoad(terrainMaxPyr, min(c + vec2i(1, 1), hi), l).x;
-  return max(max(a, b), max(d, e));
+  return textureLoad(terrainMaxPyr, min(c, hi), i32(lvl)).x;
 }
 
 // One planar piece of the cell surface: first s in [s0, s1] where the ray (local cell coords l + dg*s, height y + dy*s) is under it.

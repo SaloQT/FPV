@@ -1,9 +1,16 @@
-/** Race gate meshes baked in world space: tube frames with chevron tape and LED strips, legs, ballast plates, flag poles. */
+/**
+ * Race gate meshes baked in world space: tube frames with chevron tape and LED strips, legs, ballast plates, flag poles, and the
+ * solid parts of the window, tunnel, hurdle, drop and ladder kinds (dimensions from world/track/kindGeometry.ts).
+ */
 import type { TerrainSampler, TrackGate, Vec3 } from '../../contracts';
-import { GATE_TUBE, archSpring, trackGateFrame } from '../../world/track/gate';
+import { GATE_TUBE, archSpring, type GateFrame } from '../../world/track/gate';
+import {
+  LADDER_RAIL, WALL_SINK, WINDOW_THICKNESS, archFeet, buildFrame, dropArm, frameFeet, tunnelSleeve, wallGroundPoints, windowWall, type LadderGroup,
+} from '../../world/track/kindGeometry';
+import { plate } from './extrude';
 import { bevelBox, lathe } from './primitives';
-import { MeshBuilder, affineMul, affineRotY, affineTranslate } from './meshBuilder';
-import { KIND, gateColour, type ClothFlag } from './materials';
+import { MeshBuilder, affineFromBasis, affineMul, affineRotY, affineTranslate } from './meshBuilder';
+import { KIND, gateColour, panelCode, type ClothFlag } from './materials';
 import { rectSection, sweep, type Section, type SectionFace } from './sweep';
 import type { Pt } from './polygon';
 
@@ -16,6 +23,9 @@ const RING_STATIONS = 64;
 const FLAG_POLE_R = 0.02;
 const FLAG_W = 0.7;
 const FLAG_H = 0.45;
+/** Ballast plate under a leg: half side and thickness. */
+const PLATE_HALF = 0.2;
+const PLATE_THICK = 0.012;
 
 /** Bar section face ids: how a face is shaded. */
 const F_BODY = 0;
@@ -85,23 +95,63 @@ const normalise = (a: Vec3): Vec3 => {
   return [a[0] / l, a[1] / l, a[2] / l];
 };
 
+/** Gate-local point (u along right, v along up, w along forward) to world. */
+const frameAt = (c: Vec3, f: GateFrame, u: number, v: number, w = 0): Vec3 => [
+  c[0] + f.right[0] * u + f.up[0] * v + f.forward[0] * w,
+  c[1] + f.right[1] * u + f.up[1] * v + f.forward[1] * w,
+  c[2] + f.right[2] * u + f.up[2] * v + f.forward[2] * w,
+];
+
+/** Lowest ground under a window wall or tunnel sleeve as gate-local v, sunk by WALL_SINK (mirrors colliders.ts). */
+function wallBottom(gate: TrackGate, f: GateFrame, sampler: TerrainSampler): number {
+  let lo = Infinity;
+  for (const [u, w] of wallGroundPoints(gate)) {
+    const p = frameAt(gate.pos, f, u, 0, w);
+    lo = Math.min(lo, sampler.heightAt(p[0], p[2]));
+  }
+  return lo - gate.pos[1] - WALL_SINK;
+}
+
+/** Ballast plate on the ground under (x, z), turned to the gate's yaw. */
+function plateAt(b: MeshBuilder, sampler: TerrainSampler, yaw: number, x: number, z: number, half = PLATE_HALF): void {
+  const g = sampler.heightAt(x, z);
+  b.kind = KIND.GATE_BASE;
+  b.push(affineMul(affineTranslate(x, g, z), affineRotY(yaw)));
+  bevelBox(b, [0, PLATE_THICK, 0], [half, PLATE_THICK, half], 0.006);
+  b.pop();
+}
+
+/**
+ * Vertical leg from `foot` down into the terrain with a ballast plate (yaw-only, flat on the ground). `side` is the direction the
+ * section's x follows (the original legs keep -Z; rails pass the gate's right so they line up with the frame).
+ */
+function legTo(b: MeshBuilder, sampler: TerrainSampler, yaw: number, foot: Vec3, section: Section, plateHalf = PLATE_HALF, side: Vec3 = [0, 0, -1]): void {
+  const g = sampler.heightAt(foot[0], foot[2]);
+  b.aoFn = (_x, y) => 0.5 + 0.5 * Math.min(1, Math.max(0, (y - g) / 0.6));
+  b.kind = KIND.GATE_FRAME;
+  if (foot[1] - g > 0.03) sweep(b, [[foot[0], g - 0.05, foot[2]], foot], section, { up: side, capStart: true, capEnd: true, onFace: (bb) => (bb.kind = KIND.GATE_FRAME) });
+  plateAt(b, sampler, yaw, foot[0], foot[2], plateHalf);
+  b.aoFn = null;
+}
+
 export function buildGate(b: MeshBuilder, gate: TrackGate, sampler: TerrainSampler): GateBuild {
-  const f = trackGateFrame(gate);
+  const f = buildFrame(gate);
   const c = gate.pos;
   const hw = gate.width / 2;
   const hh = gate.height / 2;
-  const at = (u: number, v: number): Vec3 => [c[0] + f.right[0] * u + f.up[0] * v, c[1] + f.right[1] * u + f.up[1] * v, c[2] + f.right[2] * u + f.up[2] * v];
+  const at = (u: number, v: number, w = 0): Vec3 => frameAt(c, f, u, v, w);
   const flags: ClothFlag[] = [];
   const strips: GlowStrip[] = [];
   b.a3 = gate.index;
   const checker = gate.kind === 'finish';
 
-  const run = (path: Vec3[], section: Section, topBar = false, lift = 0): void => {
+  /** Sweeps one bar; its LED side faces `centre` (the opening centre unless the bar frames another opening, e.g. a tunnel exit). */
+  const run = (path: Vec3[], section: Section, topBar = false, lift = 0, centre: Vec3 = c): void => {
     const i = path.length >> 1;
     const t = sub(path[Math.min(path.length - 1, i + 1)], path[Math.max(0, i - 1)]);
     const mid = path[i];
     // Section x must satisfy x cross y = tangent with y (the LED side) pointing at the opening centre.
-    const up = cross(sub(c, mid), t);
+    const up = cross(sub(centre, mid), t);
     sweep(b, path, section, {
       up,
       capStart: path.length === 2,
@@ -121,28 +171,32 @@ export function buildGate(b: MeshBuilder, gate: TrackGate, sampler: TerrainSampl
     strips.push({ gate: gate.index, pts });
   };
 
-  const legTo = (foot: Vec3, section: Section): void => {
-    const g = sampler.heightAt(foot[0], foot[2]);
-    const base = affineMul(affineTranslate(foot[0], g, foot[2]), affineRotY(gate.yaw));
-    b.aoFn = (_x, y) => 0.5 + 0.5 * Math.min(1, Math.max(0, (y - g) / 0.6));
-    b.kind = KIND.GATE_FRAME;
-    if (foot[1] - g > 0.03) sweep(b, [[foot[0], g - 0.05, foot[2]], foot], section, { up: [0, 0, -1], capStart: true, capEnd: true, onFace: (bb) => (bb.kind = KIND.GATE_FRAME) });
-    b.kind = KIND.GATE_BASE;
-    b.push(base);
-    bevelBox(b, [0, 0.012, 0], [0.2, 0.012, 0.2], 0.006);
-    b.pop();
-    b.aoFn = null;
-  };
-
   const bars = squareBarSection();
   const legs = rectSection(T, T, CH);
+  /** The four LED tubes round a rectangular opening, `w` metres along the travel axis. */
+  const rectFrame = (w = 0): void => {
+    const centre = at(0, 0, w);
+    const top = hh + T;
+    for (const s of [-1, 1]) run([at(s * (hw + HT), -top, w), at(s * (hw + HT), top, w)], bars, false, LED_RISE, centre);
+    run([at(-hw, hh + HT, w), at(hw, hh + HT, w)], bars, true, LED_RISE, centre);
+    run([at(-hw, -hh - HT, w), at(hw, -hh - HT, w)], bars, false, LED_RISE, centre);
+  };
+  /** Box in the gate frame spanning u0..u1, v0..v1, w0..w1 (upright kinds only, so it is level). */
+  const slab = (u0: number, u1: number, v0: number, v1: number, w0: number, w1: number, e = 0.01): void => {
+    b.push(affineFromBasis(f.right, f.up, [-f.forward[0], -f.forward[1], -f.forward[2]], c));
+    bevelBox(b, [(u0 + u1) / 2, (v0 + v1) / 2, -(w0 + w1) / 2], [(u1 - u0) / 2, (v1 - v0) / 2, (w1 - w0) / 2], e);
+    b.pop();
+  };
+
   switch (gate.kind) {
     case 'arch': {
       const vs = archSpring(gate);
       const r = hw + HT;
-      for (const s of [-1, 1]) {
+      const feet = archFeet(gate, f, vs);
+      for (let k = 0; k < 2; k++) {
+        const s = k === 0 ? -1 : 1;
         run([at(s * r, -hh), at(s * r, vs)], bars, false, LED_RISE);
-        legTo(at(s * r, -hh), legs);
+        legTo(b, sampler, gate.yaw, at(feet[k][0], feet[k][1]), legs);
       }
       const arc: Vec3[] = [];
       for (let k = 0; k <= RING_STATIONS / 2; k++) {
@@ -153,7 +207,8 @@ export function buildGate(b: MeshBuilder, gate: TrackGate, sampler: TerrainSampl
       break;
     }
     case 'hoop':
-    case 'dive': {
+    case 'dive':
+    case 'drop': {
       const ring: Vec3[] = [];
       for (let k = 0; k <= RING_STATIONS; k++) {
         const a = (k / RING_STATIONS) * Math.PI * 2;
@@ -161,7 +216,13 @@ export function buildGate(b: MeshBuilder, gate: TrackGate, sampler: TerrainSampl
       }
       ring[RING_STATIONS] = ring[0];
       run(ring, roundBarSection());
-      legTo(ring.reduce((lo, p) => (p[1] < lo[1] ? p : lo)), legs);
+      if (gate.kind === 'drop') {
+        const arm = dropArm(gate);
+        const end = at(arm.end[0], arm.end[1]);
+        b.kind = KIND.GATE_FRAME;
+        sweep(b, [at(arm.rim[0] - HT, arm.rim[1]), end], legs, { up: [0, 1, 0], capStart: true, capEnd: true, onFace: (bb) => (bb.kind = KIND.GATE_FRAME) });
+        legTo(b, sampler, gate.yaw, end, legs, 0.3);
+      } else legTo(b, sampler, gate.yaw, ring.reduce((lo, p) => (p[1] < lo[1] ? p : lo)), legs);
       break;
     }
     case 'flag': {
@@ -173,16 +234,82 @@ export function buildGate(b: MeshBuilder, gate: TrackGate, sampler: TerrainSampl
       }
       break;
     }
-    default: {
+    case 'window': {
+      rectFrame();
+      const wall = windowWall(gate);
+      // The wall always keeps a sill under the hole, even when a bad placement buries the opening.
+      const vg = Math.min(wallBottom(gate, f, sampler), -hh - T - 0.05);
+      const d = WINDOW_THICKNESS / 2;
+      // Plate local x = right, y = forward (the extrusion), z = up, so the outline is drawn in (u, v).
+      b.push(affineFromBasis(f.right, f.forward, f.up, c));
+      b.kind = KIND.GATE_PANEL;
+      b.a2 = panelCode(hw + T, hh + T);
+      b.aoFn = (_x, y) => 0.6 + 0.4 * Math.min(1, Math.max(0, (y - (c[1] + vg + WALL_SINK)) / 0.8));
+      const outline: Pt[] = [[-wall.half, vg], [wall.half, vg], [wall.half, wall.top], [-wall.half, wall.top]];
+      const hole: Pt[] = [[-hw - T, -hh - T], [-hw - T, hh + T], [hw + T, hh + T], [hw + T, -hh - T]];
+      plate(b, outline, [hole], -d, d, { wallKind: KIND.GATE_BASE, hardAngle: 0.3 });
+      b.aoFn = null;
+      b.a2 = 0;
+      b.pop();
+      break;
+    }
+    case 'tunnel': {
+      const s = tunnelSleeve(gate);
+      rectFrame(0);
+      rectFrame(s.depth);
+      const vg = wallBottom(gate, f, sampler);
+      b.kind = KIND.GATE_PANEL;
+      b.aoFn = (_x, y) => 0.55 + 0.45 * Math.min(1, Math.max(0, (y - (c[1] + vg + WALL_SINK)) / 0.8));
+      for (const side of [-1, 1]) slab(side < 0 ? -s.outer : s.inner, side < 0 ? -s.inner : s.outer, vg, s.roofTop, HT, s.depth - HT);
+      slab(-s.outer, s.outer, s.roof, s.roofTop, HT, s.depth - HT);
+      b.kind = KIND.GATE_BASE;
+      if (-hh - T - vg > 0.02) for (const w of [0, s.depth]) slab(-hw, hw, vg, -hh - T, w - HT * 0.8, w + HT * 0.8, 0.004);
+      b.aoFn = null;
+      // An LED tube along the middle of the ceiling, lit with the gate.
+      run([at(0, hh + HT, 0.3), at(0, hh + HT, s.depth - 0.3)], bars, false, LED_RISE, at(0, 0, s.depth / 2));
+      break;
+    }
+    case 'ladder':
+      rectFrame();
+      break;
+    case 'hurdle': {
       const top = hh + T;
-      for (const s of [-1, 1]) run([at(s * (hw + HT), -top), at(s * (hw + HT), top)], bars, false, LED_RISE);
+      for (const s of [-1, 1]) {
+        const p = at(s * (hw + HT), top);
+        const g = sampler.heightAt(p[0], p[2]) - 0.05 - c[1];
+        run([at(s * (hw + HT), g), p], bars, false, LED_RISE);
+        b.aoFn = (_x, y) => 0.5 + 0.5 * Math.min(1, Math.max(0, (y - c[1] - g) / 0.6));
+        plateAt(b, sampler, gate.yaw, p[0], p[2]);
+        b.aoFn = null;
+      }
       run([at(-hw, hh + HT), at(hw, hh + HT)], bars, true, LED_RISE);
-      run([at(-hw, -hh - HT), at(hw, -hh - HT)], bars, false, LED_RISE);
-      for (const s of [-1, 1]) legTo(at(s * (hw + HT), -top), legs);
+      // The sill bar: the opening the timer counts starts here, not at the ground.
+      run([at(-hw, -hh - HT), at(hw, -hh - HT)], bars, true, LED_RISE);
+      break;
+    }
+    default: {
+      rectFrame();
+      for (const [u, v] of frameFeet(gate, f)) legTo(b, sampler, gate.yaw, at(u, v), legs);
     }
   }
   b.a3 = 0;
   return { flags, strips };
+}
+
+/**
+ * The two side rails of one ladder, built once per ladder in the top rung's frame: square tubes from the ground to just above the
+ * top rung, touching the outside of every rung's posts, with ballast plates. They take the top rung's colour.
+ */
+export function buildLadderRails(b: MeshBuilder, gates: readonly TrackGate[], group: LadderGroup, sampler: TerrainSampler): void {
+  const top = gates[group.top];
+  const f = buildFrame(top);
+  b.a3 = top.index;
+  const section = rectSection(LADDER_RAIL, LADDER_RAIL, 0.008);
+  for (const s of [-1, 1]) {
+    const p = frameAt(top.pos, f, s * group.railU, 0);
+    legTo(b, sampler, top.yaw, [p[0], group.railTop, p[2]], section, 0.25, f.right);
+  }
+  b.a3 = 0;
 }
 
 /** Slim round pole from `y0` (ground) to `y1` with a small cap. */

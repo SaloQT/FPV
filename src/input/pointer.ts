@@ -2,6 +2,8 @@ import type { MouseStick } from './mouseStick';
 
 /** Ignore movement right after the lock is granted: Chrome can report a large bogus first delta. */
 const LOCK_SETTLE_MS = 40;
+/** A raw stream may stop after firing once; ordinary movement must take over instead of remaining muted. */
+const RAW_MOVE_TIMEOUT_MS = 50;
 /** A press that travelled further than this was a drag (camera orbit), not a click to grab the mouse. */
 const CLICK_DRAG_PX = 4;
 const LINE_PX = 33;
@@ -22,11 +24,12 @@ export class PointerInput {
   private readonly cleanups: (() => void)[] = [];
   private lockedAtMs = 0;
   private expectUnlock = false;
-  private rawMoves = false;
+  private lastRawMoveMs = -Infinity;
   private pressPx = 0;
   private orbitX = 0;
   private orbitY = 0;
   private wheel = 0;
+  private lockPending = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -36,6 +39,7 @@ export class PointerInput {
   ) {
     this.doc = canvas.ownerDocument;
     this.listen(this.doc, 'pointerlockchange', this.onLockChange);
+    this.listen(this.doc, 'pointerlockerror', () => { this.lockPending = false; });
     // pointerrawupdate skips the per-frame batching of mousemove; whichever arrives first for a motion is used, never both.
     this.listen(this.doc, 'pointerrawupdate', this.onRawMove);
     this.listen(this.doc, 'mousemove', this.onMouseMove);
@@ -46,20 +50,22 @@ export class PointerInput {
   }
 
   requestLock(): void {
-    if (this.locked || !this.enabled) return;
+    if (this.locked || !this.enabled || this.lockPending) return;
+    this.lockPending = true;
     const canvas = this.canvas;
+    const fallback = (): void => {
+      if (!this.enabled || this.locked) { this.lockPending = false; return; }
+      try {
+        Promise.resolve(canvas.requestPointerLock()).catch(() => undefined).finally(() => { this.lockPending = false; });
+      } catch {
+        this.lockPending = false;
+      }
+    };
     try {
       // unadjustedMovement asks for raw device deltas (no OS acceleration); fall back where unsupported.
-      Promise.resolve(canvas.requestPointerLock({ unadjustedMovement: true })).catch(() => {
-        try {
-          // Browsers that return a promise reject this one too when the lock is refused; that is not an error to report.
-          Promise.resolve(canvas.requestPointerLock()).catch(() => undefined);
-        } catch {
-          /* no pointer lock available: keyboard and gamepad still work */
-        }
-      });
+      Promise.resolve(canvas.requestPointerLock({ unadjustedMovement: true })).then(() => { this.lockPending = false; }, fallback);
     } catch {
-      /* same */
+      fallback();
     }
   }
 
@@ -91,8 +97,11 @@ export class PointerInput {
     const locked = this.doc.pointerLockElement === this.canvas;
     if (locked === this.locked) return;
     this.locked = locked;
+    this.lockPending = false;
+    this.lastRawMoveMs = -Infinity;
     this.mouse.reset();
     if (locked) {
+      if (!this.enabled) { this.exitLock(); return; }
       this.lockedAtMs = this.now();
       return;
     }
@@ -104,12 +113,12 @@ export class PointerInput {
   private readonly onRawMove = (e: Event): void => {
     const m = e as MouseEvent;
     if (m.movementX === 0 && m.movementY === 0) return;
-    this.rawMoves = true;
+    this.lastRawMoveMs = this.now();
     this.move(m);
   };
 
   private readonly onMouseMove = (e: Event): void => {
-    if (!this.rawMoves) this.move(e as MouseEvent);
+    if (this.now() - this.lastRawMoveMs > RAW_MOVE_TIMEOUT_MS) this.move(e as MouseEvent);
   };
 
   private move(m: MouseEvent): void {

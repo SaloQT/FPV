@@ -9,14 +9,17 @@ import type { PreviewState } from './trackPreviewModel';
 
 const HERO_TEXT = 'Click to fly';
 
-/** The first screen: title, the one big button, the world to fly in (with a map of its track), the time of day and a controls reminder. */
+/**
+ * The first screen: title, the one big button, the world to fly in (with a map of its track), the time of day, a controls reminder,
+ * and the ways to Settings and to the track builder.
+ */
 export class StartPanel {
   readonly root: HTMLElement;
   private readonly group = new ControlGroup();
   private readonly hero: HTMLButtonElement;
   private readonly world: WorldCard;
 
-  constructor(host: ControlHost, bindings: Bindings, onStart: () => void, onSettings: () => void) {
+  constructor(host: ControlHost, bindings: Bindings, onStart: () => void, onSettings: () => void, onBuilder?: () => void) {
     const title = el('h1', 'fpv-brand', 'FPV Sim');
     title.id = uid('fpv-title');
     this.hero = el('button', 'fpv-hero', HERO_TEXT);
@@ -33,7 +36,15 @@ export class StartPanel {
     const settings = el('button', 'fpv-btn fpv-btn--default', 'Settings');
     settings.type = 'button';
     settings.addEventListener('click', onSettings);
-    const foot = el('footer', 'fpv-start-foot', settings, el('span', 'fpv-hint', 'Everything is adjustable in Settings.'));
+    const foot = el('footer', 'fpv-start-foot', settings);
+    if (onBuilder !== undefined) {
+      const builder = el('button', 'fpv-btn fpv-btn--default', 'Track builder');
+      builder.type = 'button';
+      builder.title = 'Design a track from variables, race brains on it and keep leaderboards';
+      builder.addEventListener('click', onBuilder);
+      foot.append(builder);
+    }
+    foot.append(el('span', 'fpv-hint', 'Everything is adjustable in Settings; the track builder makes your own courses.'));
     this.root = el('section', 'fpv-panel fpv-start', head, el('div', 'fpv-start-cols', this.world.root, side), foot);
     this.root.setAttribute('role', 'dialog');
     this.root.setAttribute('aria-modal', 'true');

@@ -2,7 +2,7 @@ import type { TerrainData } from '../contracts';
 import type { WorldBindings } from './contracts';
 import { generateBlueNoiseRG8, BLUE_NOISE_SIZE } from './blueNoise';
 import { toHalf } from './half';
-import { buildMaxPyramid, buildNormalHorizon, packTerrainMaps } from './terrainUpload';
+import { buildTraceBoundsPyramid, buildNormalHorizon, packTerrainMaps } from './terrainUpload';
 
 export const TRANSMITTANCE_LUT_SIZE = { width: 256, height: 64 } as const;
 export const MULTI_SCATTER_LUT_SIZE = { width: 32, height: 32 } as const;
@@ -104,7 +104,7 @@ export class WorldResources implements WorldBindings {
       this.rebuildGroup();
     }
     const q = this.device.queue, t = this.tex;
-    const pyramid = buildMaxPyramid(terrain.height, n);
+    const pyramid = buildTraceBoundsPyramid(terrain.height, n);
     pyramid.forEach((level, mip) => {
       const size = Math.max(1, n >> mip);
       q.writeTexture({ texture: t.terrainMaxPyr, mipLevel: mip }, level as Float32Array<ArrayBuffer>, { bytesPerRow: size * 4 }, { width: size, height: size });

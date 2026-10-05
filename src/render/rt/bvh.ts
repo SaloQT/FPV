@@ -15,11 +15,10 @@ export const NODE_WORDS = 8;
 export const NODE_BYTES = NODE_WORDS * 4;
 export const NO_ROOT = 0xffffffff;
 export const MAX_PRIMS = 1 << 17;
-// Prims per leaf. A BVH only reorders the search, so this changes how deep the tree is and how many primitives
-// a leaf tests - never which primitive is nearest - which is why it is a free quality knob. 4 halves the node
-// visits and stack pushes per ray against 2 (every level of the tree costs a dependent box load and two slab
-// tests) and doubles the primitive tests inside a leaf, which are the cheaper half of the work.
-const LEAF_SIZE = 4;
+// Two primitives per leaf traded more box visits for fewer primitive tests in the
+// measured Ultra workload. Traversal has a visit cap, so changing this partition
+// also requires validation against the original images and ray answers.
+const LEAF_SIZE = 2;
 const RADIX_LEVELS = 14;
 
 export interface BvhTarget {

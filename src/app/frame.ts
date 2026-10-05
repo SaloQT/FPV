@@ -42,11 +42,15 @@ export function simulate(ctx: AppCtx, dt: number): void {
   pushWindIfMoved(ctx, dt);
 
   session.frame(dt);
+  ctx.brains.step(ctx, dt);
   const rs = session.renderState();
+  const view = ctx.brains.view(rs);
 
-  // Start screen: the camera circles the quad on its pad; afterwards the pilot's camera, with mouse orbit in free mode.
-  const intro = !session.started && session.state === 'menu';
-  const mode = intro ? 'free' : ctx.camPreferred;
+  // Start screen: the camera circles the quad on its pad; afterwards the pilot's camera, with mouse orbit in free mode. The track
+  // builder renders through its own camera, with the rig in free mode so the FPV lens and noise are off.
+  const building = ctx.builder.active;
+  const intro = !building && !session.started && session.state === 'menu';
+  const mode = intro || building ? 'free' : ctx.camPreferred;
   if (rig.mode !== mode) rig.mode = mode;
   const orbit = ctx.orbit;
   ctx.input.takeOrbit(orbit);
@@ -64,7 +68,7 @@ export function simulate(ctx: AppCtx, dt: number): void {
   cs.fov = settings.fov;
   cs.cameraTiltDeg = settings.cameraTiltDeg;
   cs.camVibration = settings.camVibration;
-  rig.update(dt, rs, cs, ctx.aspect);
+  rig.update(dt, view, cs, ctx.aspect);
   const fpv = rig.mode === 'fpv';
   if (fpv !== ctx.last.fpvFx) {
     ctx.last.fpvFx = fpv;
@@ -72,7 +76,7 @@ export function simulate(ctx: AppCtx, dt: number): void {
   }
 
   session.snapshot(ctx.snap);
-  const hide = !rig.quadVisible;
+  const hide = !rig.quadVisible && ctx.brains.followsOwn;
   if (hide !== ctx.last.hide) {
     ctx.last.hide = hide;
     mods.objects.setHideQuad(hide);
@@ -89,7 +93,7 @@ export function simulate(ctx: AppCtx, dt: number): void {
   const f = ctx.frame;
   f.dt = dt;
   f.time = ctx.time;
-  f.camera = rig.camera;
+  f.camera = building ? ctx.builder.camera(dt, ctx.aspect) : rig.camera;
   f.astro = astro.state();
   f.quad = rs;
 }

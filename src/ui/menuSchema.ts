@@ -3,8 +3,8 @@ import type { BuiltControl, ControlHost } from './menuHost';
 import type { AppSettings } from './settingsSchema';
 
 /** What a menu button asks the app to do; values are changed through `onChange` instead. */
-export type MenuAction = 'start' | 'resume' | 'restart' | 'new-track' | 'reset-settings';
-export type TabId = 'graphics' | 'camera' | 'controls' | 'simulation' | 'audio';
+export type MenuAction = 'start' | 'resume' | 'restart' | 'new-track' | 'reset-settings' | 'open-builder';
+export type TabId = 'graphics' | 'camera' | 'controls' | 'simulation' | 'audio' | 'ai';
 
 export interface SelectOption {
   value: string;

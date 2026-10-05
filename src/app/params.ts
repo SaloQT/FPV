@@ -3,7 +3,9 @@
  *
  *   seed=<int>            world seed (terrain and track)
  *   tseed=<int>           the track's own seed when it is not the world seed (share links to an N-key track)
- *   style=race|freestyle|mountain|sprint
+ *   style=race|freestyle|mountain|sprint|technical|acro|industrial
+ *   trk=<base64url>       a track-builder recipe (share links to a builder track; the terrain is still `seed` and `quality`)
+ *   mode=builder          open the track builder instead of the start screen (with `trk`, on that recipe)
  *   t=<hour>              local solar hour at the observer, 0..24 (converted to settings.timeMs)
  *   cam=fpv|chase|free    camera mode once flying
  *   scenario=hover|fly|crash|gate   scripted autopilot (synthetic stick input)
@@ -18,22 +20,29 @@
  *   fixeddt=<s>           fixed frame dt for the deterministic runs (default 1/60)
  *   hold=1                after `ready`, do not run the real-time loop (frozen frame; use `advance` in the page)
  */
-import type { RenderQuality, TrackData } from '../contracts';
+import { GENERATED_STYLES, type GeneratedStyle, type RenderQuality, type TrackRecipe } from '../contracts';
 import { withLocalSolarHours } from '../game/clock';
 import type { CameraMode } from '../game/cameraRig';
+import { decodeRecipe } from '../ui/seedModel';
 import type { AppSettings } from '../ui/settingsSchema';
 
 export type ScenarioName = 'hover' | 'fly' | 'crash' | 'gate';
 export const SCENARIOS: readonly ScenarioName[] = ['hover', 'fly', 'crash', 'gate'];
-const STYLES: readonly TrackData['style'][] = ['race', 'freestyle', 'mountain', 'sprint'];
+const STYLES: readonly GeneratedStyle[] = GENERATED_STYLES;
 const CAMS: readonly CameraMode[] = ['fpv', 'chase', 'free'];
 const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
+export type AppMode = 'builder';
+const MODES: readonly AppMode[] = ['builder'];
 
 export interface AppParams {
   seed?: number;
   /** Seed the track is generated from, on the terrain of `seed`. */
   trackSeed?: number;
-  style?: TrackData['style'];
+  style?: GeneratedStyle;
+  /** A track-builder recipe from a share link (`trk=`): the first world is built from it on the terrain of `seed`. */
+  recipe?: TrackRecipe;
+  /** `mode=builder` opens the track builder at boot. */
+  mode?: AppMode;
   /** Local solar hour at the observer. */
   hours?: number;
   cam?: CameraMode;
@@ -98,10 +107,14 @@ export function parseParams(search: string): AppParams {
   const scale = num(q, 'scale');
   const fixedDt = num(q, 'fixeddt');
   const agl = num(q, 'agl');
+  const trk = q.get('trk');
+  const recipe = trk === null ? null : decodeRecipe(trk);
   return {
     seed: seed === undefined ? undefined : Math.max(0, Math.floor(seed)) >>> 0,
     trackSeed: trackSeed === undefined ? undefined : Math.max(0, Math.floor(trackSeed)) >>> 0,
     style: pick(q, 'style', STYLES),
+    ...(recipe === null ? {} : { recipe }),
+    mode: pick(q, 'mode', MODES),
     hours: num(q, 't'),
     cam: pick(q, 'cam', CAMS),
     scenario,

@@ -151,4 +151,30 @@ describe('world share links', () => {
     expect(parseParams('?tseed=-3').trackSeed).toBe(0);
     expect(parseParams('?tseed=zz').trackSeed).toBeUndefined();
   });
+
+  it('accepts the new generated styles and refuses custom (a recipe link uses trk=)', () => {
+    for (const style of ['technical', 'acro', 'industrial'] as const) expect(parseParams(`?style=${style}`).style).toBe(style);
+    expect(parseParams('?style=custom').style).toBeUndefined();
+  });
+
+  it('reads mode=builder and nothing else', () => {
+    expect(parseParams('?mode=builder').mode).toBe('builder');
+    expect(parseParams('?mode=race').mode).toBeUndefined();
+    expect(parseParams('').mode).toBeUndefined();
+  });
+
+  it('reads the recipe of a builder link, and ignores a damaged one', async () => {
+    const { shareUrl, encodeRecipe } = await import('../ui/seedModel');
+    const { randomRecipe, recipeKey } = await import('../world/track/recipe');
+    const recipe = randomRecipe(4242);
+    const w = { terrainSeed: 1337, trackSeed: 1337, style: 'custom' as const, gateCount: recipe.gateCount, laps: recipe.laps, difficulty: recipe.difficulty, quality: 'medium' as const, recipe };
+    const p = parseParams(new URL(shareUrl('https://sim.example/', w, { mode: 'builder' })).search);
+    expect(p).toMatchObject({ seed: 1337, quality: 'medium', mode: 'builder' });
+    expect(recipeKey(p.recipe ?? recipe)).toBe(recipeKey(recipe));
+    expect(p.recipe).toBeDefined();
+    expect(parseParams(`?trk=${encodeRecipe(recipe).slice(0, 9)}`).recipe).toBeUndefined();
+    expect(parseParams('?trk=').recipe).toBeUndefined();
+    // The recipe and the mode are for this visit only: the saved settings keep their own track.
+    expect(settingsPatch(p, defaultAppSettings())).toEqual({ seed: 1337, quality: 'medium' });
+  });
 });

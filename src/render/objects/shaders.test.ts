@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveShader } from '../shaderLib';
-import { kindDefines } from './materials';
+import { CONTAINER_COLOURS, KIND, STEEL_COLOURS, kindDefines } from './materials';
 import { QUAD_UNIFORM_FLOATS, quadBodyDefines, quadForwardDefines } from './quadRender';
 import { FLAG_FLOATS, GATE_FLOATS, TRACK_UNIFORM_FLOATS } from './trackObjects';
 
@@ -57,6 +57,32 @@ describe('shader sources resolve', () => {
     expect(floatsOf('TrackU')).toBe(TRACK_UNIFORM_FLOATS);
     expect(floatsOf('GateInfo')).toBe(GATE_FLOATS);
     expect(floatsOf('Flag')).toBe(FLAG_FLOATS);
+  });
+
+  it('the paint palettes in the track shader match the CPU lists', () => {
+    const code = resolveShader('objects/track_materials.wgsl', kindDefines());
+    const palette = (fn: string): number[][] => {
+      const body = new RegExp(`fn ${fn}\\(i : u32\\) -> vec3f \\{([\\s\\S]*?)\\n\\}`).exec(code);
+      expect(body).not.toBeNull();
+      const list = /array<vec3f, \d+>\(([\s\S]*?)\);/.exec((body as RegExpExecArray)[1]);
+      expect(list).not.toBeNull();
+      return Array.from((list as RegExpExecArray)[1].matchAll(/vec3f\(([^)]*)\)/g), (m) => m[1].split(',').map(Number));
+    };
+    expect(palette('containerColour')).toEqual(CONTAINER_COLOURS.map((c) => [...c]));
+    expect(palette('steelColour')).toEqual(STEEL_COLOURS.map((c) => [...c]));
+  });
+
+  it('the track material ids leave 20-33 to the quad and every one has a shader case', () => {
+    const code = resolveShader('objects/track_materials.wgsl', kindDefines());
+    const quad = new Set(['CARBON', 'ALU', 'PCB', 'BATTERY', 'RUBBER', 'MOTOR_BELL', 'MOTOR_BASE', 'PLASTIC', 'LENS', 'LED', 'PROP', 'WIRE', 'STEEL', 'PROP_HUB']);
+    const ids = Object.values(KIND);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const [name, id] of Object.entries(KIND)) {
+      if (quad.has(name)) continue;
+      expect(id < 20 || id > 33, name).toBe(true);
+      // Leaves are vegetation; the cloth flag has its own pipeline.
+      if (name !== 'LEAVES' && name !== 'CLOTH') expect(code, name).toContain(`case ${id}u:`);
+    }
   });
 
   it('an undefined define is reported instead of reaching the GPU', () => {

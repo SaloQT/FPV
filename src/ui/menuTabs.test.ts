@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { localSolarHours } from '../game/clock';
 import { bearing, fixed, percent, solarDate, withSolarDate, type Control, type MenuTab } from './menuSchema';
 import { buildTabs, TRACK_SETUP } from './menuTabs';
-import { defaultAppSettings, sanitizeValue, type AppSettings } from './settingsSchema';
+import { TRACK_STYLES, defaultAppSettings, sanitizeValue, type AppSettings } from './settingsSchema';
 import { SettingsStore } from './settingsStore';
 
 const PRESETS = [{ id: 'QUAD_5IN_6S', label: '5 inch, 6S' }, { id: 'QUAD_3IN_4S', label: '3 inch, 4S' }];
@@ -44,6 +44,13 @@ describe('settings tabs', () => {
     expect(values('timeScale')).toEqual(['0', '1', '10', '60', '600']);
     expect(values('quality')).toEqual(['low', 'medium', 'high', 'ultra', 'perf240']);
     expect(values('quadPreset')).toEqual(['QUAD_5IN_6S', 'QUAD_3IN_4S']);
+  });
+
+  it('offer every generated track style, labelled, in the settings order', () => {
+    const c = TRACK_SETUP.find((x) => x.id === 'trackStyle');
+    if (c?.kind !== 'select') throw new Error('trackStyle is not a select');
+    expect(c.options.map((o) => o.value)).toEqual([...TRACK_STYLES]);
+    expect(c.options.map((o) => o.label)).toEqual(['Race', 'Freestyle', 'Mountain', 'Sprint', 'Technical', 'Acro', 'Industrial']);
   });
 
   it('read the defaults inside their own range and options', () => {

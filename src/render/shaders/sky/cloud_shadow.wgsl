@@ -54,7 +54,10 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let datumR = datumRadius();
   let world = vec2f(ap.cloudC.z, ap.cloudC.w) + ((vec2f(gid.xy) + 0.5) / vec2f(dims) - 0.5) * ap.cloudD.w;
   let o = vec3f((world.x - frame.camPos.x) * 0.001, datumR, (world.y - frame.camPos.z) * 0.001);
-  let jitter = hash21(gid.xy + vec2u(u32(ap.cloudC.y) % 8u, 0u)) * 0.999;
+  // This map has no temporal resolve. Rotating jitter every frame modulates sunlight even in a frozen scene.
+  // Anchor the sample pattern to world columns so recentering the map also keeps overlapping shadows unchanged.
+  let column = vec2i(floor(world / (ap.cloudD.w / f32(dims.x))));
+  let jitter = hash21(bitcast<vec2u>(column)) * 0.999;
   let sun = columnTransmittance(o, frame.sunDir.xyz, CUMULUS_STEPS, datumR, jitter);
   // select evaluates both values; skip the entire moon column when moonlight is disabled.
   var moon = 1.0;

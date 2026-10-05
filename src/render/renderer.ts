@@ -15,11 +15,19 @@ import { ModuleHost } from './moduleHost';
 import { createDefaultModules } from './modules';
 import { createPostProcessor } from './post';
 import { resolveQuality, sameProfile } from './qualityPresets';
+import { FrameQueue } from './frameQueue';
 import { SceneRegistry } from './rtRegistry';
 import { resolveShader, type Defines } from './shaderLib';
 import { WorldResources } from './worldBindings';
 
 export interface RendererOptions { gpuProfile?: boolean }
+
+/** Canvas-compatible output contract; native tools supply an offscreen texture context. */
+export interface RenderSurface {
+  width: number;
+  height: number;
+  getContext(type: 'webgpu'): GPUCanvasContext | null;
+}
 
 export interface RenderStats {
   frameIndex: number;
@@ -97,8 +105,12 @@ export class Renderer {
   private lastStart = 0;
   private destroyed = false;
   private errorCount = 0;
+  private readonly frameQueue = new FrameQueue();
 
-  static async create(canvas: HTMLCanvasElement, settings: Settings, modules?: RenderModule[], post?: PostProcessor, options: RendererOptions = {}): Promise<Renderer> {
+  /** Live rendering can submit again once the GPU has consumed the previous frame. Scripted warm-up/capture still runs in full. */
+  get frameReady(): boolean { return this.frameQueue.ready; }
+
+  static async create(canvas: RenderSurface, settings: Settings, modules?: RenderModule[], post?: PostProcessor, options: RendererOptions = {}): Promise<Renderer> {
     const setup = await requestDevice();
     const r = new Renderer(canvas, settings, setup, modules ?? createDefaultModules(), post ?? createPostProcessor(), options);
     try {
@@ -110,7 +122,7 @@ export class Renderer {
     return r;
   }
 
-  private constructor(private readonly canvas: HTMLCanvasElement, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor, readonly options: Readonly<RendererOptions>) {
+  private constructor(private readonly canvas: RenderSurface, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor, readonly options: Readonly<RendererOptions>) {
     const device = setup.device;
     this.device = device;
     this.adapter = setup.adapter;
@@ -324,6 +336,7 @@ export class Renderer {
     if (readback) enc.copyTextureToBuffer({ texture: target }, { buffer: readback.buffer, bytesPerRow: readback.bytesPerRow }, [this.outW, this.outH]);
     this.timer.resolve(enc);
     this.device.queue.submit([enc.finish()]);
+    this.frameQueue.submitted(this.device.queue.onSubmittedWorkDone());
     this.timer.afterSubmit();
   }
 

@@ -37,12 +37,15 @@ const track = (gates: TrackGate[], obstacles: TrackObstacle[] = []): TrackData =
   laps: 1,
 });
 
-const KINDS: GateKind[] = ['square', 'arch', 'hoop', 'dive', 'flag', 'start', 'finish'];
+const KINDS: GateKind[] = ['square', 'arch', 'hoop', 'dive', 'flag', 'start', 'finish', 'window', 'ladder', 'tunnel', 'hurdle', 'drop'];
+/** LED strips per kind: one per straight bar or ring; a tunnel has an entry and an exit frame and a ceiling tube; a hurdle its posts, top bar and sill bar. */
+const STRIPS: Record<GateKind, number> = { square: 4, start: 4, finish: 4, arch: 3, hoop: 1, dive: 1, flag: 0, window: 4, ladder: 4, tunnel: 9, hurdle: 4, drop: 1 };
+const POSE: Partial<Record<GateKind, Partial<TrackGate>>> = { dive: { pitch: 0.4 }, square: { roll: 0.3 }, drop: { pitch: -Math.PI / 2, pos: [10, 6, -5] } };
 
 describe('gates', () => {
   for (const kind of KINDS) {
     it(`${kind} builds a finite mesh tagged with its index and leaves the opening clear`, () => {
-      const g = gate(kind, kind === 'dive' ? { pitch: 0.4 } : kind === 'square' ? { roll: 0.3 } : {});
+      const g = gate(kind, POSE[kind] ?? {});
       const b = new MeshBuilder();
       const built = buildGate(b, g, flat);
       const mesh = b.finish();
@@ -61,7 +64,7 @@ describe('gates', () => {
       }
       expect(tagged).toBeGreaterThan(0);
       expect(built.flags.length).toBe(kind === 'flag' ? 2 : 0);
-      expect(built.strips.length).toBe(kind === 'flag' ? 0 : kind === 'square' || kind === 'start' || kind === 'finish' ? 4 : kind === 'arch' ? 3 : 1);
+      expect(built.strips.length).toBe(STRIPS[kind]);
     });
   }
 

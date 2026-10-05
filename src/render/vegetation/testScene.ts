@@ -1,6 +1,7 @@
 import type { TerrainData, TrackData, Vec3 } from '../../contracts';
 import { createTerrainSampler, generateTerrain } from '../../world/terrain';
 import { generateTrack } from '../../world/track/generator';
+import { obstacleKeepOuts, tunnelKeepOuts } from '../../world/track/kindGeometry';
 import { placeVegetation, TIER_LIMITS, type InstanceSet, type VegPlacement } from './placement';
 
 export interface TestScene {
@@ -51,10 +52,11 @@ export function eachPair(s: InstanceSet, reach: number, visit: (i: number, j: nu
   }
 }
 
-/** Ground discs the placement keeps clear: gate openings, obstacles and the launch pad (same radii as placement.ts). */
+/** Ground discs the placement keeps clear: gate openings and tunnel sleeves, obstacles and the launch pad (same radii as placement.ts). */
 export function blockerDiscs(track: TrackData): { x: number; z: number; r: number }[] {
   const out = track.gates.map((g) => ({ x: g.pos[0], z: g.pos[2], r: 0.5 * Math.hypot(g.width, g.height) + 2 }));
-  for (const o of track.obstacles) out.push({ x: o.pos[0], z: o.pos[2], r: o.kind === 'wall' ? 0.5 * Math.hypot(o.size[0], o.size[2]) : Math.max(o.size[0], o.size[2] * 0.5) });
+  for (const g of track.gates) if (g.kind === 'tunnel') out.push(...tunnelKeepOuts(g));
+  for (const o of track.obstacles) out.push(...obstacleKeepOuts(o));
   out.push({ x: track.start.pos[0], z: track.start.pos[2], r: 8 });
   return out;
 }

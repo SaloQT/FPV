@@ -51,8 +51,16 @@ function gate(index: number, kind: GateKind, x: number, z: number, yaw: number, 
   return { index, kind, pos: [x, ground(x, z) + h / 2 + lift, z], yaw, roll, pitch, width: w, height: h };
 }
 
-/** A fixed lineup of every gate kind heading north (-Z) from the pad, with cones, poles, a wall, a rock and a tree. */
+/**
+ * A fixed lineup of every gate kind heading north (-Z) from the pad: the original kinds first (gates 0-5), then a window, a
+ * three-rung ladder, a tunnel, a hurdle, a drop ring and a gate rolled 45 degrees, then the finish. Obstacles of every kind
+ * stand beside the line; a beam and a bridge span it.
+ */
 function rowTrack(ground: (x: number, z: number) => number): TrackData {
+  const ladder = (index: number, k: number): TrackGate => {
+    const g = gate(index, 'ladder', 0, -88, k % 2 ? Math.PI : 0, 2.2, 1.8, ground, 1.2 + k * 3.1);
+    return { ...g, feature: 'ladder' };
+  };
   const gates: TrackGate[] = [
     gate(0, 'start', 0, -2, 0, 2.4, 2, ground),
     gate(1, 'square', 1.5, -12, -0.12, 2.2, 2.2, ground),
@@ -60,7 +68,15 @@ function rowTrack(ground: (x: number, z: number) => number): TrackData {
     gate(3, 'hoop', 0.5, -32, -0.05, 2, 2, ground, 0.9),
     gate(4, 'dive', 2, -42, 0.08, 2.2, 2.2, ground, 3.2, -0.5),
     gate(5, 'flag', 0, -52, 0, 2.6, 1.4, ground),
-    gate(6, 'finish', -0.5, -62, 0, 2.8, 2, ground),
+    gate(6, 'window', 0, -74, 0.05, 2.4, 2, ground, 0.9),
+    ladder(7, 0),
+    ladder(8, 1),
+    ladder(9, 2),
+    { ...gate(10, 'tunnel', 0, -100, 0, 2.6, 2.4, ground, 0.5), depth: 6 },
+    gate(11, 'hurdle', 0, -116, 0, 5, 1.5, ground, 0.45),
+    { ...gate(12, 'drop', 0, -128, 0, 3, 3, ground, 0, -Math.PI / 2), pos: [0, ground(0, -128) + 6, -128] },
+    gate(13, 'square', 0, -140, 0, 2.4, 2.4, ground, 1.2, 0, Math.PI / 4),
+    gate(14, 'finish', -0.5, -152, 0, 2.8, 2, ground),
   ];
   const ob = (kind: TrackObstacle['kind'], x: number, z: number, yaw: number, size: Vec3): TrackObstacle => ({ kind, pos: [x, ground(x, z), z], yaw, size });
   const obstacles: TrackObstacle[] = [
@@ -79,6 +95,13 @@ function rowTrack(ground: (x: number, z: number) => number): TrackData {
     ob('rock', -6, -40, 2.1, [2.2, 1.5, 1.8]),
     ob('tree', -9, -8, 0, [0.35, 8, 0.35]),
     ob('tree', 10, -20, 0, [0.4, 10, 0.4]),
+    ob('container', 16, -70, 0.2, [6.1, 2.6, 2.44]),
+    ob('container', 17, -80, -0.1, [6.1, 5.2, 2.44]),
+    ob('pillar', -10, -76, 0.4, [1.4, 12, 1.4]),
+    ob('scaffold', -14, -95, 0.3, [10, 6, 2]),
+    ob('beam', 0, -110, 0, [10, 4.5, 0.5]),
+    ob('tower', 20, -120, 0.15, [4, 22, 4]),
+    ob('bridge', 0, -166, 0, [18, 6, 5]),
   ];
   const p0 = gates[0].pos;
   const path: Vec3[] = gates.map((g) => g.pos);

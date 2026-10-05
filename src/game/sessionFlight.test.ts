@@ -105,8 +105,10 @@ describe('takeoff, crash and respawn', () => {
     takeOff(rig);
     rig.physics.crashOnStep = rig.physics.steps + 3;
     rig.run(0.05);
+    const recenters = rig.input.recenters;
     rig.input.actions.push('respawn');
     rig.run(0.01);
+    expect(rig.input.recenters).toBe(recenters + 1);
     const at = rig.physics.resets.at(-1)!;
     expect(at.pos[0]).toBe(0);
     expect(at.pos[2]).toBe(0);

@@ -181,6 +181,8 @@ class RtModule implements RTModule {
   private prepare(rc: RenderContext): RtGroups {
     if (!this.tex || this.bound !== rc.gbuf) this.allocate(rc);
     const tex = this.tex!;
+    if (rc.quality.giRays === 2 && this.pipes.giHits && !tex.giHits) { tex.ensureGiHits(); this.groups = null; }
+    if (rc.quality.giRays === 2 && this.pipes.giVisibility && !tex.giVisibility) { tex.ensureGiVisibility(); this.groups = null; }
     const limits = this.probeLimits(rc.quality);
     if (!this.probes.matches(rc.quality.probes, limits)) {
       this.probes.destroy();
@@ -227,7 +229,7 @@ class RtModule implements RTModule {
     const profiler = rc.profiler?.active ? rc.profiler : undefined;
     let pass = this.pass = enc.beginComputePass(profiler ? profiler.computePass('rt auxiliary', 'rtAux') : { label: 'rt' });
     pass.setBindGroup(0, rc.frame.group);
-    this.local(this.pipes.aux, groups.aux[par]);
+    this.traced(this.pipes.aux, groups.aux[par], this.wx, this.wy, 1);
     if (profiler) pass = this.nextProfilePass(enc, profiler, 'probes');
     const dim = this.probes.dim;
     if (compact) {
@@ -279,7 +281,15 @@ class RtModule implements RTModule {
   private signal(sig: Signal, groups: RtGroups, par: number, enc: GPUCommandEncoder, profiler?: GpuProfiler): void {
     const name = sig === 'spec' ? 'specular' : sig;
     if (profiler) this.nextProfilePass(enc, profiler, `${name}Rays`);
-    this.traced(this.pipes.trace[sig], groups.trace[sig]![par], this.wx, this.wy, 1);
+    if (sig === 'gi' && this.rc.quality.giRays === 2 && this.pipes.giHits && this.pipes.giShade && groups.giHits && groups.giShade) {
+      this.traced(this.pipes.giHits, groups.giHits[par], Math.ceil(this.rc.gbuf.rtWidth / 8), Math.ceil(this.rc.gbuf.rtHeight / 4), 1);
+      if (this.pipes.giVisibility && groups.giVisibility) {
+        this.traced(this.pipes.giVisibility, groups.giVisibility[par], Math.ceil(this.rc.gbuf.rtWidth / 8), Math.ceil(this.rc.gbuf.rtHeight / 4), 1);
+      }
+      this.traced(this.pipes.giShade, groups.giShade[par], Math.ceil(this.rc.gbuf.rtWidth / 8), Math.ceil(this.rc.gbuf.rtHeight / 8), 1);
+    } else {
+      this.traced(this.pipes.trace[sig], groups.trace[sig]![par], sig === 'gi' ? Math.ceil(this.rc.gbuf.rtWidth / 8) : this.wx, sig === 'gi' ? Math.ceil(this.rc.gbuf.rtHeight / 2) : this.wy, 1);
+    }
     if (profiler) this.nextProfilePass(enc, profiler, `${name}Denoise`);
     this.local(this.pipes.temporal[sig], groups.temporal[sig]![par]);
     for (let i = 0; i < ATROUS_ITERATIONS; i++) this.local(this.pipes.atrous[sig][i], groups.atrous[sig]![par][i]);

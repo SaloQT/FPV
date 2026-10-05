@@ -1,0 +1,21 @@
+/** Everything the Node tools in tools/brain use, bundled by tools/brain/bundle.mjs. */
+export { envShader, envSlot, DEFAULT_ENV } from '../gpu/envKernel';
+export { QUAD_LAYOUT } from '../gpu/quadState';
+export { ENV_LAYOUT } from '../gpu/envState';
+export { QUAD_5IN_6S } from '../../sim/presets';
+export { QuadPhysics } from '../../sim/quad';
+export { DEFAULT_RATES } from '../../sim/fc/rates';
+export { buildTrainWorld, packWorlds } from './worlds';
+export { trainWorldSpecs, evalWorldSpecs, buildMixWorld, trackFileWorld, parseStyles, defaultRecipes, describeWorld, CLASSIC_STYLES } from './worldMix';
+export { parseTrackFile } from './trackFile';
+export { packPath } from './pathProgress';
+export { DASH_TRACE_ENVS } from './trace';
+export { worldGeometry } from './dashGeom';
+export { GENERATED_STYLES } from '../../contracts';
+export { runParity, parityShader } from './parity';
+export { parityFlights } from './parityFlights';
+export { PpoTrainer, DEFAULT_PPO } from './ppo';
+export { ppoReference } from './reference';
+export { serializeBrain, parseBrain } from '../brain';
+export { runObsCheck } from './obsCheck';
+export { evaluateBrain } from './evaluate';

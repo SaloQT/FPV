@@ -3,8 +3,18 @@
 
 @group(${GRP}) @binding(6) var auxDepth : texture_2d<f32>;
 @group(${GRP}) @binding(7) var auxNormal : texture_2d<f32>;
+#ifdef VISIBILITY_ONLY
+@group(${GRP}) @binding(8) var out0 : texture_storage_2d<r32float, write>;
+@group(${GRP}) @binding(9) var out1 : texture_storage_2d<r32float, write>;
+#else
+#ifdef TRACE_ONLY
+@group(${GRP}) @binding(8) var out0 : texture_storage_2d<rg32float, write>;
+@group(${GRP}) @binding(9) var out1 : texture_storage_2d<rg32float, write>;
+#else
 @group(${GRP}) @binding(8) var out0 : texture_storage_2d<rgba16float, write>;
 @group(${GRP}) @binding(9) var out1 : texture_storage_2d<rgba16float, write>;
+#endif
+#endif
 
 struct PixelInfo { ok : bool, z : f32, n : vec3f, rough : f32, metal : f32, pos : vec3f }
 

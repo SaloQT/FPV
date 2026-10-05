@@ -16,6 +16,9 @@ export interface RtPipelines {
   probePlan: GPUComputePipeline;
   probeCompact: GPUComputePipeline;
   trace: Record<Signal, GPUComputePipeline>;
+  giHits: GPUComputePipeline | null;
+  giShade: GPUComputePipeline | null;
+  giVisibility: GPUComputePipeline | null;
   temporal: Record<Signal, GPUComputePipeline>;
   atrous: Record<Signal, GPUComputePipeline[]>;
 }
@@ -42,17 +45,20 @@ export async function createPipelines(rc: RenderContext, L: RtLayouts): Promise<
     if (i === 0) defines.VARSTORE = true;
     return make(`${s} atrous ${i}`, 'atrous', defines, localLayout(toR32 ? L.atrousR32 : L.atrousRgba));
   }));
-  const [aux, latch, probe, probePlan, probeCompact, ...rest] = await Promise.all([
-    make('aux', 'aux_pass', { GRP: 1 }, localLayout(L.aux)),
+  const [aux, latch, probe, probePlan, probeCompact, giHits, giShade, giVisibility, ...rest] = await Promise.all([
+    make('aux', 'aux_pass', { GRP: 2 }, worldLayout(L.aux)),
     make('latch', 'latch', { GRP: 1 }, localLayout(L.latch)),
     make('probe update', 'probe_update', { GRP: 2 }, worldLayout(L.probe)),
     make('probe plan', 'probe_plan', { GRP: 1 }, localLayout(L.probePlan)),
     make('probe compact update', 'probe_update', { GRP: 2, COMPACT: true }, worldLayout(L.probeCompact)),
+    L.giHits ? make('gi hits', 'gi', { GRP: 2, TRACE_ONLY: true }, worldLayout(L.giHits)) : Promise.resolve(null),
+    L.giShade ? make('gi shade', 'gi', { GRP: 2, SHADE_ONLY: true, GI_RECORDED: true, SHADE_VISIBILITY: !!L.giVisibility }, worldLayout(L.giShade)) : Promise.resolve(null),
+    L.giVisibility ? make('gi visibility', 'gi', { GRP: 2, GI_RECORDED: true, VISIBILITY_ONLY: true }, worldLayout(L.giVisibility)) : Promise.resolve(null),
     ...trace, ...temporal, ...atrous.flat(),
   ]);
   const at = (i: number) => rest.slice(i, i + ATROUS_ITERATIONS);
   return {
-    aux, latch, probe, probePlan, probeCompact,
+    aux, latch, probe, probePlan, probeCompact, giHits, giShade, giVisibility,
     trace: { shadow: rest[0], gi: rest[1], spec: rest[2] },
     temporal: { shadow: rest[3], gi: rest[4], spec: rest[5] },
     atrous: { shadow: at(6), gi: at(9), spec: at(12) },

@@ -192,4 +192,16 @@ describe('erodeDroplets', () => {
     for (let k = 0; k < brush.dx.length; k++) expect(Math.hypot(brush.dx[k], brush.dy[k])).toBeLessThan(3);
     expect(brush.offset[0]).toBe(brush.dy[0] * N + brush.dx[0]);
   });
+
+  it('keeps recording water but does not write heights when erosion capacity is zero', () => {
+    const source = slopeField();
+    let writes = 0;
+    const h = new Proxy(source, {
+      set(target, key, value) { writes++; return Reflect.set(target, key, value); },
+    });
+    const visits = new Float32Array(N * N);
+    drain(erodeDroplets(h, N, { ...params, capacity: 0, droplets: 100 }, new Rng(2), visits, () => {}));
+    expect(writes).toBe(0);
+    expect(total(visits)).toBeGreaterThan(100);
+  });
 });

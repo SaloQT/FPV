@@ -1,0 +1,117 @@
+iteration	change	artifact_prefix	phase	gpu_mean_ms	gpu_p95_ms	cpu_mean_ms	baseline_gpu_mean_ms	reduction_percent	min_ssim	quality_samples	elapsed_seconds	host_wait_seconds	confirmation_seconds	decision
+B00	Original repeatability	dc1290668e22	3 fresh runs; 2 untimed replays	73.491706	82.709709	1.491609			0.999999483762	45				reference
+E01	Parallel GI rays	5c2bc0ef0bda	single screen	76.445778	85.265613	1.479460			0.999999829769	2				rejected: slower
+E02	Shared BVH stacks	0d5a7cefb11f	single screen	82.542592	93.395354	1.553772								rejected: slower
+E03	GI 8x4 groups	3af1a0be0bc9	3 fresh pairs	60.725439	70.023031	1.390349	73.488575	17.364604	0.999927576600	45				verified: 3 pairs; superseded
+E04	Direct near-child traversal	ba43a6d5aba9	single screen	69.690764	78.774272	1.521019			0.999999836535	2				screen only; combined in E05
+E05	E03 + E04 combined	f81006b08832	9 fresh pairs	60.026146	75.190909	1.376818	76.200916	21.224447	0.999927584597	45				Verified by nine pairs and full quality; superseded by faster verified E105.
+E06	GI 16x2 groups	818a2a0115e9	single screen	61.838459	76.906496	1.487285					42.66			Screen did not improve reference mean by 0.5% and p95; not retained
+E07	GI 32x1 groups	e48e667610fe	single screen	60.209234	76.221645	1.381691					41.94			Screen did not improve reference mean by 0.5% and p95; not retained
+E08	GI 4x8 groups	c8f94ec91fb4	single screen	59.071529	75.907072	1.262765					41.90			Screen did not improve reference mean by 0.5% and p95; not retained
+E09	GI 8x2 groups	b2acde873ccf	single screen	74.221268	84.711834	1.314277					48.76			Screen did not improve reference mean by 0.5% and p95; not retained
+E10	GI 16x4 groups	ae9dbbe90cb0	single screen	70.957356	80.999219	1.314801					47.78			Screen did not improve reference mean by 0.5% and p95; not retained
+E11	GI 4x4 groups	50260ffd30ab	single screen	75.340186	92.222259	1.288259					49.73			Screen did not improve reference mean by 0.5% and p95; not retained
+E12	GI 2x16 groups	7cf711488253	single screen	60.457178	75.851366	1.259182					41.50			Screen did not improve reference mean by 0.5% and p95; not retained
+E13	GI 1x32 groups	41a59f248956	single screen	61.910985	78.331904	1.322286					42.48			Screen did not improve reference mean by 0.5% and p95; not retained
+E14	Parallel GI rays 8x2x2	a0d6034f312d	single screen	59.276438	74.753638	1.260143			0.999999566169	2	46.77			Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E15	Parallel GI rays 4x4x2	51b124fc1088	single screen	59.930706	75.772723	1.290959					42.21			Screen did not improve reference mean by 0.5% and p95; not retained
+E16	Parallel GI rays 16x1x2	b4e80cfd9a17	single screen	59.604555	76.346163	1.274330					41.77			Screen did not improve reference mean by 0.5% and p95; not retained
+E17	Parallel GI rays 8x4x2	b67f594bf8b1	single screen	71.312561	80.216064	1.266267					47.43			Screen did not improve reference mean by 0.5% and p95; not retained
+E18	Parallel GI rays 4x8x2	807207749e53	single screen	71.267560	79.976858	1.262311					47.46			Screen did not improve reference mean by 0.5% and p95; not retained
+E19	Parallel GI rays 16x2x2	105d16fa3e0d	single screen	70.830435	79.888384	1.284939					47.43			Screen did not improve reference mean by 0.5% and p95; not retained
+E20	Unroll two-ray GI path	ea7080e9f2ad	single screen	66.825530	82.916147	1.384694					44.50			Screen did not improve reference mean by 0.5% and p95; not retained
+E21	Combine filter exponentials	98f1f0f05f08	single screen	59.086602	75.376230	1.203099					41.25			Screen did not improve reference mean by 0.5% and p95; not retained
+E22	One-divide filter plane	f7d808b420d0	single screen	60.463077	76.526387	1.320796					41.12			Screen did not improve reference mean by 0.5% and p95; not retained
+E23	Skip negligible depth taps	c12fd16310aa	single screen	59.381951	68.121395	1.381048			0.999993347587	2	41.72			Screen did not improve reference mean by 0.5% and p95; not retained
+E24	Secondary shadows 128m	e8c6bc4f3bc6	single screen	59.222262	75.261542	1.296569					42.20			Screen did not improve reference mean by 0.5% and p95; not retained
+E25	Secondary shadows 64m	35cd96449455	single screen	58.813099	74.714317	1.261568			0.999898436871	2	47.58			Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E26	Cull missed dynamic root	5eaf6619a63a	single screen	71.623857	81.608704	1.321844					48.74			Screen did not improve reference mean by 0.5% and p95; not retained
+E27	Recompute far-node entry	022000ca72fe	single screen	55.403479	64.952730	1.242411			0.999999862369	2	45.29			Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E28	Early opaque canopy exit	c6b0210a61bf	single screen	61.104893	77.473382	1.319908					42.67			Screen did not improve reference mean by 0.5% and p95; not retained
+E29	Hybrid BVH stack 16 private	5b16a5e56559	single screen	64.177657	81.333453	1.327477					43.91			Screen did not improve reference mean by 0.5% and p95; not retained
+E30	Hybrid BVH stack 8 private	21aa85785008	single screen	74.055025	87.044915	1.300086					49.92			Screen did not improve reference mean by 0.5% and p95; not retained
+E31	Hybrid BVH stack 4 private	4504663d84f7	single screen	74.316950	82.903040	1.310747					48.71			Screen did not improve reference mean by 0.5% and p95; not retained
+E32	Hybrid BVH stack 1 private	3d8e76d4f009	single screen	80.609935	97.455309	1.349243					51.14			Screen did not improve reference mean by 0.5% and p95; not retained
+E33	BVH leaves 2 primitives	b1f17a0378ce	single screen	54.290459	63.068570	1.272056			0.999999500354	2	45.44			Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E34	BVH leaves 8 primitives	6e66323ac723	single screen	61.445024	80.180019	1.465570					41.14			Screen did not improve reference mean by 0.5% and p95; not retained
+E35	BVH leaves 16 primitives	435bc1e5daeb	single screen	85.728297	120.805786	1.384981					57.02			Screen did not improve reference mean by 0.5% and p95; not retained
+E36	BVH leaves 6 primitives	b674c5482903	single screen	60.322611	80.501146	1.300924					43.52			Screen did not improve reference mean by 0.5% and p95; not retained
+E37	BVH leaves 12 primitives	ad953b5292de	single screen	80.149873	104.497152	1.386024					54.40			Screen did not improve reference mean by 0.5% and p95; not retained
+E38	BVH leaves 3 primitives	466ed288bd15	single screen	80.929969	118.688973	1.955807					54.89			Inconclusive with elevated CPU timing; not retained
+E39	BVH leaves 1 primitives	52a6b90e2c5b	single screen	56.413826	79.514829	1.478730					42.67			Screen did not improve reference mean by 0.5% and p95; not retained
+E40	BVH leaves 24 primitives	32bfdd3e9fba	single screen	99.754093	166.910362	1.762473					84.56			Screen did not improve reference mean by 0.5% and p95; not retained
+E41	Split GI trace 8x4	5e1b7b538b8f	single screen	49.215788	59.696742	1.302614			0.999957122448	2	46.04			Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E42	Split GI trace 8x8	8824054d0f26	single screen	92.389594	113.511629	3.449489					65.43			Inconclusive with elevated CPU timing; not retained
+E43	Split GI trace 16x4	3a60f81c22fc	single screen	88.930386	110.388838	2.587793					73.87			Inconclusive with elevated CPU timing; not retained
+E44	Split GI trace 4x8	894a83571155	single screen	57.724983	96.740966	1.471516					54.69			Inconclusive: unchanged E41 control exposed severe timing instability during external CPU build activity; not retained
+E45	Specialize two-ray shade	d28716ffa8c7	single screen	53.506649	81.212211	1.719917					71.39	12.06		Screen did not improve reference mean by 0.5% and p95; not retained
+E46	One shade operation per lane	caefea8e630a	single screen	48.935294	59.401830	1.476614			0.999957128756	2	46.42	0.50		Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E47	Skip unused hit stores	c0d5381943e8	single screen	52.665603	84.194099	1.703319					40.97	0.52		Screen did not improve reference mean by 0.5% and p95; not retained
+E48	Terrain-first scene trace	b0bfee51ce0b	single screen	59.060388	92.179661	1.879389					79.62	35.27		Screen did not improve reference mean by 0.5% and p95; not retained
+E49	Terrain-first visibility	957c50b85bb4	single screen	56.033280	80.976282	1.879284					49.30	0.56		Screen did not improve reference mean by 0.5% and p95; not retained
+E50	Canopy quadrature 3 points	d0d2b6d4cfac	single screen	56.394820	84.895334	2.170355					46.33	0.53		Inconclusive with elevated CPU timing; not retained
+E51	Canopy quadrature 2 points	2cdab3b89128	single screen	86.751314	101.584077	3.338267					80.49	0.53		Inconclusive with elevated CPU timing; not retained
+E52	Split GI secondary shadows 32m	9c4534333395	single screen	52.490404	76.352717	2.342170					93.49	46.10		Inconclusive with elevated CPU timing; not retained
+E53	Split GI secondary shadows 64m	7cdcabe9bab5	single screen	87.353590	108.793037	2.929331					69.82	0.55		Inconclusive with elevated CPU timing; not retained
+E54	Fused BVH slabs	a4c2357e1336	single screen	60.011097	88.673485	1.925474					49.33	0.88		Screen did not improve reference mean by 0.5% and p95; not retained
+E55	Sign-ordered BVH slabs	31c541e1142c	single screen	72.502477	97.327514	4.089795					67.13	0.54		Inconclusive with elevated CPU timing; not retained
+E56	Pack canopy flag with kind	b7c77845d814	single screen	71.422444	107.023565	4.301608					61.67	0.57		Inconclusive with elevated CPU timing; not retained
+E57	Tight bound on far-node pop	0eabf8c25580	single screen	50.076058	61.682483	1.417759					57.90	11.46		Screen did not improve reference mean by 0.5% and p95; not retained
+E58	Explicit stack index range	6848e884ce9c	single screen	54.209195	81.759437	1.521770					44.09	0.53		Screen did not improve reference mean by 0.5% and p95; not retained
+E59	Reuse per-invocation stack	329424069e36	single screen	48.796358	62.930944	1.482744					40.46	0.53		Screen did not improve reference mean by 0.5% and p95; not retained
+E60	Split GI shade 4x4x2	7f76f807e93d	single screen	51.945800	74.330931	1.614647					46.19	6.60		Screen did not improve reference mean by 0.5% and p95; not retained
+E61	Split GI shade 16x1x2	18274d737dd8	single screen	50.245359	62.534451	1.753374					47.81	6.56		Screen did not improve reference mean by 0.5% and p95; not retained
+E62	Split GI shade 8x4x2	61b3eb3b959d	single screen	69.942641	96.472269	2.550713					104.87	41.86		Inconclusive with elevated CPU timing; not retained
+E63	Split GI shade 4x8x2	e5ebfdccb814	single screen	70.058858	101.282611	2.121195					93.67	20.35		Screen did not improve reference mean by 0.5% and p95; not retained
+E64	Split GI shade 16x2x2	136a0278e66e	single screen	70.296098	108.799590	2.005274					69.27	17.40		Screen did not improve reference mean by 0.5% and p95; not retained
+E65	Split GI shade 8x8x2	1a27358c8139	single screen	56.604972	81.077862	1.806556					54.80	7.55		Screen did not improve reference mean by 0.5% and p95; not retained
+E66	Split GI trace 8x2x2	def6be2d7580	single screen	51.648703	70.700237	1.730538					62.99	6.62		Screen did not improve reference mean by 0.5% and p95; not retained
+E67	Split GI trace 4x4x2	6333dc47e805	single screen	50.510780	66.335539	1.560219					46.18	6.68		Screen did not improve reference mean by 0.5% and p95; not retained
+E68	Split GI trace 8x4x2	865ee0f35ba2	single screen	65.635833	104.012186	6.930761					59.66	6.58		Inconclusive with elevated CPU timing; not retained
+E69	Split GI trace 16x2x2	9149b1fb4b25	single screen	49.458927	64.821658	1.679629					68.47	28.12		Screen did not improve reference mean by 0.5% and p95; not retained
+E70	Precompute identical terrain bounds	e67b3c32dc7e	single screen	75.112994	101.587354	2.339292					80.88	17.42		Inconclusive with elevated CPU timing; not retained
+E71	Tighter closed-cell terrain bounds	0bbfa309358e	single screen	60.573396	89.859686	1.837683					66.58	17.20		Screen did not improve reference mean by 0.5% and p95; not retained
+E72	Hoist terrain ray reciprocal	5dca7c374364	single screen	67.276199	108.727501	4.977509					58.33	6.62		Inconclusive with elevated CPU timing; not retained
+E73	BVH radix depth 0	a18094dd1fa2	single screen	61.787122	76.408422	1.677557					58.73	7.04		Screen did not improve reference mean by 0.5% and p95; not retained
+E74	BVH radix depth 4	e30289c4d237	single screen	54.767124	71.539098	1.698291					49.26	6.55		Screen did not improve reference mean by 0.5% and p95; not retained
+E75	BVH radix depth 8	c7f68de23b47	single screen	52.606403	74.891264	1.626108					48.27	6.52		Screen did not improve reference mean by 0.5% and p95; not retained
+E76	BVH radix depth 10	99f6a093b265	single screen	49.352103	62.478746	1.509462					172.76	130.62		Screen did not improve reference mean by 0.5% and p95; not retained
+E77	BVH radix depth 12	f27ae744b74f	single screen	61.616073	92.933325	1.816687					54.81	7.54		Screen did not improve reference mean by 0.5% and p95; not retained
+E78	Unroll two-primitive closest leaves	ace7d1d6bfe7	single screen	72.235527	103.242138	3.030229					67.13	6.64		Inconclusive with elevated CPU timing; not retained
+E79	Hoist per-ray canopy jitter	07755173ac9e	single screen	89.674001	110.166016	15.703546					88.01	17.37		Inconclusive with elevated CPU timing; not retained
+E80	Separate GI visibility 8x2x2	79ba104e892b	single screen	78.525017	95.757926	23.168522					695.41	624.21		Inconclusive with elevated CPU timing; not retained
+E81	Separate GI visibility 4x4x2	40f7deb9d61d	single screen	44.627613	50.793677	2.847248			0.999952086249	2	135.52	83.49		Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E82	Separate GI visibility 8x4x2	3ec02a148b29	single screen	43.604815	49.027482	2.474164			0.999952036459	45	289.13	216.21		Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E83	Separate GI visibility 16x2x2	ce6d48351bd6	single screen	43.921572	50.266112	2.106221			0.999952085661	2	403.90	357.33		Quick quality passed; no improvement over current sweep leader
+E84	Single-pass terrain top three	13ca4c2b065f	single screen	43.797927	49.355162	1.688189					97.19	58.62		Screen did not improve reference mean by 0.5% and p95; not retained
+E85	Skip zero-weight terrain noise	d294e4bcb14f	single screen	43.687827	49.024205	2.027522					66.04	14.62		Screen did not improve reference mean by 0.5% and p95; not retained
+E86	Terrain projection sixth power	98703ac71a71	single screen	43.433110	49.217536	2.030312					504.85	463.99		Screen did not improve reference mean by 0.5% and p95; not retained
+E87	Parent-linked BVH closest	0413098a9770	single screen	45.827140	52.176486	4.863093					113.94	39.72		Inconclusive with elevated CPU timing; not retained
+E88	Parent-linked BVH transmission	6067dd1cc92e	single screen	47.326604	53.480653	2.582459					114.76	69.69		Screen did not improve reference mean by 0.5% and p95; not retained
+E89	Parent-linked BVH both	a8cda4ff6e49	single screen	48.655892	55.122330	2.006136					93.94	50.15		Screen did not improve reference mean by 0.5% and p95; not retained
+E90	Canopy header flag after GI split	c48b51a911e9	single screen	43.478767	49.741824	2.081641					55.91	15.71		Screen did not improve reference mean by 0.5% and p95; not retained
+E91	Sphere intersection fast branch	117036c32a48	single screen	43.524424	49.568154	2.229776					56.64	14.87		Screen did not improve reference mean by 0.5% and p95; not retained
+E92	Unroll four canopy samples	ae78b809737f	single screen	43.396410	49.053696	1.801788					58.51	14.82		Screen did not improve reference mean by 0.5% and p95; not retained
+E93	Skip exactly zero depth taps	39bb57f33e2d	single screen	43.562653	49.741824	2.294717					77.33	32.65		Screen did not improve reference mean by 0.5% and p95; not retained
+E94	Skip negligible depth taps after GI split	d9bdce633fa9	single screen	43.152398	49.093018	2.003767					352.66	311.34		Screen did not improve reference mean by 0.5% and p95; not retained
+E95	Reuse filter centre data	65ce33bcb80b	single screen	43.170529	49.122509	2.363665					58.79	14.75		Screen did not improve reference mean by 0.5% and p95; not retained
+E96	Secondary GI shadows 64m after split	c57ef8cfc095	single screen	42.962999	48.768614	2.138352			0.999885676936	2	154.16	96.36		Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E97	Secondary GI shadows 128m after split	734f2dff1567	single screen	43.076813	48.565453	3.055044			0.999947737569	2	307.46	253.15		Quick quality passed; no improvement over current sweep leader
+E98	Precompute identical terrain bounds	7fce86ce17b6	single screen	42.533082	48.109978	2.185658			0.999885920304	2	354.73	306.98		Exploratory improvement; superseded by E105; no independent nine-pair confirmation.
+E99	Tighter closed-cell terrain bounds	b9379123e968	single screen	42.365310	48.627712	2.819597			0.999886008735	2	334.14	283.78		Quick quality passed; no improvement over current sweep leader
+E100	Hoist terrain ray reciprocal	1d15698954c0	single screen	42.947925	48.568730	2.096092					55.33	14.66		Screen did not improve reference mean by 0.5% and p95; not retained
+E101	Pack BVH stack 19 bits	6dd5ba3cb1e1	single screen	44.363721	50.138317	1.936165					48.01	7.67		Screen did not improve reference mean by 0.5% and p95; not retained
+E102	Pack BVH stack 24 bits	bef31ec28141	single screen	44.915535	50.662605	3.896799					63.30	19.10		Inconclusive with elevated CPU timing; not retained
+E103	Split low/high BVH stack bits	4b0a4c87dde8	single screen	44.416587	50.623283	1.854703					354.62	300.94		Screen did not improve reference mean by 0.5% and p95; not retained
+E104	Serial recorded-hit shading 8x4	46753c1dea71	single screen	42.417084	47.985459	2.129097					237.86	197.87		Screen did not improve reference mean by 0.5% and p95; not retained
+E105	Serial recorded-hit shading 8x8	7f8fa71e05d2	9 fresh pairs	42.528009	47.980726	2.100753	73.143492	41.855614	0.999885654187	45	111.99	68.57	1970.35	Retained under existing native benchmark gates: nine fresh pairs, full SSIM/visual review, exact states/ray answers, build/tests passed. CPU mean change 0.196 ms; CPU non-regression remains unproven.
+E106	Serial recorded-hit shading 16x4	a577f538e3d1	single screen	42.857267	48.372122	8.432932					274.47	228.32		Inconclusive with elevated CPU timing; not retained
+E107	Serial recorded-hit shading 4x8	36537e622310	single screen	42.503373	48.303309	1.888348					50.94	7.64		Screen did not improve reference mean by 0.5% and p95; not retained
+E108	Serial recorded-hit shading 32x1	0b1a1955a799	single screen	42.637066	47.978906	1.977801					46.07	7.59		Screen did not improve reference mean by 0.5% and p95; not retained
+E109	Recorded-hit trace tile 16x2	6503209d657e	single screen	42.898555	48.060826	1.757167					46.25	7.54		Screen did not improve reference mean by 0.5% and p95; not retained
+E110	Recorded-hit trace tile 32x1	5226e36923ab	single screen	43.023947	48.893133	2.398775					47.62	7.62		Screen did not improve reference mean by 0.5% and p95; not retained
+E111	Recorded-hit trace tile 4x8	99f2f8070038	single screen	42.969115	48.893133	1.947849					78.15	18.44		Screen did not improve reference mean by 0.5% and p95; not retained
+E112	Recorded-hit trace tile 8x8	fb828cc7189c	single screen	43.079216	49.086464	1.937749					46.82	7.60		Screen did not improve reference mean by 0.5% and p95; not retained
+E113	Fused GI hit visibility 8x4	7a4bf5feddc2	single screen	43.110892	48.965222	1.797884					47.79	7.67		Screen did not improve reference mean by 0.5% and p95; not retained
+E114	Fused GI hit visibility 8x2x2	48c82f50aa9f	single screen	42.717676	48.572006	2.204356					60.68	22.17		Screen did not improve reference mean by 0.5% and p95; not retained
+E115	Fused GI hit visibility 4x4x2	951f660a7385	single screen	42.631386	48.234496	2.223305					58.04	18.94		Screen did not improve reference mean by 0.5% and p95; not retained

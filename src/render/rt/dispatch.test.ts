@@ -32,6 +32,7 @@ function context(width: number, height: number, specular: boolean): RenderContex
 }
 
 describe('RT dispatch dimensions', () => {
+  const giGroup = resolveShader('rt/gi.wgsl', { GRP: 2 }).match(/@workgroup_size\((\d+),\s*(\d+)/)!;
   beforeEach(() => {
     vi.stubGlobal('GPUShaderStage', { COMPUTE: 4 });
     vi.stubGlobal('GPUBufferUsage', { STORAGE: 128, UNIFORM: 64, COPY_DST: 8, INDIRECT: 256 });
@@ -39,7 +40,7 @@ describe('RT dispatch dimensions', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each([[1, 1, false], [960, 540, false], [1920, 1080, true]] as const)(
+  it.each([[1, 1, false], [13, 11, true], [960, 540, false], [1920, 1080, true]] as const)(
     'latches once after every signal at %ix%i (specular=%s)', async (width, height, specular) => {
       const rc = context(width, height, specular);
       const mod = createRTModule();
@@ -59,6 +60,10 @@ describe('RT dispatch dimensions', () => {
       expect(calls.at(-1)?.label).toBe('rt latch');
       expect(calls.at(-2)?.label).toBe(specular ? 'rt spec atrous 2' : 'rt gi atrous 2');
       expect(calls[0]).toEqual({ label: 'rt aux', size: [Math.ceil(width / 8), Math.ceil(height / 8), 1] });
+      // Match the compiled fallback shader, including partial edge groups and native sizes.
+      expect(calls.find((c) => c.label === 'rt gi')?.size).toEqual([Math.ceil(width / Number(giGroup[1])), Math.ceil(height / Number(giGroup[2])), 1]);
+      expect(calls.find((c) => c.label === 'rt shadow')?.size).toEqual([Math.ceil(width / 8), Math.ceil(height / 8), 1]);
+      expect(calls.find((c) => c.label === 'rt gi temporal')?.size).toEqual([Math.ceil(width / 8), Math.ceil(height / 8), 1]);
       expect(calls.filter((c) => /^(rt (shadow|gi|spec)( temporal| atrous [0-2])?)$/.test(c.label))).toHaveLength(specular ? 15 : 10);
       // A capture re-encode still latches exactly once at the same point.
       calls.length = 0;

@@ -11,8 +11,10 @@
  *   newTrack() / newWorld()   the N key and the menu's "new world" without keys
  *   patch(p)   change settings like the menu does;  cam(mode)  pick the camera
  *   loseDevice()  pretends the GPU device was lost, to exercise the failure panel and Recover
+ *   builder    the track builder: open(), close(), setRecipe(r), state() (status, recipe, board), fly(), benchmark(names) ...
  *   bench      with `?bench=1`: the result of the scripted run once it finished (see bench.ts);  benchDone  the promise of it
  *
+ * `stats.builder` is true while the track builder is open; `stats.recipe` is the recipe of a builder track (else undefined).
  * `stats.request` is the exact track request that produced the world (seed, style, gates, laps, difficulty: what a share link carries).
  * `stats` carries the renderer's numbers too: displayHz (measured refresh), targetFps, frameCap, dynamicDriver, passMs (GPU ms per
  * frame section, see render/gpuTimer.ts, NaN without timestamp-query) and errorCount.
@@ -21,6 +23,8 @@ import type { QuadState } from '../contracts';
 import type { CameraMode } from '../game/cameraRig';
 import type { RaceSnapshot } from '../game/gateTimer';
 import type { AppSettings } from '../ui/settingsSchema';
+import type { BrainHub } from './brains';
+import type { BuilderHub } from './builder';
 import type { BenchResult } from './benchModel';
 import { present, SETTLE_RENDERS, simulate } from './frame';
 import { newTrack, newWorld } from './scene';
@@ -46,6 +50,10 @@ export interface FpvHook {
   patch(p: Partial<AppSettings>): void;
   cam(mode: CameraMode): void;
   loseDevice(): void;
+  /** The trained-brain hub: what flies the quad, the race, and the buttons of the AI pilots tab. */
+  brains: BrainHub;
+  /** The track builder mode. */
+  builder: BuilderHub;
   bench?: BenchResult;
   benchDone?: Promise<BenchResult>;
 }
@@ -92,6 +100,8 @@ function collectStats(ctx: AppCtx): Record<string, unknown> {
     resolution: w.terrain.resolution,
     windSpeed: ctx.wind.speed,
     audio: ctx.audio.running,
+    builder: ctx.builder.active,
+    recipe: w.track.recipe,
   };
 }
 
@@ -122,6 +132,8 @@ export function installHooks(ctx: AppCtx): FpvHook {
   hook.newWorld = () => newWorld(ctx, true);
   hook.patch = (p) => ctx.store.patch(p);
   hook.loseDevice = () => ctx.renderer.simulateLoss('simulated by window.__fpv.loseDevice()');
+  hook.brains = ctx.brains;
+  hook.builder = ctx.builder;
   hook.cam = (mode) => {
     ctx.camPreferred = mode;
   };

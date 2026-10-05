@@ -99,6 +99,10 @@ export class ScenarioPilot implements InputSource {
     this.inner.setThrottle(value);
   }
 
+  recenter(): void {
+    this.inner.recenter();
+  }
+
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     this.inner.setEnabled(enabled);

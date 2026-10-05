@@ -9,16 +9,30 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && node --test tools/brain/dashboard/test/*.test.mjs",
     "stars": "python3 tools/build_stars.py $HYG_CSV public/data/stars.bin 8.0",
     "shot": "node tools/shot.mjs",
-    "bench": "node tools/bench.mjs"
+    "bench": "node tools/bench.mjs",
+    "bench:artifact": "node tools/bench-native.mjs build",
+    "bench:capabilities": "node tools/bench-native.mjs capabilities",
+    "bench:native": "node tools/bench-native.mjs run",
+    "bench:compare": "node tools/bench-native.mjs compare",
+    "bench:worker": "node tools/bench-native.mjs worker",
+    "bench:submit": "node tools/bench-native.mjs submit",
+    "brain:train": "node tools/brain/train.mjs",
+    "brain:eval": "node tools/brain/eval.mjs",
+    "brain:publish": "node tools/brain/publish.mjs",
+    "brain:check": "node tools/brain/parity.mjs && node tools/brain/obscheck.mjs && node tools/brain/gradcheck.mjs",
+    "brain:dash": "node tools/brain/dashboard.mjs",
+    "brain:dash-demo": "node tools/brain/dashboard-demo.mjs",
+    "test:dash": "node --test tools/brain/dashboard/test/*.test.mjs"
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.74",
     "playwright-core": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "webgpu": "0.6.2"
   }
 }

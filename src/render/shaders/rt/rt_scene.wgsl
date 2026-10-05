@@ -19,7 +19,7 @@ const SH_Y1 : f32 = 0.488603;
 const GROUND_ALBEDO : f32 = 0.15;
 const HORIZON_EPS : f32 = -0.0145;
 const SHADOW_RAY_RANGE : f32 = 1500.0;
-const NEAR_SHADOW_RANGE : f32 = 250.0;
+const NEAR_SHADOW_RANGE : f32 = 64.0;
 const LEAF_TRANSMISSION : f32 = 0.8;
 // Light that stays in a leaf crown is scattered by leaves, which reflect AND transmit (reflectance + transmittance of a green leaf: red 0.10, green 0.22,
 // blue 0.07), so a crown seen along a ray inside it glows with the single-scatter albedo, not with the proxy's reflectance-only albedo (0.09 green). Diffuse
@@ -155,12 +155,18 @@ fn lightCosine(s : Surface, l : vec3f) -> f32 {
 
 // Outgoing radiance (pre-exposed) of a diffuse hit: key light (with a shadow ray for near hits, attenuated by the clouds), the other light,
 // probe bounce, emission. Clamped to what the fp16 probe / history textures can hold (pre-exposure reaches 1000 at night).
+#ifdef SHADE_VISIBILITY
+var<private> giVisibilityValue : f32 = 1.0;
+#endif
 fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u32) -> vec3f {
   let pre = frame.params.y;
   let key = keyDir();
   let cosK = lightCosine(s, key.xyz);
   var vis = 1.0;
   if (cosK > 0.0 && key.y > -0.03) {
+#ifdef SHADE_VISIBILITY
+    vis = giVisibilityValue;
+#else
     if (t < NEAR_SHADOW_RANGE) {
       let o = p + s.n * (0.04 + 0.003 * t);
       vis = keyVisibility(o, key.xyz, SHADOW_RAY_RANGE, max(16u, steps / 3u));
@@ -168,6 +174,7 @@ fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u3
       vis = s.ao;
     }
     vis *= cloudTransmittance(p);
+#endif
   }
   let direct = (keyIrradiance(e) * (cosK * vis) + fillIrradiance(e) * lightCosine(s, fillDir())) * (pre * INV_PI);
   let diffuse = s.albedo * (1.0 - 0.7 * s.metal);

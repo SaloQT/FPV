@@ -2,6 +2,9 @@
 export interface RtLayouts {
   /** group 2 of shadow / gi / spec. */
   trace: GPUBindGroupLayout;
+  giHits: GPUBindGroupLayout | null;
+  giShade: GPUBindGroupLayout | null;
+  giVisibility: GPUBindGroupLayout | null;
   /** group 2 of probe_update. */
   probe: GPUBindGroupLayout;
   probeCompact: GPUBindGroupLayout;
@@ -30,14 +33,21 @@ export function createLayouts(device: GPUDevice): RtLayouts {
   const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => tex2d(from + i));
   const probeSampler: GPUBindGroupLayoutEntry = { binding: 10, visibility: C, sampler: { type: 'filtering' } };
   const cloudShadow: GPUBindGroupLayoutEntry = { binding: 11, visibility: C, texture: { sampleType: 'float' } };
+  // The ordinary path remains available on adapters with only 16 sampled textures.
+  const split = device.limits.maxSampledTexturesPerShaderStage >= 17;
+  const visibility = device.limits.maxSampledTexturesPerShaderStage >= 19;
+  const traceEntries = (format: GPUTextureFormat): GPUBindGroupLayoutEntry[] => [
+    uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, format), store2d(9, format), probeSampler, cloudShadow,
+  ];
   const probeEntries = [
     uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), store3d(6), store3d(7), store3d(8), storageRo(9), probeSampler, cloudShadow,
   ];
 
   return {
-    trace: layout('trace', [
-      uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, 'rgba16float'), store2d(9, 'rgba16float'), probeSampler, cloudShadow,
-    ]),
+    trace: layout('trace', traceEntries('rgba16float')),
+    giHits: split ? layout('gi hits', traceEntries('rg32float')) : null,
+    giVisibility: visibility ? layout('gi visibility', [...traceEntries('r32float'), tex2d(12), tex2d(13)]) : null,
+    giShade: split ? layout('gi shade', [...traceEntries('rgba16float'), tex2d(12), tex2d(13), ...(visibility ? [tex2d(14), tex2d(15)] : [])]) : null,
     probe: layout('probe', probeEntries),
     probeCompact: layout('probe compact', [...probeEntries, storageRo(12)]),
     probePlan: layout('probe plan', [

@@ -1,5 +1,5 @@
 /** Layout: the abstract gate plan a style generator produces before it is turned into a smooth, validated track. */
-import type { TerrainSampler } from '../../contracts';
+import type { ObstacleKind, TerrainSampler, TrackFeature, TrackRecipe, Vec3 } from '../../contracts';
 import { gateSiteSlope } from './clearance';
 import type { Rng } from './rng';
 import { MAX_DIVE_GATE_SLOPE, MAX_GATE_SLOPE, WATER_MARGIN, type GateSpec, type StyleSpec } from './styles';
@@ -13,11 +13,62 @@ export interface LayoutGate {
   roll: number;
   /** Dive gates fix their travel axis; the path is forced through them along it. */
   dive?: { yaw: number; pitch: number };
+  /**
+   * A fixed travel axis (feature gates): orient, relax and lift never turn or move the gate on its own. Without `group` the path
+   * is pulled through it along the axis by pull-in and pull-out arcs (above it for a dive, below it for a climb).
+   */
+  fixed?: { yaw: number; pitch: number };
+  /** The manoeuvre the gate belongs to (copied to TrackGate.feature). */
+  feature?: TrackFeature;
+  /**
+   * Rigid feature group: the gates and control points of one group keep their positions and their height differences `dy`
+   * exactly; the group's base height is the lowest that gives every gate its `clear`, and the lift pass raises the group whole.
+   */
+  group?: number;
+  /** Height of the gate centre above the group's base. */
+  dy?: number;
+  /** Extra path control points just before / after the gate (same group, heights relative to the group's base). */
+  pre?: FeatureCtrl[];
+  post?: FeatureCtrl[];
+  /** Tunnel gates: sleeve length (TrackGate.depth). */
+  depth?: number;
+}
+
+/** A path control point of a feature group: absolute ground position, height above the group's base. */
+export interface FeatureCtrl {
+  x: number;
+  z: number;
+  dy: number;
+}
+
+/** A path bend between gates (the corner of a skeleton): a waypoint `agl` metres above the ground after gate `gap`. */
+export interface LayoutBend {
+  gap: number;
+  /** Order among the bends of the same gap. */
+  order: number;
+  x: number;
+  z: number;
+  agl: number;
+}
+
+/** An obstacle a layout asks for (the pylon of a hairpin), placed first and through the same rules as all others. */
+export interface LayoutProp {
+  kind: ObstacleKind;
+  x: number;
+  z: number;
+  yaw: number;
+  size: Vec3;
+  /** Placed instead when this prop does not fit (a hairpin's flagpole in place of its pillar or wall). */
+  alt?: LayoutProp;
 }
 
 export interface Layout {
   closed: boolean;
   gates: LayoutGate[];
+  bends?: LayoutBend[];
+  props?: LayoutProp[];
+  /** False when the layout's plain gates sit where its drawing wants them: the relax pass leaves them alone. */
+  relax?: boolean;
 }
 
 export interface LayoutCtx {
@@ -32,9 +83,11 @@ export interface LayoutCtx {
   /** Ground height below which gates and obstacles are not placed. */
   waterFloor: number;
   rng: Rng;
+  /** The recipe of a custom track. */
+  recipe?: TrackRecipe;
 }
 
-export function makeCtx(sampler: TerrainSampler, spec: StyleSpec, difficulty: number, gateCount: number, rng: Rng): LayoutCtx {
+export function makeCtx(sampler: TerrainSampler, spec: StyleSpec, difficulty: number, gateCount: number, rng: Rng, recipe?: TrackRecipe): LayoutCtx {
   const d = sampler.data;
   const extent = d.resolution * d.cellSize;
   return {
@@ -47,6 +100,7 @@ export function makeCtx(sampler: TerrainSampler, spec: StyleSpec, difficulty: nu
     extent,
     waterFloor: d.waterLevel + WATER_MARGIN,
     rng,
+    ...(recipe ? { recipe } : {}),
   };
 }
 

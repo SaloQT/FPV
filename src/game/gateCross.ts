@@ -40,6 +40,7 @@ export function insideOpening(gate: TrackGate, u: number, v: number): boolean {
   switch (gate.kind) {
     case 'hoop':
     case 'dive':
+    case 'drop':
       return (u * u) / (hw * hw) + (v * v) / (hh * hh) <= 1;
     case 'arch': {
       if (Math.abs(u) > hw || v < -hh) return false;

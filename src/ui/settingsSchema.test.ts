@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { SALOQT_RATES } from '../sim/fc/ratePresets';
-import { defaultAppSettings, isSameValue, migrateStored, sanitizeSettings } from './settingsSchema';
+import { GENERATED_STYLES } from '../contracts';
+import { TRACK_STYLES, defaultAppSettings, isSameValue, migrateStored, sanitizeSettings } from './settingsSchema';
+
+describe('track style setting', () => {
+  it('accepts every generated style and nothing else (a custom track comes from the builder, not the setting)', () => {
+    expect([...TRACK_STYLES]).toEqual([...GENERATED_STYLES]);
+    const base = defaultAppSettings();
+    for (const style of GENERATED_STYLES) expect(sanitizeSettings({ trackStyle: style }, base).trackStyle).toBe(style);
+    expect(sanitizeSettings({ trackStyle: 'custom' }, base).trackStyle).toBe(base.trackStyle);
+    expect(sanitizeSettings({ trackStyle: 'loop-de-loop' }, base).trackStyle).toBe(base.trackStyle);
+  });
+});
 
 describe('stored rates', () => {
   it('starts a pilot with no saved rates on the SALOQT preset', () => {

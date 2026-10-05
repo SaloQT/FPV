@@ -120,7 +120,7 @@ export const ACTION_LABELS: Record<InputAction, string> = {
 };
 
 export const AXIS_LABELS: Record<KeyAxisId, string> = {
-  throttleUp: 'Throttle up (latched, hold to ramp)',
+  throttleUp: 'Throttle up (hold to ramp, release to ease down)',
   throttleDown: 'Throttle down',
   throttleCut: 'Throttle cut to zero',
   boost: 'Faster throttle ramp (x2.5)',

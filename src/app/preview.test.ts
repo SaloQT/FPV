@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TrackData } from '../contracts';
 import { makeTrack } from '../game/testKit';
 import type { PreviewState } from '../ui/trackPreviewModel';
-import { PREVIEW_DEBOUNCE_MS, WorldPreview, shareableWorld, worldKey, type PreviewDeps, type WorldSettings } from './preview';
+import { PREVIEW_DEBOUNCE_MS, WorldPreview, shareableWorld, worldKey, worldLink, type PreviewDeps, type WorldSettings } from './preview';
 import type { World } from './world';
 
 const BASE: WorldSettings = { seed: 1337, trackStyle: 'race', gateCount: 12, laps: 3, difficulty: 0.4, quality: 'high' };
@@ -266,5 +266,95 @@ describe('shareableWorld', () => {
 
   it('is the world on screen once flying, whatever the preview says', () => {
     expect(shareableWorld(world, 'working', true)).not.toBeNull();
+  });
+  it('describes a builder track by its recipe', async () => {
+    const { defaultRecipe } = await import('../world/track/recipe');
+    const recipe = defaultRecipe();
+    const built = { ...world, track: makeTrack(4, { style: 'custom', recipe }) };
+    expect(shareableWorld(built, 'ready', false)?.recipe).toBe(recipe);
+  });
+
+  it('has no link for a track loaded from a file', () => {
+    expect(shareableWorld({ ...world, attempts: 0 }, 'ready', true)).toBeNull();
+  });
+
+  it('worldLink tells a file track (false) apart from a world still being built (null)', () => {
+    expect(worldLink({ ...world, attempts: 0 }, 'ready', true)).toBe(false);
+    expect(worldLink({ ...world, attempts: 0 }, 'working', false)).toBeNull();
+    expect(worldLink(world, 'working', false)).toBeNull();
+    expect(worldLink(world, 'ready', false)).toEqual(shareableWorld(world, 'ready', false));
+  });
+});
+
+describe('WorldPreview.hold', () => {
+  it('drops a running terrain build so it cannot land under the builder, and runs it again on resume', async () => {
+    const r = rig();
+    const old = r.world;
+    r.settings = { ...BASE, seed: 42 };
+    r.preview.settingsChanged(['seed']);
+    r.advance(PREVIEW_DEBOUNCE_MS);
+    await r.flush();
+    expect(r.calls).toEqual(['world:42']);
+    r.preview.hold();
+    expect(r.preview.current()).toMatchObject({ status: 'ready', track: old.track });
+    r.gate.release?.();
+    await r.flush();
+    // The terrain finished while held: it is dropped, the world on screen stays.
+    expect(r.calls).toEqual(['world:42']);
+    expect(r.world).toBe(old);
+    r.preview.resume();
+    r.advance(PREVIEW_DEBOUNCE_MS);
+    await r.flush();
+    expect(r.calls).toEqual(['world:42', 'world:42', 'apply:42']);
+    expect(r.world.terrainSeed).toBe(42);
+  });
+
+  it('settings changes wait while held; nothing runs on resume when the holder put its own world on screen', async () => {
+    const r = rig();
+    r.preview.hold();
+    r.settings = { ...BASE, gateCount: 9 };
+    r.preview.settingsChanged(['gateCount']);
+    r.advance(5000);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+    const builder = { ...fakeWorld(1337), track: makeTrack(6, { seed: 77 }) };
+    r.world = builder;
+    r.preview.adopt(builder);
+    r.preview.resume();
+    r.advance(5000);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+    expect(r.world).toBe(builder);
+  });
+
+  it('resume with nothing dropped builds nothing', async () => {
+    const r = rig();
+    r.preview.hold();
+    r.preview.resume();
+    r.advance(5000);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+  });
+});
+
+describe('WorldPreview.adopt', () => {
+  it('drops a pending build, shows the adopted track, and rebuilds the settings world on the next change', async () => {
+    const r = rig();
+    r.settings = { ...BASE, gateCount: 9 };
+    r.preview.settingsChanged(['gateCount']);
+    const builder = { ...fakeWorld(1337), track: makeTrack(6, { seed: 77 }) };
+    r.world = builder;
+    r.preview.adopt(builder);
+    expect(r.preview.current()).toMatchObject({ status: 'ready', track: builder.track });
+    r.advance(5000);
+    await r.flush();
+    expect(r.calls).toEqual([]);
+    // Back to the very settings the start screen first built: still a rebuild, the builder track is on screen.
+    r.settings = { ...BASE };
+    r.preview.settingsChanged(['gateCount']);
+    r.advance(PREVIEW_DEBOUNCE_MS + 1);
+    await r.flush();
+    expect(r.calls).toEqual(['track:1337:race:12', 'apply:1337']);
+    expect(r.world.track.gates).toHaveLength(12);
   });
 });

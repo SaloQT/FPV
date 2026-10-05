@@ -16,7 +16,7 @@ export interface MapInputs {
   maxHeight: number;
   /** Net height gained by the erosion stages in metres (>= 0): droplet deposition and thermal talus. */
   gain: Float32Array;
-  /** Water carried through each cell by the final droplet pass. */
+  /** Water carried through each cell by the final droplet pass, interpolated when the output grid is finer. */
   visits: Float32Array;
 }
 

@@ -61,6 +61,8 @@ export function createLoop(ctx: AppCtx): Loop {
       limiter.reset();
       return;
     }
+    // Read the newest input when the GPU can use it. Keep `last` unchanged so skipped refreshes lose no simulation time.
+    if (!ctx.renderer.frameReady) return;
     if (!limiter.allow(now, ctx.store.get().frameCap, ctx.renderer.displayPeriodMs)) return;
     const real = last === 0 ? 1 / 60 : Math.max(0, (now - last) / 1000);
     last = now;

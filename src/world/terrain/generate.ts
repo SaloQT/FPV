@@ -1,6 +1,7 @@
 /**
  * Terrain pipeline, coarse to fine: domain-warped ridged macro shape -> stream-power valley networks (coarse grids) ->
- * repeated 2x refinement with roughness -> droplet erosion -> thermal talus + soil creep -> normalisation -> material maps.
+ * droplet erosion on bounded coarse grids -> repeated 2x refinement with roughness -> thermal talus + soil creep ->
+ * normalisation -> material maps.
  *
  * Heights leave the pipeline linearly rescaled so that maxHeight - minHeight === relief and minHeight === 0 (the datum is the
  * lowest point of the map; callers add the geographic altitude themselves).
@@ -60,6 +61,8 @@ interface Step {
   level: number;
   label: string;
   cost: number;
+  /** Distance from the finest hydraulic grid, which may be coarser than the output grid. */
+  dropletLevel?: number;
 }
 
 /** Approximate nanoseconds per cell (or per cell iteration / droplet step) of each step in Node; only used to weight progress. */
@@ -68,16 +71,21 @@ const COST = { macro: 1100, refine: 170, fluvialIter: 210, dropletStep: 90, ther
 function planSteps(sizes: readonly number[]): Step[] {
   const steps: Step[] = [];
   const last = sizes.length - 1;
+  let erosionLast = 0;
+  for (let level = 0; level <= last; level++) {
+    if (sizes[level] <= TUNING.droplets.maxResolution) erosionLast = level;
+  }
   for (let level = 0; level <= last; level++) {
     const cells = sizes[level] * sizes[level];
     if (level === 0) steps.push({ kind: 'macro', level, label: 'Shaping terrain', cost: cells * COST.macro });
     else steps.push({ kind: 'refine', level, label: 'Refining terrain', cost: cells * COST.refine });
     const iterations = TUNING.spl.iterations[level] ?? 0;
     if (iterations > 0) steps.push({ kind: 'fluvial', level, label: 'Carving valleys', cost: iterations * cells * COST.fluvialIter });
-    const perCell = TUNING.droplets.perCell[last - level] ?? 0;
+    const dropletLevel = erosionLast - level;
+    const perCell = TUNING.droplets.perCell[dropletLevel] ?? 0;
     if (perCell > 0) {
-      const lifetime = TUNING.droplets.lifetime[last - level];
-      steps.push({ kind: 'droplets', level, label: 'Eroding slopes', cost: perCell * cells * lifetime * COST.dropletStep });
+      const lifetime = TUNING.droplets.lifetime[dropletLevel];
+      steps.push({ kind: 'droplets', level, dropletLevel, label: 'Eroding slopes', cost: perCell * cells * lifetime * COST.dropletStep });
     }
   }
   const cells = sizes[last] * sizes[last];
@@ -174,7 +182,7 @@ export function* terrainSteps(params: TerrainParams, onProgress?: ProgressFn): G
         );
         break;
       case 'droplets':
-        yield* dropletPass(st, cfg.seed, step.level, sizes.length - 1 - step.level, progress.report);
+        yield* dropletPass(st, cfg.seed, step.level, step.dropletLevel!, progress.report);
         break;
       case 'thermal':
         yield* settle(st, cfg.relief, progress.report);
@@ -243,6 +251,12 @@ function* refine(st: State, shape: TerrainShape, report: (f: number) => void): G
   report(0.16);
   yield;
   st.gain = upsample2x(st.gain, n);
+  // Retain the coarse hydraulic channels for the final material maps rather than rerunning particles on every fine cell.
+  if (st.visits !== null) {
+    st.visits = upsample2x(st.visits, n);
+    // Cubic interpolation can undershoot around sparse channels; water counts must stay nonnegative.
+    for (let k = 0; k < st.visits.length; k++) if (st.visits[k] < 0) st.visits[k] = 0;
+  }
   st.n = n * 2;
   st.cell /= 2;
   st.base = new Float32Array(st.n * st.n);

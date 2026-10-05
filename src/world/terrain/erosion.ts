@@ -131,13 +131,18 @@ export function* erodeDroplets(
         if (sediment > cap || dh > 0) {
           const amount = dh > 0 ? Math.min(dh, sediment) : (sediment - cap) * p.depositSpeed;
           sediment -= amount;
-          h[idx] += amount * (1 - fx) * (1 - fy);
-          h[idx + 1] += amount * fx * (1 - fy);
-          h[idx + n] += amount * (1 - fx) * fy;
-          h[idx + n + 1] += amount * fx * fy;
+          if (amount !== 0) {
+            h[idx] += amount * (1 - fx) * (1 - fy);
+            h[idx + 1] += amount * fx * (1 - fy);
+            h[idx + n] += amount * (1 - fx) * fy;
+            h[idx + n + 1] += amount * fx * fy;
+          }
         } else {
           const amount = Math.min((cap - sediment) * p.erodeSpeed, -dh);
-          if (nx >= br && ny >= br && nx < n - br && ny < n - br) {
+          // Stalled droplets can have zero capacity. Avoid touching the whole brush when no material moves.
+          if (amount === 0) {
+            // Keep moving and recording visits; only the no-op height updates are skipped.
+          } else if (nx >= br && ny >= br && nx < n - br && ny < n - br) {
             for (let k = 0; k < bn; k++) h[idx + offset[k]] -= amount * weight[k];
             sediment += amount;
           } else {

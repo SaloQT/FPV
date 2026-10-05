@@ -24,6 +24,8 @@ export function nearDensity(tierBladesPerM2: number): number {
 }
 /** Blades beyond a few metres are sub-pixel anyway, so full density stops here whatever the tier's view distance. */
 const FULL_RADIUS_MAX = 7;
+/** Grass distance whose level-of-detail bands the pixel thresholds in grass_cull.wgsl were calibrated against (grassLod.test.ts). */
+const LOD_BAND_DISTANCE = 120;
 
 export interface GrassBudget {
   patchSize: number;
@@ -71,7 +73,9 @@ const roundUp = (v: number, m: number): number => Math.ceil(v / m) * m;
 export function grassBudget(q: Pick<QualityProfile, 'grassBladesPerM2' | 'grassDistance'>, maxBytes: number = MAX_GRASS_BYTES): GrassBudget {
   const far = q.grassDistance;
   const fullRadius = Math.min(0.125 * far, FULL_RADIUS_MAX);
-  const lod0 = Math.max(4, 0.09 * far), lod1 = Math.max(12, 0.28 * far);
+  // The cull picks a level by projected size (GRASS_LOD*_PX), tuned to the bands of a 120 m sward; a longer one adds far-level blades.
+  const bandFar = Math.min(far, LOD_BAND_DISTANCE);
+  const lod0 = Math.max(4, 0.09 * bandFar), lod1 = Math.max(12, 0.28 * bandFar);
   const density = nearDensity(q.grassBladesPerM2);
   const edges = [0, lod0, lod1, far];
   let caps = [0, 1, 2].map((i) => roundUp(CAP_FRACTION * annulusSlots(edges[i], edges[i + 1], density, fullRadius, far) + 4096, CHUNK_SLOTS));

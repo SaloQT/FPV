@@ -3,10 +3,18 @@ import { DEFAULT_BINDINGS } from './bindings';
 import { keyEvent, makeRig } from './testKit';
 
 describe('InputManager keyboard', () => {
+  it('ramps yaw gently, caps a held key, and centres promptly on release', () => {
+    const r = makeRig();
+    r.press('KeyD');
+    expect(r.run(0.1).yaw).toBeCloseTo(0.42 * 0.1 / 0.18, 6);
+    expect(r.run(2).yaw).toBe(0.42);
+    r.release('KeyD');
+    expect(r.run(0.1).yaw).toBeCloseTo(0, 6);
+  });
   it('D held gives yaw > 0 (nose right) and releasing returns it to zero', () => {
     const r = makeRig();
     r.press('KeyD');
-    expect(r.run(0.3).yaw).toBe(1);
+    expect(r.run(0.3).yaw).toBe(0.42);
     r.release('KeyD');
     expect(r.run(0.3).yaw).toBe(0);
   });
@@ -14,7 +22,7 @@ describe('InputManager keyboard', () => {
   it('A is yaw < 0; right arrow and E are roll > 0; up arrow is pitch < 0 (nose up)', () => {
     const r = makeRig();
     r.press('KeyA');
-    expect(r.run(0.3).yaw).toBe(-1);
+    expect(r.run(0.3).yaw).toBe(-0.42);
     r.release('KeyA');
     r.press('ArrowRight');
     expect(r.run(0.3).roll).toBe(1);
@@ -37,26 +45,44 @@ describe('InputManager keyboard', () => {
     expect(r.run(0.3).roll).toBe(1);
   });
 
-  it('throttle is a latched stick: W ramps, releasing leaves it, S lowers, X cuts', () => {
+  it('armed, W ramps, releasing eases throttle down, S lowers, X cuts', () => {
     const r = makeRig();
+    r.input.setArmed(true);
     r.press('KeyW');
     const held = r.run(0.5).throttle;
     expect(held).toBeCloseTo(0.45, 1);
     r.release('KeyW');
-    expect(r.run(2).throttle).toBeCloseTo(held, 6);
+    const released = r.run(2).throttle;
+    expect(released).toBeLessThan(held);
+    expect(released).toBeGreaterThan(0);
     r.press('KeyS');
-    expect(r.run(0.1).throttle).toBeLessThan(held);
+    expect(r.run(0.1).throttle).toBeLessThan(released);
     r.release('KeyS');
     r.press('KeyX');
     expect(r.run(0.05).throttle).toBe(0);
   });
 
-  it('setThrottle overwrites the latch and clamps', () => {
+  it('disarmed, a released keyboard throttle is back at zero at once so arming is never refused', () => {
     const r = makeRig();
+    r.press('KeyW');
+    expect(r.run(0.5).throttle).toBeCloseTo(0.45, 1);
+    r.release('KeyW');
+    expect(r.run(1 / 60).throttle).toBe(0);
+    r.input.setArmed(true);
+    r.press('KeyW');
+    r.run(0.5);
+    r.release('KeyW');
+    expect(r.run(1 / 60).throttle).toBeGreaterThan(0.4);
+  });
+
+  it('setThrottle overwrites the keyboard throttle and clamps', () => {
+    const r = makeRig();
+    r.input.setArmed(true);
     r.input.setThrottle(0.3);
-    expect(r.run(0.1).throttle).toBe(0.3);
+    expect(r.input.poll(0).throttle).toBe(0.3);
+    expect(r.run(0.1).throttle).toBeLessThan(0.3);
     r.input.setThrottle(4);
-    expect(r.run(0.1).throttle).toBe(1);
+    expect(r.input.poll(0).throttle).toBe(1);
   });
 
   it('turtle is a held state and follows the T key', () => {
@@ -77,15 +103,17 @@ describe('InputManager keyboard', () => {
     expect(s.mode).toBe('horizon');
   });
 
-  it('losing window focus releases held keys and sticks but keeps the throttle', () => {
+  it('losing window focus releases held keys and lets keyboard throttle ease down', () => {
     const r = makeRig();
+    r.input.setArmed(true);
     r.press('KeyD');
     r.press('KeyW');
     r.run(0.5);
     r.win.dispatchEvent(new Event('blur'));
     const s = r.run(0.3);
     expect(s.yaw).toBe(0);
-    expect(s.throttle).toBeGreaterThan(0.4);
+    expect(s.throttle).toBeLessThan(0.45);
+    expect(s.throttle).toBeGreaterThan(0.3);
   });
 
   it('a stalled frame does not slam the throttle', () => {
@@ -172,6 +200,6 @@ describe('InputManager actions', () => {
     r.press('Space');
     expect([...r.input.takeActions()]).toEqual(['arm-toggle']);
     r.press('KeyL');
-    expect(r.run(0.3).yaw).toBe(1);
+    expect(r.run(0.3).yaw).toBe(0.42);
   });
 });

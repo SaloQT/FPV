@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FPV brain training</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="run">
+      <h1 id="runName">Training</h1>
+      <span id="status" class="pill">connecting</span>
+    </div>
+    <dl class="readouts">
+      <div><dt>Iteration</dt><dd id="rIter">–</dd></div>
+      <div><dt>Elapsed</dt><dd id="rElapsed">–</dd></div>
+      <div><dt>Decisions</dt><dd id="rSteps">–</dd></div>
+      <div><dt>Decisions/s</dt><dd id="rSps">–</dd></div>
+      <div><dt>Return</dt><dd id="rReturn">–</dd></div>
+      <div><dt>Crash rate</dt><dd id="rCrash">–</dd></div>
+      <div><dt>Best lap</dt><dd id="rBest">–</dd></div>
+    </dl>
+    <div class="commands">
+      <button id="btnSave" type="button" title="Write a checkpoint now">Save checkpoint</button>
+      <button id="btnStop" type="button" class="danger" title="Finish after this iteration and save">Stop training</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="mapcol">
+      <div class="toolbar">
+        <label>World
+          <select id="worldSel"></select>
+        </label>
+        <button id="btnOverview" type="button" title="All worlds side by side (O)">All worlds</button>
+        <span class="sep"></span>
+        <label class="check"><input id="layPath" type="checkbox" checked> Path</label>
+        <label class="check"><input id="layObst" type="checkbox" checked> Obstacles</label>
+        <label class="check"><input id="layBoxes" type="checkbox"> Colliders</label>
+        <label>Trail
+          <input id="trailLen" type="range" min="0.5" max="12" step="0.5" value="4">
+          <output id="trailOut">4 s</output>
+        </label>
+        <label>Colour
+          <select id="trailMode">
+            <option value="drone">by drone</option>
+            <option value="speed">by speed</option>
+          </select>
+        </label>
+      </div>
+      <div class="mapwrap">
+        <canvas id="map" aria-label="Top-down view of the training worlds"></canvas>
+        <div id="mapTip" class="tip" hidden></div>
+        <div id="mapInfo" class="mapinfo"></div>
+        <div id="gateLegend" class="gatelegend" aria-label="Gate kinds"></div>
+      </div>
+      <div class="toolbar small">
+        <span class="label">Elevation</span>
+        <div class="seg" role="group" aria-label="Profile projection">
+          <button id="profDist" type="button" class="on" title="Height against distance along the course">Along course</button>
+          <button id="profSide" type="button" title="Height against position along the track's long axis: loops stay loops">Side view</button>
+        </div>
+        <span id="profInfo" class="muted"></span>
+      </div>
+      <canvas id="profile" class="profile" aria-label="Elevation profile of the selected world"></canvas>
+    </section>
+
+    <section class="chartcol">
+      <div class="toolbar">
+        <label>Smoothing
+          <input id="smooth" type="range" min="0" max="0.99" step="0.01" value="0.6">
+          <output id="smoothOut">0.60</output>
+        </label>
+        <button id="btnResetZoom" type="button" title="Show every iteration (double-click a chart does the same)">Reset zoom</button>
+        <span class="muted hint">Ctrl/Shift + wheel zoom · drag pan · click to scrub · double-click reset</span>
+        <button id="btnTable" type="button" aria-expanded="false" aria-controls="tableView">Table</button>
+      </div>
+      <div id="tableView" class="tableview" hidden>
+        <table>
+          <caption id="tableCaption">Values at the cursor</caption>
+          <thead><tr><th scope="col">Chart</th><th scope="col">Series</th><th scope="col">Value</th><th scope="col">Smoothed</th></tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div id="charts" class="charts"></div>
+    </section>
+  </main>
+
+  <footer class="timeline">
+    <div class="transport">
+      <button id="btnBack" type="button" title="Previous trace (←)" aria-label="Previous trace">◀︎</button>
+      <button id="btnPlay" type="button" title="Play or pause (space)" aria-label="Play or pause">❚❚</button>
+      <button id="btnFwd" type="button" title="Next trace (→)" aria-label="Next trace">▶︎</button>
+      <button id="btnLive" type="button" class="live on" title="Follow new iterations (L)">Live</button>
+      <label>Speed
+        <select id="speed">
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+          <option value="8">8×</option>
+        </select>
+      </label>
+    </div>
+    <canvas id="scrub" class="scrub" aria-label="Timeline: click or drag to scrub"></canvas>
+    <div id="playInfo" class="playinfo muted">–</div>
+  </footer>
+
+  <div id="confirm" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="box">
+      <h2 id="confirmTitle">Stop training?</h2>
+      <p>The trainer finishes the current iteration, saves the brain and exits.</p>
+      <div class="row">
+        <button id="confirmNo" type="button">Keep training</button>
+        <button id="confirmYes" type="button" class="danger">Stop and save</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden role="status"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

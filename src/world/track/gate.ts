@@ -54,6 +54,7 @@ export function insideOpening(gate: TrackGate, u: number, v: number): boolean {
   switch (gate.kind) {
     case 'hoop':
     case 'dive':
+    case 'drop':
       return (u * u) / (hw * hw) + (v * v) / (hh * hh) <= 1;
     case 'arch': {
       if (Math.abs(u) > hw || v < -hh) return false;
@@ -90,7 +91,7 @@ export function gateOutline(gate: TrackGate, out: [number, number][] = []): [num
   out.length = 0;
   const hw = gate.width / 2;
   const hh = gate.height / 2;
-  if (gate.kind === 'hoop' || gate.kind === 'dive') {
+  if (gate.kind === 'hoop' || gate.kind === 'dive' || gate.kind === 'drop') {
     for (let k = 0; k < 16; k++) {
       const a = (k / 16) * 2 * Math.PI;
       out.push([hw * Math.cos(a), hh * Math.sin(a)]);
