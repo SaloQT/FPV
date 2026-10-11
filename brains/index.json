@@ -1,0 +1,576 @@
+{
+ "brains": [
+  {
+   "file": "a.json",
+   "name": "a",
+   "stats": {
+    "steps": 20043792384,
+    "iterations": 38241,
+    "seconds": 17705.8227379,
+    "gatesPerMinute": 40.283203125,
+    "bestLap": 10.166250228881836,
+    "evalLap": 0,
+    "meanReturn": 304.85372340425533
+   }
+  },
+  {
+   "file": "ace.json",
+   "name": "ace",
+   "stats": {
+    "steps": 4606918656,
+    "iterations": 8787,
+    "seconds": 3900.5905868,
+    "gatesPerMinute": 41.23878479003906,
+    "bestLap": 12.507500648498535,
+    "evalLap": 40.2127500000287,
+    "meanReturn": 593.159923735119
+   }
+  },
+  {
+   "file": "b.json",
+   "name": "b",
+   "stats": {
+    "steps": 20064239616,
+    "iterations": 38397,
+    "seconds": 17785.519009400003,
+    "gatesPerMinute": 40.76385498046875,
+    "bestLap": 10.166250228881836,
+    "evalLap": 0,
+    "meanReturn": 1079.9887609649122
+   }
+  },
+  {
+   "file": "Coaster-1.json",
+   "name": "Coaster-1",
+   "stats": {
+    "steps": 24239931392,
+    "iterations": 46234,
+    "seconds": 21743.4758347,
+    "gatesPerMinute": 51.65290832519531,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 452.44411496350364
+   }
+  },
+  {
+   "file": "dash.json",
+   "name": "dash",
+   "stats": {
+    "steps": 2326790144,
+    "iterations": 4438,
+    "seconds": 1920.7029864,
+    "gatesPerMinute": 36.39793395996094,
+    "bestLap": 11.90000057220459,
+    "evalLap": 42.91853125003236,
+    "meanReturn": 579.4788818359375
+   }
+  },
+  {
+   "file": "Experiment.json",
+   "name": "Experiment",
+   "stats": {
+    "steps": 208666624,
+    "iterations": 398,
+    "seconds": 161.4770757,
+    "gatesPerMinute": 6.0367584228515625,
+    "bestLap": 0,
+    "evalLap": 0,
+    "meanReturn": 136.6467707609451
+   }
+  },
+  {
+   "file": "ExperimentA.json",
+   "name": "ExperimentA",
+   "stats": {
+    "steps": 869269504,
+    "iterations": 1658,
+    "seconds": 600.1568727999999,
+    "gatesPerMinute": 5.9795379638671875,
+    "bestLap": 0,
+    "evalLap": 0,
+    "meanReturn": 162.39902304186361
+   }
+  },
+  {
+   "file": "ExperimentB.json",
+   "name": "ExperimentB",
+   "stats": {
+    "steps": 47710208,
+    "iterations": 364,
+    "seconds": 99.25274499999999,
+    "gatesPerMinute": 0.457763671875,
+    "bestLap": 0,
+    "evalLap": 0,
+    "meanReturn": -58.66248889218009
+   }
+  },
+  {
+   "file": "hard10-a.json",
+   "name": "hard10-a",
+   "stats": {
+    "steps": 31190941696,
+    "iterations": 59492,
+    "seconds": 27837.2617664,
+    "gatesPerMinute": 33.51402282714844,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 928.8900085763294
+   }
+  },
+  {
+   "file": "hard10-b.json",
+   "name": "hard10-b",
+   "stats": {
+    "steps": 33066319872,
+    "iterations": 63069,
+    "seconds": 29637.3800584,
+    "gatesPerMinute": 35.213470458984375,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2042.9832150655022
+   }
+  },
+  {
+   "file": "hard16-a.json",
+   "name": "hard16-a",
+   "stats": {
+    "steps": 27190099968,
+    "iterations": 51861,
+    "seconds": 24536.5015394,
+    "gatesPerMinute": 36.838531494140625,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2073.229222972973
+   }
+  },
+  {
+   "file": "hard16-b.json",
+   "name": "hard16-b",
+   "stats": {
+    "steps": 28308406272,
+    "iterations": 53994,
+    "seconds": 25436.8775815,
+    "gatesPerMinute": 39.78538513183594,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2220.3247282608695
+   }
+  },
+  {
+   "file": "hard16-c.json",
+   "name": "hard16-c",
+   "stats": {
+    "steps": 29057089536,
+    "iterations": 55422,
+    "seconds": 26037.0528193,
+    "gatesPerMinute": 40.363311767578125,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2264.8498603351954
+   }
+  },
+  {
+   "file": "hard16-d.json",
+   "name": "hard16-d",
+   "stats": {
+    "steps": 29410983936,
+    "iterations": 56097,
+    "seconds": 26336.9062185,
+    "gatesPerMinute": 41.439056396484375,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2252.772712628866
+   }
+  },
+  {
+   "file": "hard16-e.json",
+   "name": "hard16-e",
+   "stats": {
+    "steps": 30515134464,
+    "iterations": 58203,
+    "seconds": 27237.1848083,
+    "gatesPerMinute": 38.18321228027344,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 3404.672006302521
+   }
+  },
+  {
+   "file": "hard17-a.json",
+   "name": "hard17-a",
+   "stats": {
+    "steps": 35141976064,
+    "iterations": 67028,
+    "seconds": 31437.440833099998,
+    "gatesPerMinute": 36.72981262207031,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2308.7816358024693
+   }
+  },
+  {
+   "file": "hard17-b.json",
+   "name": "hard17-b",
+   "stats": {
+    "steps": 37215535104,
+    "iterations": 70983,
+    "seconds": 33237.8652583,
+    "gatesPerMinute": 38.990020751953125,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 1900.5696292775665
+   }
+  },
+  {
+   "file": "hard17-c.json",
+   "name": "hard17-c",
+   "stats": {
+    "steps": 39242432512,
+    "iterations": 74849,
+    "seconds": 35038.4502323,
+    "gatesPerMinute": 39.17884826660156,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2672.6681547619046
+   }
+  },
+  {
+   "file": "hard17-d.json",
+   "name": "hard17-d",
+   "stats": {
+    "steps": 41127247872,
+    "iterations": 78444,
+    "seconds": 36838.6250045,
+    "gatesPerMinute": 40.17448425292969,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2946.985632183908
+   }
+  },
+  {
+   "file": "hard31-a.json",
+   "name": "hard31-a",
+   "stats": {
+    "steps": 42885185536,
+    "iterations": 81797,
+    "seconds": 38639.029354499995,
+    "gatesPerMinute": 38.78974914550781,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2145.028476331361
+   }
+  },
+  {
+   "file": "hard31-b.json",
+   "name": "hard31-b",
+   "stats": {
+    "steps": 44441796608,
+    "iterations": 84766,
+    "seconds": 40439.41547199999,
+    "gatesPerMinute": 40.76385498046875,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2289.4036726804125
+   }
+  },
+  {
+   "file": "hard31-c.json",
+   "name": "hard31-c",
+   "stats": {
+    "steps": 44957696000,
+    "iterations": 85750,
+    "seconds": 41039.68958009999,
+    "gatesPerMinute": 38.6810302734375,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2291.287083333333
+   }
+  },
+  {
+   "file": "hard31n-a.json",
+   "name": "hard31n-a",
+   "stats": {
+    "steps": 47438626816,
+    "iterations": 90482,
+    "seconds": 44040.2168741,
+    "gatesPerMinute": 40.729522705078125,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2359.0064935064934
+   }
+  },
+  {
+   "file": "hard31n-b.json",
+   "name": "hard31n-b",
+   "stats": {
+    "steps": 47372566528,
+    "iterations": 90356,
+    "seconds": 44039.9396416,
+    "gatesPerMinute": 40.55213928222656,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2667.0980357142857
+   }
+  },
+  {
+   "file": "hard31s-a.json",
+   "name": "hard31s-a",
+   "stats": {
+    "steps": 44337463296,
+    "iterations": 84567,
+    "seconds": 40439.737574599996,
+    "gatesPerMinute": 39.34478759765625,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2651.5338362068965
+   }
+  },
+  {
+   "file": "hard31s-b.json",
+   "name": "hard31s-b",
+   "stats": {
+    "steps": 45766148096,
+    "iterations": 87292,
+    "seconds": 42240.4094852,
+    "gatesPerMinute": 40.008544921875,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2671.7637578616354
+   }
+  },
+  {
+   "file": "hard31s-c.json",
+   "name": "hard31s-c",
+   "stats": {
+    "steps": 45862092800,
+    "iterations": 87475,
+    "seconds": 42239.7592305,
+    "gatesPerMinute": 40.16876220703125,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2860.423561151079
+   }
+  },
+  {
+   "file": "hard31s-d.json",
+   "name": "hard31s-d",
+   "stats": {
+    "steps": 47245164544,
+    "iterations": 90113,
+    "seconds": 44040.0333177,
+    "gatesPerMinute": 39.86549377441406,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2878.1171875
+   }
+  },
+  {
+   "file": "park12-cinematic.json",
+   "name": "park12-cinematic",
+   "stats": {
+    "steps": 26737115136,
+    "iterations": 50997,
+    "seconds": 24236.211074,
+    "gatesPerMinute": 27.797698974609375,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 1035.1329419889503
+   }
+  },
+  {
+   "file": "park12-cinematic-2.json",
+   "name": "park12-cinematic-2",
+   "stats": {
+    "steps": 27007647744,
+    "iterations": 51513,
+    "seconds": 24536.6671823,
+    "gatesPerMinute": 34.17778015136719,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 1946.6537747524753
+   }
+  },
+  {
+   "file": "park12-cinematic-3.json",
+   "name": "park12-cinematic-3",
+   "stats": {
+    "steps": 27284996096,
+    "iterations": 52042,
+    "seconds": 24837.2327372,
+    "gatesPerMinute": 34.30938720703125,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2312.1917517006805
+   }
+  },
+  {
+   "file": "rookie.json",
+   "name": "rookie",
+   "stats": {
+    "steps": 303038464,
+    "iterations": 578,
+    "seconds": 240.0107918,
+    "gatesPerMinute": 24.776458740234375,
+    "bestLap": 24.059751510620117,
+    "evalLap": 54.998874999823,
+    "meanReturn": 575.0702457264957
+   }
+  },
+  {
+   "file": "run-20261007T112453-djfw.json",
+   "name": "run-20261007T112453-djfw",
+   "stats": {
+    "steps": 8200912896,
+    "iterations": 7821,
+    "seconds": 330.652075,
+    "gatesPerMinute": 0,
+    "bestLap": 0,
+    "evalLap": 0,
+    "meanReturn": 0
+   }
+  },
+  {
+   "file": "run-20261007T113916-hp4h.json",
+   "name": "run-20261007T113916-hp4h",
+   "stats": {
+    "steps": 20324024320,
+    "iterations": 38496,
+    "seconds": 17717.5092827,
+    "gatesPerMinute": 0,
+    "bestLap": 10.166250228881836,
+    "evalLap": 0,
+    "meanReturn": 0
+   }
+  },
+  {
+   "file": "run-20261007T122919-r5cg.json",
+   "name": "run-20261007T122919-r5cg",
+   "stats": {
+    "steps": 20469776384,
+    "iterations": 39043,
+    "seconds": 17998.6706875,
+    "gatesPerMinute": 42.079925537109375,
+    "bestLap": 9.875,
+    "evalLap": 0,
+    "meanReturn": 958.7276272577997
+   }
+  },
+  {
+   "file": "run-20261007T132927-a4y6.json",
+   "name": "run-20261007T132927-a4y6",
+   "stats": {
+    "steps": 21805137920,
+    "iterations": 41590,
+    "seconds": 19198.704600700003,
+    "gatesPerMinute": 41.187286376953125,
+    "bestLap": 9.834500312805176,
+    "evalLap": 0,
+    "meanReturn": 812.6255473726114
+   }
+  },
+  {
+   "file": "run-20261007T161623-kwea.json",
+   "name": "run-20261007T161623-kwea",
+   "stats": {
+    "steps": 22950182912,
+    "iterations": 43774,
+    "seconds": 20399.023065100002,
+    "gatesPerMinute": 39.19029235839844,
+    "bestLap": 9.799500465393066,
+    "evalLap": 0,
+    "meanReturn": 899.8960571289062
+   }
+  },
+  {
+   "file": "run-20261007T170655-0o5x.json",
+   "name": "run-20261007T170655-0o5x",
+   "stats": {
+    "steps": 24008196096,
+    "iterations": 45792,
+    "seconds": 21443.3619937,
+    "gatesPerMinute": 43.80226135253906,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 1002.4711216517857
+   }
+  },
+  {
+   "file": "run-20261009T075000-t9ux.json",
+   "name": "run-20261009T075000-t9ux",
+   "stats": {
+    "steps": 24534581248,
+    "iterations": 46796,
+    "seconds": 22135.966705299998,
+    "gatesPerMinute": 48.1109619140625,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 519.6840671007927
+   }
+  },
+  {
+   "file": "run-20261009T081338-j90p.json",
+   "name": "run-20261009T081338-j90p",
+   "stats": {
+    "steps": 26452951040,
+    "iterations": 50455,
+    "seconds": 23936.2106569,
+    "gatesPerMinute": 37.593841552734375,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 687.0696902654868
+   }
+  },
+  {
+   "file": "steady.json",
+   "name": "steady",
+   "stats": {
+    "steps": 3321888768,
+    "iterations": 6336,
+    "seconds": 2700.4247749,
+    "gatesPerMinute": 40.04859924316406,
+    "bestLap": 13.534250259399414,
+    "evalLap": 36.27306250006477,
+    "meanReturn": 641.735248447205
+   }
+  },
+  {
+   "file": "ultimate.json",
+   "name": "ultimate",
+   "stats": {
+    "steps": 20041957376,
+    "iterations": 38227,
+    "seconds": 17698.4654215,
+    "gatesPerMinute": 41.78810119628906,
+    "bestLap": 10.166250228881836,
+    "evalLap": 0,
+    "meanReturn": 690.942059608541
+   }
+  },
+  {
+   "file": "ultimate1.json",
+   "name": "ultimate1",
+   "stats": {
+    "steps": 20143144960,
+    "iterations": 38420,
+    "seconds": 17788.9926762,
+    "gatesPerMinute": 42.6177978515625,
+    "bestLap": 10.148000717163086,
+    "evalLap": 0,
+    "meanReturn": 798.8021174304419
+   }
+  },
+  {
+   "file": "smooth-a.json",
+   "name": "smooth-a",
+   "stats": {
+    "steps": 47411888128,
+    "iterations": 90431,
+    "seconds": 44040.2130625,
+    "gatesPerMinute": 40.740966796875,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2862.785714285714
+   }
+  }
+ ]
+}
