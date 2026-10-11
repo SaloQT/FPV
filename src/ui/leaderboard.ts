@@ -4,7 +4,7 @@
  * track-builder track, or the gate list of any other track (a generated one, or one loaded from a file). Pure logic plus a small
  * store with an injectable storage, like the pilot options.
  */
-import type { RenderQuality, TrackData } from '../contracts';
+import { gameplayQuality, type RenderQuality, type TrackData } from '../contracts';
 import { formatTime } from '../game/units';
 import { recipeKey } from '../world/track/recipe';
 import { hashSeed } from './seedModel';
@@ -64,7 +64,7 @@ export function trackIdentity(track: TrackData): string {
 
 /** The board key of a track on a terrain: 8 hex digits of FNV-1a. */
 export function trackBoardKey(terrainSeed: number, quality: RenderQuality, track: TrackData): string {
-  return hashSeed(`${terrainSeed >>> 0}|${quality}|${trackIdentity(track)}`).toString(16).padStart(8, '0');
+  return hashSeed(`${terrainSeed >>> 0}|${gameplayQuality(quality)}|${trackIdentity(track)}`).toString(16).padStart(8, '0');
 }
 
 function sameResult(a: LeaderEntry, b: LeaderEntry): boolean {

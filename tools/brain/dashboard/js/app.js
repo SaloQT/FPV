@@ -6,17 +6,27 @@ import { CHARTS, Store, clock, fmt } from './series.js';
 import { Timeline } from './timeline.js';
 import { TopDown } from './topdown.js';
 import { TraceCache, advance, chainOf, traceFor, traceStep, worldTallies } from './trace.js';
+import { TRAINING_FIELDS } from './trainingSettings.js';
+import { DEFAULT_TEMPLATE, RUN_FIELDS, TEMPLATE_GOALS, formatSetting, templateById, templateSettings } from './templates.js';
+import { setWatchContext } from './watch.js';
 
 const $ = (id) => document.getElementById(id);
+/** Charts shown under Key metrics; All metrics adds the rest. */
+const KEY_CHARTS = ['return', 'crash', 'gates', 'best'];
+/** Iterations in a row without a single episode ending before the page warns that the run is not learning. */
+const SILENT_ITERATIONS = 20;
+const TABS = [['tabTraining', 'runView', 'training'], ['tabSettings', 'runSettings', 'settings'], ['tabCompare', 'comparePanel', 'compare']];
+const selectedRun = new URLSearchParams(location.search).get('run');
+const runPath = path => selectedRun ? path.replace('/api/', `/api/runs/${encodeURIComponent(selectedRun)}/`) : path;
 
 async function api(path) {
-  const r = await fetch(path, { cache: 'no-store' });
+  const r = await fetch(runPath(path), { cache: 'no-store' });
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
 }
 
 async function loadTrace(it) {
-  const r = await fetch(`/api/trace/${it}`, { cache: 'no-store' });
+  const r = await fetch(runPath(`/api/trace/${it}`), { cache: 'no-store' });
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`trace ${it}: ${r.status}`);
   return { K: Number(r.headers.get('X-Trace-K')), T: Number(r.headers.get('X-Trace-T')), buffer: await r.arrayBuffer() };
@@ -31,8 +41,8 @@ const app = {
   hover: null,
   hoverChart: null,
   scrub: null,
-  live: true,
-  playing: true,
+  live: false,
+  playing: false,
   speed: 1,
   head: { it: null, t: 0 },
   world: -1,
@@ -81,11 +91,12 @@ function traceT() { return cache.peek(app.head.it)?.T || app.meta?.traceSteps ||
 function setStatus(status) {
   const el = $('status');
   const mode = app.meta?.mode === 'replay' ? 'replay' : status;
-  el.className = `pill ${mode}`;
-  el.textContent = app.meta?.mode === 'replay' ? `replay (${status})` : status;
+  el.className = `badge ${mode}`;
+  el.textContent = app.meta?.mode === 'replay' ? `replay · ${status}` : status;
   const canCommand = app.meta?.mode !== 'replay' && status === 'running';
   $('btnSave').disabled = !canCommand;
   $('btnStop').disabled = !canCommand;
+  if (app.meta?.mode !== 'replay' && !app.meta?.managed) document.querySelector('.commands').hidden = status === 'finished';
 }
 
 let toastTimer = 0;
@@ -108,19 +119,75 @@ async function command(cmd) {
   }
 }
 
+/**
+ * How a smoothed series moved over the last tenth of the iterations up to `i` (at least 10): the change, the iterations it
+ * spans and whether it moved the good way.
+ */
+function trend(key, i, higherIsBetter, smooth = true) {
+  const st = app.store;
+  const j = i - Math.max(10, Math.round(st.length * 0.1));
+  if (j < 0) return null;
+  const now = st.value(key, i, smooth), then = st.value(key, j, smooth);
+  if (!Number.isFinite(now) || !Number.isFinite(then)) return null;
+  const diff = now - then;
+  return { diff, iters: st.iters.a[i] - st.iters.a[j], good: Math.abs(diff) < 1e-9 ? null : (diff > 0) === higherIsBetter };
+}
+
+function showTrend(id, t, unit, digits = 3) {
+  const node = $(id);
+  if (!t) { node.textContent = ''; node.className = 'kpi-note delta'; return; }
+  const sign = t.diff > 0 ? '+' : t.diff < 0 ? '−' : '±';
+  node.textContent = t.good === null ? `no change in ${t.iters} iterations` : `${sign}${fmt(Math.abs(t.diff), digits)}${unit} in ${t.iters} iterations`;
+  node.className = `kpi-note delta${t.good === null ? '' : t.good ? ' good' : ' bad'}`;
+}
+
+let readoutKey = '';
 function updateReadouts() {
   const st = app.store;
   const i = app.live || app.scrub === null ? st.length - 1 : st.nearest(app.scrub);
   const r = st.records[i];
   if (!r) return;
-  $('rIter').textContent = String(r.iteration);
+  const key = `${i}/${st.length}/${st.weight}`;
+  if (key === readoutKey) return;
+  readoutKey = key;
+  const run = app.meta.config?.run ?? {};
+  $('rIter').textContent = r.iteration.toLocaleString();
+  $('rIterNote').textContent = run.iters > 0 ? `of ${run.iters.toLocaleString()}` : app.live ? 'live' : `of ${st.records[st.length - 1].iteration.toLocaleString()}`;
   $('rElapsed').textContent = clock(r.elapsed);
+  const budget = run.minutes > 0 ? run.minutes * 60 : 0;
+  $('rElapsedNote').textContent = budget ? `of ${clock(budget)}` : '';
+  $('rElapsedBar').style.width = budget ? `${Math.min(100, (100 * r.elapsed) / budget)}%` : '0';
   $('rSteps').textContent = fmt(r.envSteps);
-  $('rSps').textContent = fmt(r.sps);
+  $('rSps').textContent = `${fmt(r.sps)} decisions/s`;
   $('rReturn').textContent = fmt(st.value('ret', i));
-  $('rCrash').textContent = `${fmt(st.value('crash', i), 3)}%`;
+  showTrend('dReturn', trend('ret', i, true), '');
+  const crash = st.value('crash', i);
+  $('rCrash').textContent = Number.isFinite(crash) ? `${fmt(crash, 3)}%` : '–';
+  showTrend('dCrash', trend('crash', i, false), ' pts', 2);
   const best = st.value('bestRun', i, false);
   $('rBest').textContent = Number.isNaN(best) ? '–' : `${best.toFixed(2)} s`;
+  showTrend('dBest', trend('bestRun', i, false, false), ' s', 3);
+  updateLearnAlert();
+}
+
+/** Thousands of drones end episodes every iteration; a long run of iterations with none means the trainer is not working. */
+function updateLearnAlert() {
+  const st = app.store, n = st.length, node = $('learnAlert');
+  let silent = n >= SILENT_ITERATIONS;
+  for (let k = n - SILENT_ITERATIONS; silent && k < n; k++) if (st.records[k]?.metrics?.episodes > 0) silent = false;
+  node.hidden = !silent;
+  if (!silent || node.childElementCount) return;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'icon');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#i-alert'); svg.append(use);
+  const text = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = `No episode ended in the last ${SILENT_ITERATIONS} iterations`;
+  const code = document.createElement('code');
+  code.textContent = `.bench/brain/runs/${app.meta.name}.stderr.log`;
+  text.append(title, 'The metrics read zero, so the brain is not learning. This usually means the GPU rejected the training commands: see ', code, '.');
+  node.replaceChildren(svg, text);
 }
 
 function updateTable() {
@@ -173,7 +240,77 @@ function updateWorldInfo() {
 
 function syncTransport() {
   $('btnLive').classList.toggle('on', app.live);
-  $('btnPlay').textContent = app.playing ? '❚❚' : '▶';
+  $('btnLive').setAttribute('aria-pressed', String(app.live));
+  $('btnPlay').querySelector('use').setAttribute('href', app.playing ? '#i-pause' : '#i-play');
+  $('btnPlay').setAttribute('aria-label', app.playing ? 'Pause' : 'Play');
+}
+
+/** The run page's tabs; the address keeps the open one (#settings, #compare) across reloads. */
+function selectTab(name, focus = false) {
+  if (!TABS.some(([, , key]) => key === name)) name = 'training';
+  for (const [tabId, panelId, key] of TABS) {
+    const on = key === name;
+    $(tabId).setAttribute('aria-selected', String(on));
+    $(tabId).tabIndex = on ? 0 : -1;
+    $(panelId).hidden = !on;
+    if (on && focus) $(tabId).focus();
+  }
+  document.querySelector('.timeline').hidden = name !== 'training';
+  history.replaceState(null, '', `${location.pathname}${location.search}${name === 'training' ? '' : `#${name}`}`);
+  if (name === 'compare') $('comparePanel').dispatchEvent(new Event('panel-shown'));
+  app.requestDraw();
+}
+
+/** Run settings by group, values that differ from the run's template (or the defaults) highlighted. */
+function renderSettings() {
+  const config = app.meta.config ?? {}, run = config.run ?? {};
+  const t = templateById(run.template ?? app.meta.template);
+  const base = templateSettings(t?.id ?? DEFAULT_TEMPLATE);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const groups = new Map([['Run and worlds', RUN_FIELDS.filter((f) => run[f.key] !== undefined).map((f) => [f.label, run[f.key], !same(run[f.key], base[f.key])])]]);
+  for (const f of TRAINING_FIELDS) {
+    const v = config[f.scope]?.[f.key];
+    if (v === undefined) continue;
+    if (!groups.has(f.group)) groups.set(f.group, []);
+    groups.get(f.group).push([f.label, v, f.key !== 'traceEnvs' && !same(v, base[f.scope][f.key])]);
+  }
+  const sections = [...groups].filter(([, rows]) => rows.length).map(([group, rows]) => {
+    const s = document.createElement('section');
+    const h = document.createElement('h3');
+    h.textContent = group;
+    const table = document.createElement('table');
+    for (const [label, value, changed] of rows) {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.scope = 'row';
+      th.textContent = label;
+      const td = document.createElement('td');
+      td.textContent = formatSetting(value);
+      if (Array.isArray(value)) td.classList.add('list');
+      if (changed) { td.classList.add('changed'); td.title = t ? `Changed from the ${t.name} template` : 'Changed from the default'; }
+      tr.append(th, td);
+      table.append(tr);
+    }
+    s.append(h, table);
+    return s;
+  });
+  $('templateBanner')?.remove();
+  const banner = document.createElement('div');
+  banner.className = 'template-banner';
+  banner.id = 'templateBanner';
+  const text = document.createElement('div');
+  const strong = document.createElement('strong');
+  strong.textContent = t ? `Template: ${t.name}` : 'No template recorded';
+  const p = document.createElement('p');
+  p.className = 'muted';
+  p.textContent = t ? `${t.summary} Values marked with a dot differ from the template.` : 'This run started without a template. Values marked with a dot differ from the trainer defaults.';
+  text.append(strong, p);
+  banner.append(text);
+  $('currentSettings').replaceChildren(...sections);
+  $('currentSettings').before(banner);
+  const chip = $('runTemplate');
+  chip.hidden = !t;
+  if (t) { chip.textContent = t.name; chip.title = `${TEMPLATE_GOALS[t.goal]} template`; }
 }
 
 function goLive() {
@@ -207,7 +344,7 @@ function addRecord(rec, hasTrace) {
 }
 
 function connect() {
-  const es = new EventSource(app.store.eventsUrl());
+  const es = new EventSource(runPath(app.store.eventsUrl()));
   es.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
@@ -216,11 +353,15 @@ function connect() {
   };
   es.addEventListener('status', (e) => {
     const s = JSON.parse(e.data);
-    if (s.command === 'save') toast('Checkpoint requested');
+    if (s.command === 'save') toast('Checkpoint requested: the trainer writes it after this iteration');
     if (s.command === 'stop') toast('Stop requested: finishing this iteration');
     app.meta.status = s.status;
     setStatus(s.status);
-    if (s.status === 'finished') { es.close(); toast('Training finished'); }
+    if (s.status === 'finished') {
+      es.close(); app.playing = false; syncTransport();
+      document.dispatchEvent(new Event('run-finished'));
+      toast(app.meta.managed ? 'Run saved. Find it in Previous runs.' : 'Run saved. The charts, map and Compare brains stay available here.');
+    }
   });
   es.onerror = () => {
     if (app.meta.status === 'finished') return;
@@ -280,6 +421,9 @@ let lastHeadIt = null;
 function tick(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.25);
   lastTime = now;
+  if ($('runPage').hidden) { app.playing = false; syncTransport(); return; }
+  // Another tab is open: keep the readouts current and draw nothing until the training views come back.
+  if ($('runView').hidden) { if (app.store.length) updateReadouts(); requestAnimationFrame(tick); return; }
   const T = traceT();
   if (app.live && app.head.it === null && app.traceList.length) app.head = { it: app.traceList[app.traceList.length - 1], t: 0 };
   if (app.playing && app.head.it !== null && cache.peek(app.head.it)) {
@@ -320,11 +464,41 @@ function tick(now) {
 }
 
 function bindControls() {
-  $('btnSave').addEventListener('click', () => command('save'));
-  $('btnStop').addEventListener('click', () => { $('confirm').hidden = false; $('confirmNo').focus(); });
-  $('confirmNo').addEventListener('click', () => { $('confirm').hidden = true; });
-  $('confirmYes').addEventListener('click', () => { $('confirm').hidden = true; command('stop'); });
-  $('confirm').addEventListener('click', (e) => { if (e.target === $('confirm')) $('confirm').hidden = true; });
+  // runs.js asks before stopping and handles both commands for the run manager.
+  if (!app.meta.managed) {
+    $('btnSave').addEventListener('click', () => command('save'));
+    document.addEventListener('stop-confirmed', () => command('stop'));
+  }
+  const tabs = TABS.map(([tabId, , key]) => [$(tabId), key]);
+  for (const [tab, key] of tabs) tab.addEventListener('click', () => selectTab(key));
+  document.querySelector('.tablist').addEventListener('keydown', (e) => {
+    const k = tabs.findIndex(([tab]) => tab === document.activeElement);
+    const next = { ArrowRight: k + 1, ArrowLeft: k - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (k < 0 || next === undefined) return;
+    e.preventDefault();
+    selectTab(tabs[(next + tabs.length) % tabs.length][1], true);
+  });
+  // Popovers (Layers, help) close on a click elsewhere or Escape.
+  document.addEventListener('click', (e) => {
+    for (const d of document.querySelectorAll('details.popover[open]')) if (!d.contains(e.target)) d.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const d of document.querySelectorAll('details.popover[open]')) { d.open = false; d.querySelector('summary').focus(); }
+  });
+  const chartSet = (all) => {
+    document.body.classList.toggle('show-details', all);
+    for (const [id, on] of [['chartsKey', !all], ['chartsAll', all]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', String(on)); }
+    app.requestDraw();
+  };
+  $('chartsKey').addEventListener('click', () => chartSet(false));
+  $('chartsAll').addEventListener('click', () => chartSet(true));
+  $('btnElevation').addEventListener('click', () => {
+    const show = $('elevation').hidden;
+    $('elevation').hidden = !show;
+    $('btnElevation').setAttribute('aria-pressed', String(show));
+    app.requestDraw();
+  });
   $('btnPlay').addEventListener('click', () => { app.playing = !app.playing; syncTransport(); });
   $('btnLive').addEventListener('click', goLive);
   $('btnBack').addEventListener('click', () => stepTrace(-1));
@@ -343,17 +517,23 @@ function bindControls() {
   $('btnTable').addEventListener('click', () => {
     const tv = $('tableView');
     tv.hidden = !tv.hidden;
-    $('btnTable').setAttribute('aria-expanded', String(!tv.hidden));
-    $('btnTable').classList.toggle('on', !tv.hidden);
+    $('btnTable').setAttribute('aria-pressed', String(!tv.hidden));
     app.chartsDirty = true;
   });
-  $('profDist').addEventListener('click', () => { app.profile.setMode('distance'); $('profDist').classList.add('on'); $('profSide').classList.remove('on'); });
-  $('profSide').addEventListener('click', () => { app.profile.setMode('side'); $('profSide').classList.add('on'); $('profDist').classList.remove('on'); });
+  const profMode = (mode) => {
+    app.profile.setMode(mode);
+    for (const [id, on] of [['profDist', mode === 'distance'], ['profSide', mode === 'side']]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', String(on)); }
+  };
+  $('profDist').addEventListener('click', () => profMode('distance'));
+  $('profSide').addEventListener('click', () => profMode('side'));
   document.addEventListener('keydown', (e) => {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-    // Space on a focused button already clicks it.
-    if (e.key === ' ' && e.target instanceof HTMLButtonElement) return;
-    if (!$('confirm').hidden) { if (e.key === 'Escape') $('confirm').hidden = true; return; }
+    if ($('runView').hidden || document.querySelector('dialog[open]')) return;
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // Arrow keys on the tabs move between tabs.
+    if (e.target instanceof Element && e.target.closest('[role="tablist"]')) return;
+    // Space on a focused button or summary already clicks it.
+    if (e.key === ' ' && (e.target instanceof HTMLButtonElement || e.target instanceof HTMLElement && e.target.tagName === 'SUMMARY')) return;
     if (e.key === ' ') { e.preventDefault(); app.playing = !app.playing; syncTransport(); }
     else if (e.key === 'ArrowLeft') stepTrace(-1);
     else if (e.key === 'ArrowRight') stepTrace(1);
@@ -364,14 +544,23 @@ function bindControls() {
 }
 
 async function main() {
-  bindControls();
+  document.body.dataset.viewerLoading = 'true';
   app.meta = await api('/api/meta');
+  // The run manager's home screen (runs.js) owns the page until a run is training.
+  if (app.meta.managed && app.meta.status !== 'running') { delete document.body.dataset.viewerLoading; return; }
+  bindControls();
   document.title = `${app.meta.name} · FPV brain training`;
   $('runName').textContent = app.meta.name;
+  for (const el of [$('runPage'), $('viewActions'), document.querySelector('.kpis')]) el.hidden = false;
+  document.querySelector('.commands').hidden = app.meta.mode === 'replay';
   setStatus(app.meta.status);
+  renderSettings();
+  selectTab(location.hash.slice(1));
   const [worlds, history, traces] = await Promise.all([api('/api/worlds'), api('/api/history'), api('/api/traces')]);
   app.worlds = worlds;
   app.traceList = traces;
+  // Watch in game starts from this run's brain on the world the map shows.
+  setWatchContext(() => ({ brain: app.meta.activeRunId || app.meta.name, worlds: app.worlds, world: app.world }));
   app.store = new Store({ config: app.meta.config, policyHz: hz() });
   app.store.setSmoothing(Number($('smooth').value));
   for (const r of history) app.store.append(r);
@@ -379,7 +568,12 @@ async function main() {
   sel.replaceChildren(Object.assign(document.createElement('option'), { value: '-1', textContent: 'All worlds' }),
     ...worlds.map((w, k) => Object.assign(document.createElement('option'), { value: String(k), textContent: `${k} · ${w.style} · ${w.gates.length} gates` })));
   const chartsEl = $('charts');
-  app.charts = CHARTS.map((def) => new Chart(chartsEl, def, app));
+  app.charts = CHARTS.map((def) => {
+    const before = chartsEl.children.length;
+    const chart = new Chart(chartsEl, def, app);
+    if (!KEY_CHARTS.includes(def.id)) for (const child of [...chartsEl.children].slice(before)) child.classList.add('extra-detail');
+    return chart;
+  });
   app.map = new TopDown($('map'), $('mapTip'), app);
   app.profile = new Profile($('profile'), app);
   app.timeline = new Timeline($('scrub'), app);
@@ -387,16 +581,20 @@ async function main() {
   if (app.meta.mode === 'replay') {
     app.live = false;
     $('btnLive').disabled = true;
-    // Play the last stretch of consecutive traces: how the brain flew at the end of the run.
+    // Show the last stretch of traces, paused until the user presses Play.
     const list = app.traceList;
     const from = list.length ? list[Math.max(0, list.length - 400)] : app.store.last?.iteration;
     if (from !== undefined) app.scrubTo(from);
-    app.playing = true;
+    app.playing = false;
   } else {
+    app.live = true; app.playing = true;
     connect();
     setInterval(refreshTraces, 15000);
   }
   syncTransport();
+  document.body.dataset.viewerReady = 'true';
+  document.body.dataset.viewerRun = app.meta.activeRunId || app.meta.name;
+  delete document.body.dataset.viewerLoading;
   requestAnimationFrame(tick);
 }
 

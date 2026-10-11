@@ -10,10 +10,14 @@
 export const RING_QUADS = 64;
 export const TILE_QUADS = 16;
 export const MAX_LEVELS = 10;
+/** Half-width of a level's square in its own quads: RING_QUADS / 2 normally; the extreme tier doubles it (EXTREME_RING_HALF), so each
+ * level reaches twice as far before the grid coarsens and the mesh is one level finer at every distance. */
+export const EXTREME_RING_HALF = 64;
 /** Floats per tile in the GPU tile buffer: gx0, gz0, w, h (level grid units), spacing, level, pad, pad. */
 export const TILE_FLOATS = 8;
 export const TILE_BYTES = TILE_FLOATS * 4;
-export const MAX_TILES = 16 + (MAX_LEVELS - 1) * 24;
+// Sized for the extreme ring: level 0 is (2 * 64 / 16)^2 = 64 tiles, every ring around it 48 (16 and 24 at the normal ring).
+export const MAX_TILES = 64 + (MAX_LEVELS - 1) * 48;
 
 const HALF = RING_QUADS / 2;
 const HOLE_TUCK = 1;
@@ -22,10 +26,20 @@ export function levelSpacing(cellSize: number, level: number): number {
   return cellSize * 2 ** level;
 }
 
+/** Clipmap levels drawn past the tier's view distance, each twice as coarse: a few hundred cheap far tiles that carry the ground out
+ * to the haze (up to 8x the view distance, MAX_LEVELS allowing), so a high camera sees land meet the sky instead of the ground
+ * stopping short of the horizon. */
+export const HORIZON_LEVELS = 3;
+
+/** Levels the terrain draws: enough to reach `viewDistance`, plus the horizon levels. */
+export function drawnLevels(cellSize: number, viewDistance: number, ringHalf = HALF): number {
+  return Math.min(MAX_LEVELS, levelCount(cellSize, viewDistance, ringHalf) + HORIZON_LEVELS);
+}
+
 /** Number of levels so that the outermost square's half-width reaches `viewDistance`. */
-export function levelCount(cellSize: number, viewDistance: number): number {
+export function levelCount(cellSize: number, viewDistance: number, ringHalf = HALF): number {
   let n = 1;
-  while (n < MAX_LEVELS && HALF * levelSpacing(cellSize, n - 1) < viewDistance) n++;
+  while (n < MAX_LEVELS && ringHalf * levelSpacing(cellSize, n - 1) < viewDistance) n++;
   return n;
 }
 
@@ -97,6 +111,9 @@ export class Clipmap {
   private yMax = 0;
   private frustum: Frustum | null = null;
 
+  /** Half-width of each level's square in its own quads (a multiple of TILE_QUADS, at most EXTREME_RING_HALF); takes effect at the next build. */
+  ringHalf = HALF;
+
   build(camX: number, camZ: number, originX: number, originZ: number, cellSize: number, levels: number, yMin: number, yMax: number, frustum: Frustum | null): number {
     snapLevels(camX, camZ, originX, originZ, cellSize, levels, this.centres);
     this.count = 0; this.culled = 0; this.quads = 0;
@@ -108,14 +125,15 @@ export class Clipmap {
 
   private buildLevel(l: number, cellSize: number): void {
     const cx = this.centres[2 * l], cz = this.centres[2 * l + 1];
-    const ox0 = cx - HALF, oz0 = cz - HALF, ox1 = cx + HALF, oz1 = cz + HALF;
+    const half = this.ringHalf;
+    const ox0 = cx - half, oz0 = cz - half, ox1 = cx + half, oz1 = cz + half;
     const spacing = levelSpacing(cellSize, l);
     if (l === 0) {
       this.rect(l, spacing, ox0, oz0, ox1, oz1);
       return;
     }
-    const hx0 = this.centres[2 * (l - 1)] / 2 - HALF / 2 + HOLE_TUCK, hz0 = this.centres[2 * (l - 1) + 1] / 2 - HALF / 2 + HOLE_TUCK;
-    const hx1 = hx0 + HALF - 2 * HOLE_TUCK, hz1 = hz0 + HALF - 2 * HOLE_TUCK;
+    const hx0 = this.centres[2 * (l - 1)] / 2 - half / 2 + HOLE_TUCK, hz0 = this.centres[2 * (l - 1) + 1] / 2 - half / 2 + HOLE_TUCK;
+    const hx1 = hx0 + half - 2 * HOLE_TUCK, hz1 = hz0 + half - 2 * HOLE_TUCK;
     this.rect(l, spacing, ox0, oz0, ox1, hz0);
     this.rect(l, spacing, ox0, hz1, ox1, oz1);
     this.rect(l, spacing, ox0, hz0, hx0, hz1);

@@ -7,7 +7,8 @@ const N = 256;
 /** Half widths of an upright leaf (base at the bottom centre, tip up) in `rows` bands along its length. */
 function profile(lobes: number, amp: number, rows: number): number[] {
   const l = makeLeaf(new Rng(3), 0.5, 0.9, 0, 0.8, 0.2, lobes, amp);
-  l.petiole = 0;
+  // A plain leaf with sinuses at fixed places, whatever the random blemishes and lobe phase of this seed.
+  l.petiole = 0; l.hole = [0, 0, 0]; l.spots = []; l.burn = 0; l.lobePhase = 0;
   const s = newSample(), out: number[] = [];
   for (let r = 0; r < rows; r++) {
     const v = 0.9 - 0.8 * ((r + 0.5) / rows);
@@ -34,12 +35,13 @@ describe('leaf outline', () => {
 describe('oak sprig tile', () => {
   const paint = sprigPainter(new Rng(11));
   const s = newSample();
-  let covered = 0, dark = 0;
+  let covered = 0, dark = 0, stalk = 0;
   for (let y = 0; y < 128; y++) {
     for (let x = 0; x < 128; x++) {
       if (!paint((x + 0.5) / 128, (y + 0.5) / 128, s)) continue;
       covered++;
-      if (s.shade < 0.5) dark++;
+      if (s.open < 0.5) dark++;
+      if (s.thin < 0.5) stalk++;
     }
   }
 
@@ -48,8 +50,13 @@ describe('oak sprig tile', () => {
     expect(covered / (128 * 128)).toBeLessThan(0.5);
   });
 
-  it('paints veins and the stem darker than the blade', () => {
-    expect(dark).toBeGreaterThan(0);
+  it('shades leaves under their neighbours and keeps most of the lamina lit', () => {
+    expect(dark).toBeGreaterThan(covered * 0.01);
     expect(dark).toBeLessThan(covered * 0.4);
+  });
+
+  it('paints veins, stalks and twigs that pass less light than the lamina', () => {
+    expect(stalk).toBeGreaterThan(0);
+    expect(stalk).toBeLessThan(covered * 0.3);
   });
 });

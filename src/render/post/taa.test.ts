@@ -99,11 +99,12 @@ describe('taa pure maths', () => {
     expect(taauSrc).toContain('0x7fffffffu');
   });
 
-  it('scales only the sky pixels of the resolved image by skyScale and keeps the history unscaled, so the blend never mixes two scales', () => {
-    expect(taauSrc).toMatch(/textureStore\(outResolved, gid\.xy, vec4f\(outC \* mix\(1\.0, taa\.skyScale, skyKw \/ max\(wSum, 1e-9\)\), 1\.0\)\);/);
+  it('holds the night sky darker sample by sample before any blending, so a leaf-sky edge pixel is never brighter than the sky beside it', () => {
+    expect(taauSrc).toContain('clamp(dropNan(textureLoad(inputTex, t, 0).rgb), vec3f(0.0), vec3f(HDR_MAX)) * select(1.0, taa.skyScale, z <= 0.0);');
+    expect(taauSrc).toContain('textureStore(outResolved, gid.xy, vec4f(outC, 1.0));');
     expect(taauSrc).toContain('textureStore(outHist, gid.xy, vec4f(outC, storeW));');
     expect(taauSrc).toContain('select(1.0, taa.skyScale, z <= 0.0)');
-    expect(taauSrc.match(/skyScale/g)!.length).toBe(3);
+    expect(taauSrc).not.toContain('skyKw');
   });
 });
 

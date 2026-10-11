@@ -411,18 +411,24 @@ fn rpmUpdate() {
   }
 }
 
-fn rpmApply(axis : u32, x : f32) -> f32 {
+// All axes share notch coefficients but keep independent filter state. Process them together
+// to read each coefficient and test each active notch once, preserving each axis's arithmetic order.
+fn rpmApply3(x : vec3f) -> vec3f {
   if (!RPM_ENABLED) { return x; }
   var y = x;
   for (var i = 0u; i < RPM_COUNT; i++) {
     let w = q.rpmW[i];
     if (w <= 0.0) { continue; }
-    let k = i * 3u + axis;
+    let k = i * 3u;
     let a0 = q.rpmA0[i];
     let b1 = q.rpmB1[i];
-    let n = a0 * y + q.rpmZ1[k];
-    q.rpmZ1[k] = b1 * y - b1 * n + q.rpmZ2[k];
-    q.rpmZ2[k] = a0 * y - q.rpmA2[i] * n;
+    let z1 = vec3f(q.rpmZ1[k], q.rpmZ1[k + 1u], q.rpmZ1[k + 2u]);
+    let z2 = vec3f(q.rpmZ2[k], q.rpmZ2[k + 1u], q.rpmZ2[k + 2u]);
+    let n = a0 * y + z1;
+    let next1 = b1 * y - b1 * n + z2;
+    let next2 = a0 * y - q.rpmA2[i] * n;
+    q.rpmZ1[k] = next1.x; q.rpmZ1[k + 1u] = next1.y; q.rpmZ1[k + 2u] = next1.z;
+    q.rpmZ2[k] = next2.x; q.rpmZ2[k + 1u] = next2.y; q.rpmZ2[k + 2u] = next2.z;
     y += w * (n - y);
   }
   return y;
@@ -433,8 +439,9 @@ fn filterGyro() {
   rpmUpdate();
   let w = q.imuGyro;
   let x = vec3f(-w.z * RAD2DEG, -w.x * RAD2DEG, -w.y * RAD2DEG);
+  let filtered = rpmApply3(x);
   for (var a = 0u; a < 3u; a++) {
-    let y = rpmApply(a, x[a]);
+    let y = filtered[a];
     q.fcLpf1[a] += K_GYRO1 * (y - q.fcLpf1[a]);
     q.fcLpf2[a] += K_GYRO2 * (q.fcLpf1[a] - q.fcLpf2[a]);
   }

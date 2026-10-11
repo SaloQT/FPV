@@ -42,7 +42,7 @@ function readParams() {
     dbg: num('dbg', v === 'debug' ? 1 : 0),
     seed: num('seed', 1),
     time: isTimeOfDay(t) ? t : 'noon',
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high' as Settings['quality'],
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high' as Settings['quality'],
     x: num('x', 0),
     z: num('z', 0),
     yaw: num('yaw', 0),

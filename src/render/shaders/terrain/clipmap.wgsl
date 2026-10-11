@@ -1,5 +1,6 @@
 // Clipmap vertex placement. Tiles (see clipmap.ts) index a shared 17x17 vertex grid; vertices beyond the tile's w x h quads collapse
-// onto its border. Level l has spacing s and covers +-32 s around the camera; in its outer 20% vertices morph onto level l+1's grid.
+// onto its border. Level l has spacing s and covers +-ringHalf s around the camera (32, or 64 at the extreme tier); in its outer 20%
+// vertices morph onto level l+1's grid.
 #include "terrain/bindings.wgsl"
 #include "terrain/terrain_height.wgsl"
 
@@ -22,7 +23,7 @@ fn gridVertex(t : Tile, vid : u32) -> GridVertex {
   g.level = t.info.y;
   g.xz = frame.terrainOrigin.xy + vec2f(g.ij) * g.spacing;
   let d = max(abs(g.xz.x - frame.camPos.x), abs(g.xz.y - frame.camPos.z));
-  let ring = 32.0 * g.spacing;
+  let ring = tp.ringHalf * g.spacing;
   g.morph = smoothstep(0.8 * ring, ring - g.spacing, d);
   return g;
 }

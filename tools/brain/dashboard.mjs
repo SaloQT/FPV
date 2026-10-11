@@ -75,8 +75,11 @@ const self = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(impor
 if (self) {
   const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1]?.startsWith('--') ? 'true' : (all[i + 1] ?? 'true')]] : acc), []));
   if (!args.run || args.run === 'true') {
-    console.error('usage: node tools/brain/dashboard.mjs --run <outDir>/<name> [--port 8787] [--host 127.0.0.1]');
-    process.exit(2);
+    const { startRunManager } = await import('./runManager.mjs');
+    const manager = await startRunManager({ port: Number(args.port ?? 8787), host: args.host ?? '127.0.0.1' });
+    process.on('SIGINT', () => { void manager.close().then(() => process.exit(0)); });
+    console.log('Run manager ready. No training starts until you press Start run.');
+  } else {
+    await replayRun(resolve(args.run), { port: Number(args.port ?? 8787), host: args.host ?? '127.0.0.1' });
   }
-  await replayRun(resolve(args.run), { port: Number(args.port ?? 8787), host: args.host ?? '127.0.0.1' });
 }

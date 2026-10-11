@@ -22,8 +22,8 @@ describe('deferred inactive-light work', () => {
   it('skips inactive BRDFs while keeping both active expressions and sun-plus-moon order', () => {
     expect(source).toContain('var sunDirect = vec3f(0.0);');
     expect(source).toContain('var moonDirect = vec3f(0.0);');
-    expect(source).toContain('if (sunOn) { sunDirect = directLight(frame.sunDir.xyz, n, v, diffuseColor, f0, rough, msc.g, sunE * sunVis, frame.sunDir.w); }');
-    expect(source).toContain('if (moonUp > 0.0) { moonDirect = directLight(frame.moonDir.xyz, n, v, diffuseColor, f0, rough, msc.g, moonE * moonVis, frame.moonDir.w); }');
+    expect(source).toContain('if (sunOn) { sunDirect = directLight(frame.sunDir.xyz, n, v, diffuseColor, transmitColor, f0, rough, translucency, sunE * sunVis, frame.sunDir.w); }');
+    expect(source).toContain('if (moonUp > 0.0) { moonDirect = directLight(frame.moonDir.xyz, n, v, diffuseColor, transmitColor, f0, rough, translucency, moonE * moonVis, frame.moonDir.w); }');
     expect(source).toContain('let direct = sunDirect + moonDirect;');
   });
 

@@ -7,25 +7,28 @@
 import type { AppSettings } from '../ui/settingsSchema';
 import { effectiveGates, effectiveLaps } from '../ui/trackLimits';
 import { idlePreview, type PreviewState } from '../ui/trackPreviewModel';
-import type { ProgressFn } from '../contracts';
+import { gameplayQuality, type ProgressFn } from '../contracts';
 import type { ShareWorld } from '../ui/seedModel';
 import type { World, WorldRequest } from './world';
+import { parkRecipeFromSettings, type ParkSettings } from '../world/park/settings';
+import { parkRecipeKey } from '../world/park/recipe';
 
 /** Settings that decide what world is built. */
-export const WORLD_KEYS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>(['seed', 'trackStyle', 'gateCount', 'laps', 'difficulty', 'quality']);
+export const WORLD_KEYS: ReadonlySet<keyof AppSettings> = new Set<keyof AppSettings>(['seed', 'trackStyle', 'gateCount', 'laps', 'difficulty', 'quality', 'worldKind', 'parkSize', 'parkTheme', 'parkLayout', 'parkGuests', 'parkRoute', 'parkCoaster']);
 
 /** Quiet time after the last change before a build starts, so dragging a slider or typing a seed builds once. */
 export const PREVIEW_DEBOUNCE_MS = 350;
 const RETRY_MS = 500;
 
-export type WorldSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'> & {
+export type WorldSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'> & ParkSettings & {
   /** The track's own seed when it is not `seed` (a link to an N-key track); the terrain is always `seed`'s. */
   trackSeed?: number;
 };
 
 /** Identifies the world a set of settings builds: a count or lap setting the style ignores does not make another world. */
 export function worldKey(s: WorldSettings): string {
-  return [s.seed, s.trackStyle, effectiveGates(s.trackStyle, s.gateCount), effectiveLaps(s.trackStyle, s.laps), s.difficulty.toFixed(3), s.quality, s.trackSeed ?? ''].join('|');
+  if (s.worldKind === 'theme-park') return `park|${parkRecipeKey(parkRecipeFromSettings(s))}|${gameplayQuality(s.quality)}`;
+  return [s.seed, s.trackStyle, effectiveGates(s.trackStyle, s.gateCount), effectiveLaps(s.trackStyle, s.laps), s.difficulty.toFixed(3), gameplayQuality(s.quality), s.trackSeed ?? ''].join('|');
 }
 
 /**
@@ -50,6 +53,7 @@ export function worldLink(world: World, preview: PreviewState['status'], started
   if (recipe === undefined && world.attempts === 0) return false;
   const share: ShareWorld = { terrainSeed: world.terrainSeed, trackSeed: r.seed, style: r.style, gateCount: r.gateCount, laps: r.laps, difficulty: r.difficulty, quality: world.quality };
   if (recipe !== undefined) share.recipe = recipe;
+  if (world.park) share.parkRecipe = world.park.recipe;
   return share;
 }
 
@@ -182,7 +186,7 @@ export class WorldPreview {
     const s = this.settings();
     const key = worldKey(s);
     const current = this.deps.world();
-    const sameTerrain = s.seed === current.baseSeed && s.quality === current.quality;
+    const sameTerrain = s.seed === current.baseSeed && gameplayQuality(s.quality) === gameplayQuality(current.quality);
     const old = current.track;
     const progress = (stage: string, f: number): void => {
       if (token === this.token) this.publish({ status: 'working', stage, progress: Math.min(Math.max(f, 0), 1), track: old, message: '' });

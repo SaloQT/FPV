@@ -1,3 +1,5 @@
+import { comparisonService } from './compareService.mjs';
+import { gameService } from './gameService.mjs';
 // Live training dashboard: a node:http server inside the trainer process (never Vite there: it crashes Dawn) that serves the
 // page in tools/brain/dashboard/, the world geometry, every iteration's metrics, a live event stream and the drone traces.
 //
@@ -250,7 +252,7 @@ function setAside(outDir, name) {
  *   meta: object (sent as /api/meta, `status` kept current), worldsJson: string, history: { iters: number[], lines: string[] },
  *   traces: { has(it), get(it) -> {K,T,bytes}|null, list() }, onCommand?: (cmd) => unknown (absent: commands are refused).
  */
-export async function serveDashboard(source, { port = 8787, host = '127.0.0.1', log = console.log, portTries = 10 } = {}) {
+export async function serveDashboard(source, { port = 8787, host = '127.0.0.1', log = console.log, portTries = 10, game: gameOptions = {} } = {}) {
   const clients = new Set();
   let worldsGz = null;
   const loopbackOnly = LOOPBACK.has(host);
@@ -278,12 +280,17 @@ export async function serveDashboard(source, { port = 8787, host = '127.0.0.1', 
     res.write(text);
   };
 
+  const comparison = comparisonService();
+  const game = gameService({ host, log, ...gameOptions });
   const handle = async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://local');
     const hostName = (req.headers.host ?? '').replace(/:\d+$/, '').toLowerCase();
     // A page on another site must not reach the trainer through DNS rebinding: on a loopback bind only loopback names answer.
     if (loopbackOnly && !LOOPBACK.has(hostName)) return send(res, 403, 'forbidden host', 'text/plain');
     const path = url.pathname;
+    if (await source.handleRequest?.(req, res, url)) return;
+    if (await comparison.handle(req, res, path)) return;
+    if (await game.handle(req, res, path)) return;
     if (req.method === 'POST' && path === '/api/command') return command(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'method not allowed', 'text/plain');
     if (path === '/api/meta') return send(res, 200, JSON.stringify({ ...source.meta, traces: source.traces.size ?? source.traces.list().length, iterations: source.history.iters.length }));
@@ -401,6 +408,8 @@ export async function serveDashboard(source, { port = 8787, host = '127.0.0.1', 
       for (const c of clients) sseWrite(c, text);
     },
     async close() {
+      comparison.close();
+      await game.close();
       clearInterval(heartbeat);
       for (const c of clients) c.end();
       clients.clear();
@@ -442,6 +451,7 @@ export async function startDashboard(opts) {
   const history = { iters: [], lines: [] };
   const traces = new TraceStore({ file });
   let closed = false;
+  let finished = false;
   const source = {
     meta, worldsJson, history, traces,
     onCommand: async (cmd) => {
@@ -458,7 +468,7 @@ export async function startDashboard(opts) {
     port: http.port,
     /** Records one iteration: metrics go to the history, the event stream and the ndjson file, the trace to the store. */
     push({ iteration, elapsed, envSteps, sps, metrics, trace }) {
-      if (closed) return;
+      if (closed || finished) return;
       const { trace: _drop, ...m } = metrics ?? {};
       let kept = false;
       if (trace && trace.data) {
@@ -471,16 +481,24 @@ export async function startDashboard(opts) {
       log$?.write(`${line}\n`);
       http.broadcast(iteration, line, kept);
     },
-    async close() {
-      if (closed) return;
-      closed = true;
+    /** End training while keeping the page, traces and comparison endpoints available. */
+    async finish() {
+      if (finished) return;
+      finished = true;
       meta.status = 'finished';
       http.status();
       log$?.write(`${JSON.stringify({ kind: 'end', time: Date.now(), iterations: history.iters.length })}\n`);
-      await http.close();
       if (log$) await new Promise((done) => log$.end(done));
       traces.flushRecent();
+    },
+    async close() {
+      if (closed) return;
+      await this.finish();
+      closed = true;
+      await http.close();
       await file?.close();
     },
   };
 }
+
+

@@ -197,6 +197,32 @@ describe('FlightEvents', () => {
     expect(count(drive(ev, s, 30), 'beacon')).toBe(0);
   });
 
+  it('does not beacon for a quad that finished its race, knocks before or after the finish included, until it is armed again', () => {
+    const ev = new FlightEvents();
+    const s = makeState({ armed: true, onGround: false, pos: [0, 3, 0] });
+    const knock = (): void => {
+      s.crashed = true;
+      s.impactSpeed = 10;
+      drive(ev, s, DT);
+      s.crashed = false;
+      drive(ev, s, 1);
+    };
+    drive(ev, s, 0.2);
+    knock();
+    ev.completed();
+    knock();
+    s.onGround = true;
+    s.armed = false;
+    expect(count(drive(ev, s, 40), 'beacon')).toBe(0);
+    s.armed = true;
+    s.onGround = false;
+    drive(ev, s, 0.2);
+    knock();
+    s.onGround = true;
+    s.armed = false;
+    expect(count(drive(ev, s, 25), 'beacon')).toBeGreaterThanOrEqual(1);
+  });
+
   it('never beacons without a crash', () => {
     const ev = new FlightEvents();
     expect(count(drive(ev, makeState(), 60), 'beacon')).toBe(0);

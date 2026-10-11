@@ -3,8 +3,10 @@
  * builder retries with other seeds, then other styles, then another terrain. A custom track (a track-builder recipe) keeps its
  * style and retries the recipe's seed instead. Pure logic over injected generators.
  */
-import { GENERATED_STYLES, type GeneratedStyle, type ProgressFn, type RenderQuality, type TerrainData, type TerrainParams, type TerrainSampler, type TrackData, type TrackParams, type TrackRecipe } from '../contracts';
+import { GENERATED_STYLES, type GeneratedStyle, gameplayQuality, type ProgressFn, type RenderQuality, type TerrainData, type TerrainParams, type TerrainSampler, type TrackData, type TrackParams, type TrackRecipe } from '../contracts';
 import { sanitizeRecipe } from '../world/track/recipe';
+import type { ParkBuild, ParkData, ParkRecipe } from '../world/park/types';
+import { generateParkAsync } from '../world/park/client';
 
 export type TrackStyle = TrackData['style'];
 export type { GeneratedStyle };
@@ -23,12 +25,14 @@ export const TERRAIN_ATTEMPTS = 3;
 const TERRAIN_SEED_STEP = 1000003;
 
 export interface WorldDeps {
+  generatePark?(recipe: ParkRecipe, onProgress?: ProgressFn): Promise<ParkBuild>;
   generateTerrain(params: TerrainParams, onProgress?: ProgressFn): Promise<TerrainData>;
   createSampler(data: TerrainData): TerrainSampler;
   generateTrack(params: TrackParams, sampler: TerrainSampler): TrackData;
 }
 
 export interface TrackRequest {
+  parkRecipe?: ParkRecipe;
   seed: number;
   style: TrackStyle;
   gateCount: number;
@@ -56,6 +60,7 @@ export interface TrackResult {
 }
 
 export interface World extends TrackResult {
+  park?: ParkData;
   terrain: TerrainData;
   sampler: TerrainSampler;
   /** Seed of the terrain actually generated (differs from `baseSeed` after a terrain retry). */
@@ -124,11 +129,17 @@ export function buildTrack(sampler: TerrainSampler, req: TrackRequest, deps: Pic
 
 /** Terrain (worker-generated, main-thread fallback inside `generateTerrain`) plus track, with fallbacks down to a new terrain. */
 export async function buildWorld(req: WorldRequest, deps: WorldDeps, onProgress?: ProgressFn): Promise<World> {
+  if (req.parkRecipe) {
+    const made = await (deps.generatePark ?? generateParkAsync)(req.parkRecipe, onProgress);
+    const seed = made.park.recipe.seed;
+    return { ...made, sampler: deps.createSampler(made.terrain), seed, style: made.track.style, attempts: 1,
+      request: { ...req, seed, parkRecipe: made.park.recipe }, terrainSeed: seed, baseSeed: seed, quality: req.quality };
+  }
   let lastError: unknown = null;
   const baseSeed = req.terrainSeed ?? req.seed;
   for (let t = 0; t < TERRAIN_ATTEMPTS; t++) {
     const terrainSeed = baseSeed + t * TERRAIN_SEED_STEP;
-    const terrain = await deps.generateTerrain({ seed: terrainSeed, quality: req.quality }, (stage, f) => onProgress?.(stage, f * 0.9));
+    const terrain = await deps.generateTerrain({ seed: terrainSeed, quality: gameplayQuality(req.quality) }, (stage, f) => onProgress?.(stage, f * 0.9));
     const sampler = deps.createSampler(terrain);
     try {
       onProgress?.('Placing track', 0.92);

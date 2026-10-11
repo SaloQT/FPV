@@ -143,7 +143,7 @@ describe('packVegParams', () => {
   const budget = grassBudget(qualityProfile('high'));
   const base: VegParamInput = {
     windDir: [3, 4], windSpeed: 6, quad: null, budget, waterLevel: 12.5, seed: 77, cameraXZ: [100.3, -250.9],
-    tree: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, slots: 4096, draws: 36 },
+    tree: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, leafDetail: 0, slots: 4096, draws: 36 },
     farDistance: 3500,
   };
   const pack = (over: Partial<VegParamInput> = {}) => {

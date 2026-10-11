@@ -1,6 +1,6 @@
 // Final fullscreen pass: lens + rolling shutter resample, chroma bleed, bloom mix, exposure, vignette, sensor noise, filmic tonemap,
-// grade, video-link artifacts, dither and the display encode. At most 8 filtered taps: 3 (chromatic aberration, 1 when the lens is off),
-// 2 (edge softness), 2 (chroma bleed), 1 (bloom). Everything else is arithmetic on registers.
+// grade, video-link artifacts, dither and the display encode. At most 12 filtered taps: 3 (chromatic aberration, 1 when the lens is off),
+// 4 (sharpening), 2 (edge softness), 2 (chroma bleed), 1 (bloom). Everything else is arithmetic on registers.
 // Defines: DITHER_LSB (one output code step, 0 = no dither), OUT_HW_SRGB (target format is *-srgb: hardware does the OETF).
 #include "post/lens.wgsl"
 #include "post/tonemap.wgsl"
@@ -21,7 +21,7 @@ struct Params {
 @group(0) @binding(2) var samp : sampler;
 struct Exposure {
   ratio : vec4f,  // ratio, sensor gain EV over daylight, metered mean EV, total EV
-  look : vec4f,   // highlight knee (scene-linear after the ratio, 1e12 = off), roll-off strength 0..1
+  look : vec4f,   // highlight knee (scene-linear after the ratio, 1e12 = off), roll-off strength 0..1, white balance red and blue gains (0 = none)
 };
 @group(0) @binding(3) var<uniform> exposure : Exposure;
 @group(0) @binding(4) var<uniform> P : Params;
@@ -39,6 +39,12 @@ struct VsOut {
   return VsOut(vec4f(p * 2.0 - 1.0, 0.0, 1.0), vec2f(p.x, 1.0 - p.y));
 }
 
+// Camera white balance (post/whiteBalance.ts): red and blue gains, with green set so a grey keeps its luminance.
+fn whiteBalance() -> vec3f {
+  if (exposure.look.z <= 0.0 || exposure.look.w <= 0.0) { return vec3f(1.0); }
+  return vec3f(exposure.look.z, (1.0 - 0.2126 * exposure.look.z - 0.0722 * exposure.look.w) / 0.7152, exposure.look.w);
+}
+
 fn fetch(uv : vec2f) -> vec3f {
   return min(max(textureSampleLevel(resolvedTex, samp, uv, 0.0).rgb, vec3f(0.0)), vec3f(HDR_MAX));
 }
@@ -53,9 +59,29 @@ fn heatColor(ev : f32) -> vec3f {
   return saturate(vec3f(1.5 - abs(4.0 * x - 3.0), 1.5 - abs(4.0 * x - 2.0), 1.5 - abs(4.0 * x - 1.0)));
 }
 
-// Resolved image at the lens-mapped position: chromatic aberration, radial edge softness, analog chroma bleed.
-fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32) -> vec3f {
-  var c = fetch(L.g);
+// Contrast-adaptive sharpening (after AMD's CAS) of the resolved image, as a camera's processing does: the temporal resolve and the bilinear
+// lens resample soften fine detail (leaves, needles, grass) to about half the local contrast a photograph of foliage shows. The four cross
+// neighbours are pushed away from by up to the given amount, less where the neighbourhood is already near black or white, so edges get no halo.
+// Works in the squashed domain c / (1 + c), where an HDR highlight cannot dominate.
+const SHARPEN : f32 = 0.9;
+fn sharpened(g : vec2f, amount : f32) -> vec3f {
+  let c = squash(fetch(g));
+  if (amount <= 0.0) { return unsquash(c); }
+  let t = 1.0 / vec2f(textureDimensions(resolvedTex));
+  let n = squash(fetch(g - vec2f(0.0, t.y)));
+  let s = squash(fetch(g + vec2f(0.0, t.y)));
+  let e = squash(fetch(g + vec2f(t.x, 0.0)));
+  let w = squash(fetch(g - vec2f(t.x, 0.0)));
+  let mn = min(c, min(min(n, s), min(e, w)));
+  let mx = max(c, max(max(n, s), max(e, w)));
+  let amp = sqrt(saturate(min(mn, vec3f(1.0) - mx) / max(mx, vec3f(1e-4))));
+  let k = -amp * mix(0.125, 0.2, amount);
+  return unsquash(saturate((c + k * (n + s + e + w)) / (vec3f(1.0) + 4.0 * k)));
+}
+
+// Resolved image at the lens-mapped position: sharpening, chromatic aberration, radial edge softness, analog chroma bleed.
+fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32, sharpen : f32) -> vec3f {
+  var c = sharpened(L.g, sharpen);
   if (P.lens.w > 0.0) { c = vec3f(fetch(L.r).r, c.g, fetch(L.b).b); }
   let soft = P.look.y * L.rad * L.rad;
   if (soft > 0.01) {
@@ -86,13 +112,14 @@ fn sceneColor(L : LensCoords, uv : vec2f, size : vec2f, vn : f32) -> vec3f {
   shift.x += videoSyncJitterPx(pix.y, frame, vn, size.x);
   let L = lensCoords(uv, size, P.lens.xyz, shift, P.lens.w);
 
-  var c = sceneColor(L, uv, size, vn);
+  // Sharpening is a daylight look: at night it would only sharpen the sensor noise, so it fades out with the day curve (tonemap.wgsl).
+  var c = sceneColor(L, uv, size, vn, SHARPEN * dayWeight(exposure.ratio.y));
   let bloomMix = P.look.z;
   if (bloomMix > 0.0) {
     let bl = min(max(textureSampleLevel(bloomTex, samp, L.g, 0.0).rgb, vec3f(0.0)), vec3f(HDR_MAX));
     c = select(c * (1.0 - bloomMix) + bl, bl, debug == 3u);
   }
-  c *= exposure.ratio.x * lensVignette(L.rad, P.look.x);
+  c *= exposure.ratio.x * lensVignette(L.rad, P.look.x) * whiteBalance();
   if (P.look.w > 0.0) { c += sensorNoise(c, pix, frame, exposure.ratio.y, P.look.w); }
   c *= L.edge;
 

@@ -58,13 +58,31 @@ describe('leaf albedo', () => {
 describe('shaders/vegetation/tree.wgsl foliage shading', () => {
   const src = resolveShader('vegetation/tree.wgsl');
 
-  it('shades leaves fully rough so a dark leaf does not reflect a broad white lobe', () => {
-    expect(constant(src, 'LEAF_ROUGHNESS')).toBe(1);
-    expect(constant(src, 'NEEDLE_ROUGHNESS')).toBe(1);
+  it('gives the waxy upper face of a broadleaf a broad sheen that cannot wash a card white, and keeps undersides, needles and far cards fully rough', () => {
+    expect(constant(src, 'LEAF_ROUGHNESS')).toBeGreaterThanOrEqual(0.65);
+    expect(constant(src, 'LEAF_ROUGHNESS')).toBeLessThan(0.9);
+    expect(constant(src, 'LEAF_BACK_ROUGHNESS')).toBeGreaterThan(constant(src, 'LEAF_ROUGHNESS'));
+    expect(constant(src, 'NEEDLE_ROUGHNESS')).toBeGreaterThanOrEqual(0.9);
+    expect(constant(src, 'BLOB_ROUGHNESS')).toBeGreaterThan(constant(src, 'LEAF_ROUGHNESS'));
+    expect(constant(src, 'CONE_ROUGHNESS')).toBeGreaterThanOrEqual(constant(src, 'BLOB_ROUGHNESS'));
+  });
+
+  it('paints the underside of a broadleaf paler, within what a real leaf reflects, and never greys it out', () => {
+    expect(constant(src, 'LEAF_BACK_LIGHTEN')).toBeGreaterThan(1.05);
+    expect(constant(src, 'LEAF_BACK_LIGHTEN')).toBeLessThan(1.5);
+    expect(constant(src, 'LEAF_BACK_GREY')).toBeGreaterThanOrEqual(0);
+    expect(constant(src, 'LEAF_BACK_GREY')).toBeLessThan(0.3);
+  });
+
+  it('dithers the leaf alpha against a moving threshold with TAA, and cuts at a fixed 0.5 without it', () => {
+    expect(src).toContain('fn alphaThreshold(');
+    expect(src).toContain('(frame.misc.y & 4u) == 0u) { return 0.5; }');
+    expect(src).toContain('/ alphaWidth + 0.5) <= alphaThreshold(');
+    expect(src).toContain('mix(t, 0.5, saturate1(length(motion * frame.screen.xy) - 0.5))');
   });
 
   it('keeps an ambient floor so crown interiors are darker but never black', () => {
-    expect(constant(src, 'LEAF_AO_FLOOR')).toBeGreaterThanOrEqual(0.4);
+    expect(constant(src, 'LEAF_AO_FLOOR')).toBeGreaterThanOrEqual(0.25);
     expect(constant(src, 'LEAF_AO_FLOOR')).toBeLessThan(1);
     expect(constant(src, 'BARK_AO_FLOOR')).toBeGreaterThanOrEqual(0.3);
   });

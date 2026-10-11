@@ -56,8 +56,8 @@ describe('ecliptic pole', () => {
 });
 
 describe('AtmosParams layout', () => {
-  it('sizes the block as 11 fixed rows plus two rows per lunar feature', () => {
-    expect(FIXED_ROWS).toBe(11);
+  it('sizes the block as 12 fixed rows plus two rows per lunar feature', () => {
+    expect(FIXED_ROWS).toBe(12);
     expect(ATMOS_PARAM_BYTES).toBe((FIXED_ROWS + LUNAR_ROWS) * 16);
     expect(new AtmosUniforms().data.length).toBe((FIXED_ROWS + LUNAR_ROWS) * 4);
   });
@@ -66,7 +66,7 @@ describe('AtmosParams layout', () => {
     const source = new TextDecoder().decode(nodeFs.readFileSync(new URL('../shaders/sky/atmos_uniforms.wgsl', import.meta.url)));
     const body = source.slice(source.indexOf('struct AtmosParams'), source.indexOf('};', source.indexOf('struct AtmosParams')));
     const vec4Fields = [...body.matchAll(/^\s*(\w+)\s*:\s*vec4f\s*,/gm)].map((m) => m[1]);
-    expect(vec4Fields).toEqual(['flags', 'sky2', 'cloudA', 'cloudB', 'wind', 'cloudC', 'cloudD', 'eclNorth', 'gal0', 'gal1', 'gal2']);
+    expect(vec4Fields).toEqual(['flags', 'sky2', 'cloudA', 'cloudB', 'wind', 'cloudC', 'cloudD', 'eclNorth', 'gal0', 'gal1', 'gal2', 'cloudE']);
     expect(vec4Fields.length).toBe(FIXED_ROWS);
     expect(body).toMatch(/maria\s*:\s*array<vec4f,\s*\$\{MARIA_ROWS\}>/);
   });
@@ -76,7 +76,7 @@ describe('AtmosParams layout', () => {
     const axes = galacticAxesEquatorial();
     for (let a = 0; a < 3; a++) for (let i = 0; i < 3; i++) expect(d[32 + a * 4 + i]).toBeCloseTo(axes[a][i], 6);
     LUNAR_FEATURES.forEach((f, k) => {
-      const o = 44 + k * 8;
+      const o = 48 + k * 8;
       expect(d[o]).toBeCloseTo(f.lonDeg * DEG, 6);
       expect(d[o + 1]).toBeCloseTo(f.latDeg * DEG, 6);
       expect(d[o + 2]).toBeCloseTo(f.radiusLonDeg * DEG, 6);
@@ -93,7 +93,7 @@ describe('AtmosParams layout', () => {
     expect(Array.from(d.slice(0, 4))).toEqual([1, 3, 1.5, 0.25]);
     expect(Array.from(d.slice(4, 8))).toEqual([4, 1, 1, 7.5]);
     expect(Array.from(d.slice(8, 12))).toEqual([0.6, 0.2, 2, 123.5].map((v) => Math.fround(v)));
-    expect(Array.from(d.slice(12, 16))).toEqual([1.5, 4, 8, 10]);
+    expect(Array.from(d.slice(12, 16))).toEqual([1.5, Math.fround(2.8), 8, 10]);
     expect(Array.from(d.slice(20, 24))).toEqual([24, 5, 640, -320]);
     expect(Array.from(d.slice(24, 28)).map((v) => Math.fround(v))).toEqual([0.9, 1, 5, 8000].map((v) => Math.fround(v)));
   });

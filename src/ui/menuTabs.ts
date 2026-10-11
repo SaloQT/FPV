@@ -3,6 +3,7 @@ import { formatHours } from '../game/units';
 import type { GamepadConfig, StickRole } from '../input/gamepadMap';
 import { STICK_LAYOUTS, STICK_LAYOUT_LABELS } from '../input/gamepadMap';
 import { RATES_PANEL } from './menuRates';
+import { WORLD_KIND, PARK_SETUP } from './menuPark';
 import type { AppSettings } from './settingsSchema';
 import {
   bearing, button, choice, fixed, numberChoice, percent, slider, solarDate, toggle, withSolarDate,
@@ -17,7 +18,7 @@ const times = (unit: string) => fixed(2, unit);
 export const PERFORMANCE_240 = 'perf240';
 const QUALITY: readonly SelectOption[] = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'ultra', label: 'Ultra' },
-  { value: PERFORMANCE_240, label: 'Performance 240' },
+  { value: 'extreme', label: 'Extreme' }, { value: PERFORMANCE_240, label: 'Performance 240' },
 ];
 const AUTO_FPS = { value: 0, label: 'Display refresh (measured)' };
 const TARGET_FPS = [AUTO_FPS, ...[60, 120, 144, 165, 240, 360].map((value) => ({ value, label: `${value} fps` }))];
@@ -25,7 +26,7 @@ const FRAME_CAPS = [{ value: 0, label: 'Display refresh (no cap)' }, ...[240, 14
 
 const QUALITY_CONTROL: SelectControl = {
   kind: 'select', id: 'quality', label: 'Quality', options: QUALITY,
-  hint: 'Higher tiers add lighting and terrain detail and cost GPU time. Performance 240 is High with cheaper ray, probe, cloud and grass budgets for 240 Hz displays.',
+  hint: 'Higher tiers add lighting and terrain detail and cost GPU time. Extreme is the best picture with no frame-rate target, for screenshots, videos and powerful GPUs; the world is the same as Ultra. Performance 240 is High with cheaper ray, probe, cloud and grass budgets for 240 Hz displays.',
   read: (s) => (s.performance240 ? PERFORMANCE_240 : s.quality),
   write: (v) => (v === PERFORMANCE_240 ? { quality: 'high', performance240: true } : { quality: v as AppSettings['quality'], performance240: false }),
 };
@@ -147,6 +148,7 @@ export function buildTabs(presets: readonly MenuPreset[]): readonly MenuTab[] {
         numberChoice('timeScale', 'Time scale', TIME_SCALES),
         slider('windSpeed', 'Wind speed', 0, 30, 0.5, fixed(1, ' m/s')),
         slider('windDirDeg', 'Wind from', 0, 360, 5, bearing)),
+      section('World', WORLD_KIND, ...PARK_SETUP),
       section('Track', ...TRACK_SETUP,
         slider('gateCount', 'Gates', 4, 40, 1, fixed(0)),
         slider('laps', 'Laps', 1, 10, 1, fixed(0)),

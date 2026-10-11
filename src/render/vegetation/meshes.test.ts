@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { KIND, type MeshData } from './meshBuilder';
+import { BARK_RADIUS_MAX, KIND, type MeshData } from './meshBuilder';
 import { ROCK_FREQUENCY, ROCK_SHAPES, rockAssets } from './rockGen';
-import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets, buildVariantAssetsSliced, type VariantAsset } from './variants';
+import { DRAW_COUNT, LOD_COUNT, VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets, buildVariantAssetsSliced, isRockVariant, variantPlan, type VariantAsset } from './variants';
 
 const VALID_KINDS = new Set<number>(Object.values(KIND));
 const isLeafKind = (k: number): boolean => k >= KIND.leaf;
@@ -19,9 +19,9 @@ describe('variant meshes', () => {
     a.forEach((v, i) => {
       expect(v.def).toBe(VARIANT_DEFS[i]);
       expect(v.lods.length).toBe(LOD_COUNT);
-      expect(v.def.group === 'rock').toBe(i >= FIRST_ROCK);
+      expect(v.def.group === 'rock').toBe(isRockVariant(i));
     });
-  });
+  }, SLOW);
 
   it('cuts the triangle count at every LOD, down to crossed cards for trees and 20 faces for rocks', () => {
     for (const v of assets()) {
@@ -31,15 +31,22 @@ describe('variant meshes', () => {
       if (v.def.group === 'rock') {
         expect([t0, t1, t2]).toEqual([500, 80, 20]);
       } else if (v.def.group === 'tree') {
-        expect(t0).toBeGreaterThan(1500);
-        expect(t0).toBeLessThan(16000);
+        // A bare snag is only its trunk and broken limbs.
+        expect(t0).toBeGreaterThan(v.def.name.startsWith('snag') ? 800 : 1500);
+        // The ultra near-LOD budget: 32k for an oak (about 800 leaf clusters of small sprigs make its broad dome a continuous mass), 28k for
+        // the other broadleaves, whose crowns are hundreds of separate clusters, 24k for a spruce (its sprays are short half-shoots either side
+        // of each branch, carried on toward the trunk, so they follow the wind and clothe the branch), 16k for the rest. Only trees within the
+        // near-LOD distance draw it; the mid LOD keeps the cluster count it had before.
+        const plan = variantPlan(VARIANT_DEFS.indexOf(v.def));
+        const cap = plan?.species === 'oak' ? 32000 : plan?.foliage === KIND.leaf ? 28000 : plan?.species === 'spruce' ? 24000 : 16000;
+        expect(t0, v.def.name).toBeLessThan(cap);
         expect(t2).toBeLessThanOrEqual(60);
       } else {
         expect(t0).toBeGreaterThan(150);
         expect(t2).toBeLessThanOrEqual(30);
       }
     }
-  });
+  }, SLOW);
 
   it('produces finite geometry with unit normals and in-range indices', () => {
     for (const v of assets()) {
@@ -74,6 +81,7 @@ describe('variant meshes', () => {
           if (isLeafKind(k)) leaf++; else bark++;
         }
         if (v.def.group === 'rock') expect(leaf).toBe(0);
+        else if (variantPlan(VARIANT_DEFS.indexOf(v.def))?.species === 'snag') expect(leaf).toBe(0);
         else {
           expect(leaf).toBeGreaterThan(0);
           if (l === 0) expect(bark).toBeGreaterThan(0);
@@ -82,16 +90,23 @@ describe('variant meshes', () => {
     }
   });
 
-  it('uses brown bark tags per species: pine and birch bark differ from the oak default', () => {
+  it('uses its own bark tag per species: pine, birch, beech and spruce bark differ from the oak default, and snags are dead wood', () => {
     const barkOf = (v: VariantAsset): Set<number> => {
       const set = new Set<number>();
       for (let i = 0; i < v.lods[0].vertexCount; i++) if (!isLeafKind(v.lods[0].attr[i * 4 + 2])) set.add(v.lods[0].attr[i * 4 + 2]);
       return set;
     };
     const named = (n: string): VariantAsset => assets().find((v) => v.def.name === n) as VariantAsset;
-    expect([...barkOf(named('pine'))]).toContain(KIND.pineBark);
+    expect([...barkOf(named('pine forest'))]).toContain(KIND.pineBark);
     expect([...barkOf(named('birch'))]).toContain(KIND.birchBark);
-    expect([...barkOf(named('oak A'))]).toContain(KIND.bark);
+    expect([...barkOf(named('oak open'))]).toContain(KIND.bark);
+    expect([...barkOf(named('beech forest'))]).toContain(KIND.beechBark);
+    expect([...barkOf(named('spruce open'))]).toContain(KIND.spruceBark);
+    expect([...barkOf(named('snag conifer'))]).toEqual([KIND.deadWood]);
+    // The forest pine's bare bole keeps the stubs of the limbs it shed.
+    expect([...barkOf(named('pine forest'))]).toContain(KIND.deadWood);
+    // Forest-grown spruces carry dead twigs below their live crown.
+    expect([...barkOf(named('spruce forest'))]).toContain(KIND.deadWood);
   });
 
   it('builds plants near their nominal height and lets rocks rest on y = 0', () => {
@@ -126,22 +141,27 @@ describe('variant meshes', () => {
       }
       expect(nBase).toBeGreaterThan(0);
       expect(nTop).toBeGreaterThan(0);
-      expect(base / nBase).toBeLessThan(0.1 * (top / nTop));
-      expect(top / nTop).toBeGreaterThan(100);
+      expect(base / nBase, v.def.name).toBeLessThan(0.1 * (top / nTop));
+      expect(top / nTop, v.def.name).toBeGreaterThan(100);
     }
   });
 
-  it('gives every branch and leaf a wind phase but keeps the main trunk in phase 0', () => {
-    for (const v of assets().filter((a) => a.def.group === 'tree')) {
-      const m = v.lods[0];
-      let trunkVerts = 0, phased = 0;
+  it('gives every leaf a wind phase and every bark vertex the radius of its limb', () => {
+    for (const [index, v] of assets().entries()) {
+      if (v.def.group !== 'tree') continue;
+      const m = v.lods[0], plan = variantPlan(index)!;
+      let trunkVerts = 0, leaves = 0, phased = 0, footRadius = 0;
       for (let i = 0; i < m.vertexCount; i++) {
-        const phase = m.attr[i * 4 + 3];
-        if (m.pos[i * 3 + 1] < 0.5 && !isLeafKind(m.attr[i * 4 + 2])) { trunkVerts++; expect(phase).toBe(0); }
-        else if (phase > 0) phased++;
+        const code = m.attr[i * 4 + 3] / 255;
+        if (isLeafKind(m.attr[i * 4 + 2])) { leaves++; if (code > 0) phased++; continue; }
+        const radius = code * code * BARK_RADIUS_MAX;
+        expect(radius).toBeLessThanOrEqual(BARK_RADIUS_MAX);
+        // Bark at the foot of the trunk carries the trunk's radius (the root flare swells around it; surface roots there are thinner).
+        if (m.pos[i * 3 + 1] > 0.2 && m.pos[i * 3 + 1] < 0.5 && Math.hypot(m.pos[i * 3], m.pos[i * 3 + 2]) < 2 * plan.trunkRadius) { trunkVerts++; footRadius = Math.max(footRadius, radius); }
       }
       expect(trunkVerts).toBeGreaterThan(0);
-      expect(phased).toBeGreaterThan(m.vertexCount * 0.3);
+      expect(footRadius).toBeGreaterThan(0.8 * plan.trunkRadius);
+      if (leaves) expect(phased).toBeGreaterThan(leaves * 0.3);
     }
   });
 

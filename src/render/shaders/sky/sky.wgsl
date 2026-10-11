@@ -4,8 +4,8 @@
 // UNIT CHAIN: everything below is radiance in nits (cd/m2) until the very last line, where it is multiplied by frame.params.y
 // (pre-exposure) exactly once. Sky = sky-view LUT (sun + moon scattering + airglow, lux -> nits, see sky/skyview.wgsl); sun disc =
 // E_sun[lux] / (pi R^2 [sr]) * limb darkening * T; moon = albedo * E_sun / pi * Lommel-Seeliger * T (sky/moon.wgsl); Milky Way = baked
-// map [nits] * T; zodiacal light = S10 model (sky/night_light.wgsl) * T; clouds = (inscatter [nits] / CLOUD_STORE_SCALE, transmittance)
-// composited as  colour * a + rgb * CLOUD_STORE_SCALE. T is the LUT transmittance from the camera to the top of the atmosphere along
+// map [nits] * T; zodiacal light = S10 model (sky/night_light.wgsl) * T; clouds = (inscatter [nits] / cloudStoreScale(), transmittance)
+// composited as  colour * a + rgb * cloudStoreScale(). T is the LUT transmittance from the camera to the top of the atmosphere along
 // the pixel's own direction, so discs redden and dim toward the horizon. Stars are drawn afterwards by sky/stars.wgsl. The total is
 // scaled (hue kept) so no channel exceeds SUN_MAX_EXPOSED = 58976 (the fp16 value just under 59000; fp16 holds 65504).
 // The one exception to "pre-exposure exactly once" is the moon disc: when the camera is opened up for a night landscape (total exposure ~50
@@ -13,7 +13,7 @@
 // MOON_REFERENCE_NITS highland patch ends at MOON_SCENE_PEAK in scene-linear units (a local-adaptation stand-in; all ratios inside the
 // disc, and so the maria, are preserved).
 //
-// Group 2: 0 AtmosParams, 1 sky-view (sun + night, nits / skySunStoreScale()), 2 sky-view (moon only), 3 Milky Way map, 4 clouds (rgb nits / CLOUD_STORE_SCALE, a transmittance).
+// Group 2: 0 AtmosParams, 1 sky-view (sun + night, nits / skySunStoreScale()), 2 sky-view (moon only), 3 Milky Way map, 4 clouds (rgb nits / cloudStoreScale(), a transmittance).
 #include "common/world_bindings.wgsl"
 #include "common/atmosphere_sample.wgsl"
 #include "sky/atmos_params.wgsl"
@@ -32,6 +32,17 @@ const SUN_MAX_EXPOSED : f32 = 58976.0;
 const SUN_LIMB_U : vec3f = vec3f(0.55, 0.66, 0.80);
 const MOON_REFERENCE_NITS : f32 = 5000.0;
 const MOON_SCENE_PEAK : f32 = 4.0;
+
+// Land under the land's horizon (see landRadius), past the terrain's last ring: flat land of LANDSCAPE_ALBEDO lit by the sun, moon and sky,
+// hazed by the aerial-perspective table at its far end, the same treatment the terrain's farthest rings get, so the two meet without a
+// step. The sky-view march hazes it less than that table does.
+fn farLand(uv : vec2f, r : f32) -> vec3f {
+  let sunE = frame.sunIrradiance.rgb * frame.sunIrradiance.w * sampleTransmittance(r, frame.sunDir.y) * max(frame.sunDir.y, 0.0);
+  let moonE = frame.moonIrradiance.rgb * sampleTransmittance(r, frame.moonDir.y) * max(frame.moonDir.y, 0.0);
+  let land = LANDSCAPE_ALBEDO * ((sunE + moonE) * INV_PI + 0.6 * skyLuts(vec3f(0.0, 1.0, 0.0), r));
+  let haze = sampleAerialPerspective(uv, AP_MAX_DISTANCE_M);
+  return land * select(1.0, haze.a, haze.a >= 0.0 && haze.a <= 1.0) + haze.rgb;
+}
 
 struct VsOut {
   @builtin(position) pos : vec4f,
@@ -100,6 +111,7 @@ fn fs(in : VsOut) -> @location(0) vec4f {
   let trans = sampleTransmittance(r, dir.y);
 
   var col = skyLuts(dir, r);
+  if (raySphere(camera, dir, landRadius(r)).x > 0.0) { col = farLand(uv, r); }
   if (aboveHorizon > 0.5) {
     let moon = moonRadiance(dir, pixelAngle);
     let moonGain = min(1.0, MOON_SCENE_PEAK / (MOON_REFERENCE_NITS * nightExposure(frame.params.y)));
@@ -109,7 +121,7 @@ fn fs(in : VsOut) -> @location(0) vec4f {
   }
 
   let cloud = textureSampleLevel(cloudTex, linearClamp, uv, 0.0);
-  col = col * cloud.a + cloud.rgb * CLOUD_STORE_SCALE;
+  col = col * cloud.a + cloud.rgb * cloudStoreScale();
 
   col = col * frame.params.y;
   let peak = max(col.r, max(col.g, col.b));

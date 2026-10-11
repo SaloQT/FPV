@@ -16,6 +16,11 @@ const NIGHT_SLOPE : f32 = ${NIGHT_SLOPE};
 const NIGHT_BLEND_HI_EV : f32 = ${NIGHT_BLEND_HI_EV};
 const NIGHT_BLEND_LO_EV : f32 = ${NIGHT_BLEND_LO_EV};
 const NIGHT_MARGIN_EV : f32 = ${NIGHT_MARGIN_EV};
+const NIGHT_LAMP_EV : f32 = ${NIGHT_LAMP_EV};
+// A night frame metered darker than the estimate lifts the gain (nightLiftFromEv / nightLiftRate / nightLiftMaxEv in post/exposure.ts).
+const NIGHT_LIFT_FROM_EV : f32 = ${NIGHT_LIFT_FROM_EV};
+const NIGHT_LIFT_RATE : f32 = ${NIGHT_LIFT_RATE};
+const NIGHT_LIFT_MAX_EV : f32 = ${NIGHT_LIFT_MAX_EV};
 const EXPECTED_MEAN_EV : f32 = ${EXPECTED_MEAN_EV};
 const KNEE : f32 = ${KNEE};
 const KNEE_W : f32 = ${KNEE_WIDTH};
@@ -23,6 +28,9 @@ const CENTER_BIAS : f32 = ${CENTER_BIAS};
 const VERT_BIAS : f32 = ${VERT_BIAS};
 const CLIP_FRAC : f32 = ${CLIP_FRAC};
 const CLIP_EV : f32 = ${CLIP_EV};
+// Sparse highlights (sunflecks): the brightest SPARSE_CLIP_FRAC may sit SPARSE_CLIP_EXTRA_EV above the CLIP_FRAC limit (see post/exposure.ts).
+const SPARSE_CLIP_FRAC : f32 = ${SPARSE_CLIP_FRAC};
+const SPARSE_CLIP_EXTRA_EV : f32 = ${SPARSE_CLIP_EXTRA_EV};
 const PROTECT_MAX_EV : f32 = ${PROTECT_MAX_EV};
 const STRIDE : u32 = ${STRIDE}u;
 const WEIGHT_SCALE : f32 = ${WEIGHT_SCALE};
@@ -110,8 +118,8 @@ fn hist(@builtin(global_invocation_id) gid : vec3u, @builtin(local_invocation_in
 fn binCenterEv(i : u32) -> f32 { return EV_MIN + (f32(i) + 0.5) / f32(BINS) * (EV_MAX - EV_MIN); }
 
 // EV above which the brightest CLIP_FRAC of the weight lies, interpolated inside its bin (mirrors topQuantileEv in post/exposure.ts).
-fn topQuantileEv(total : f32) -> f32 {
-  let want = CLIP_FRAC * total;
+fn topQuantileEv(total : f32, fraction : f32) -> f32 {
+  let want = fraction * total;
   let width = (EV_MAX - EV_MIN) / f32(BINS);
   var cum = 0.0;
   for (var k = BINS - 1u; k > 0u; k--) {
@@ -130,7 +138,8 @@ fn nightWeight(preEv : f32) -> f32 {
 // The key falls with the scene luminance, the brightest CLIP_FRAC (sunlit ground, sky) may not sit more than CLIP_EV over the key (not in the dark),
 // the sensor gain is limited both ways.
 // In the dark the estimate replaces the metered mean, but a frame metered more than NIGHT_MARGIN_EV brighter than it (artificial light) still lowers the gain.
-fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
+// In the dark the brightest CLIP_FRAC (lampEv: lamp-lit ground, walls, guests) may not sit more than CLIP_EV + NIGHT_LAMP_EV over the key.
+fn targetTotalEv(meanEv : f32, highEv : f32, lampEv : f32, preEv : f32) -> f32 {
   let night = nightWeight(preEv);
   let used = mix(meanEv, EXPECTED_MEAN_EV, night);
   let lumEv = used - preEv;
@@ -138,7 +147,10 @@ fn targetTotalEv(meanEv : f32, highEv : f32, preEv : f32) -> f32 {
   let shift = keyEv - used;
   let protectedShift = mix(max(min(shift, LOG2_KEY + CLIP_EV - highEv), shift - PROTECT_MAX_EV), shift, night);
   let floodlit = night * max(meanEv - EXPECTED_MEAN_EV - NIGHT_MARGIN_EV, 0.0);
-  let gain = max(clamp(preEv + protectedShift - DAY_TOTAL_EV, MIN_GAIN_EV, MAX_GAIN_EV) - floodlit, MIN_GAIN_EV);
+  let lift = night * min(max(EXPECTED_MEAN_EV - meanEv - NIGHT_LIFT_FROM_EV, 0.0) * NIGHT_LIFT_RATE, NIGHT_LIFT_MAX_EV);
+  let free = max(clamp(preEv + protectedShift - DAY_TOTAL_EV + lift, MIN_GAIN_EV, MAX_GAIN_EV) - floodlit, MIN_GAIN_EV);
+  let lampGain = preEv + LOG2_KEY + CLIP_EV + NIGHT_LAMP_EV - lampEv - DAY_TOTAL_EV;
+  let gain = max(mix(free, min(free, lampGain), night), MIN_GAIN_EV);
   return preEv + clamp(DAY_TOTAL_EV + gain - preEv, -MAX_RATIO_EV, MAX_RATIO_EV);
 }
 
@@ -230,7 +242,8 @@ fn reduce(@builtin(local_invocation_index) i : u32) {
   if (adapt[1] < 0.5) { total_ev = preEv; }
   if (total > 1.0) {
     meanEv = meteredMeanEv(total, preEv);
-    let want = targetTotalEv(meanEv, topQuantileEv(total), preEv);
+    let highEv = max(topQuantileEv(total, CLIP_FRAC), topQuantileEv(total, SPARSE_CLIP_FRAC) - SPARSE_CLIP_EXTRA_EV);
+    let want = targetTotalEv(meanEv, highEv, topQuantileEv(total, CLIP_FRAC), preEv);
     if (adapt[1] < 0.5 || params.reset != 0u) {
       total_ev = want;
     } else {

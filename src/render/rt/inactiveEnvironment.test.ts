@@ -28,7 +28,7 @@ describe('RT inactive environment-light work', () => {
     expect(source).toContain('struct Env { sunE : vec3f, moonE : vec3f, zenith : vec3f, ground : vec3f }');
     expect(source).toContain('return select(e.sunE, e.moonE, keyIsMoon());');
     expect(source).toContain('return select(e.moonE, e.sunE, keyIsMoon());');
-    expect(source).toContain('return mix(skyNits(dir), e.ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));');
+    expect(source).toContain('return mix(skyNits(dir) * max(rp.cloud.w, 1.0), e.ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));');
     expect(source).toContain('let fallback = mix(e.ground, e.zenith, saturate1(n.y * 0.5 + 0.5)) * frame.params.y;');
   });
 });

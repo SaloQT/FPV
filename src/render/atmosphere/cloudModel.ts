@@ -10,7 +10,7 @@ export const CLOUD_SHADOW_EXTENT_M = 8000;
 export const CUMULUS_SIGMA_KM = 40;
 export const CIRRUS_SIGMA_KM = 0.9;
 
-const SHAPE_TILE_KM = 7;
+const SHAPE_TILE_KM = 1.6;
 const CIRRUS_STREAK_KM: readonly [number, number, number] = [24, 4, 4];
 const CUMULUS_STEPS = 32;
 const CIRRUS_STEPS = 12;
@@ -151,7 +151,7 @@ function vnoise2(x: number, y: number): number {
 
 /** Weather value 0..1 of the cumulus map at a world-plane position (km), including the seed offset. */
 export const cumulusWeather = (x: number, y: number): number =>
-  0.45 * vnoise2(x / 9, y / 9) + 0.35 * vnoise2(x / 4 + 17.3, y / 4 + 9.1) + 0.2 * vnoise2(x / 1.8 + 3.7, y / 1.8 + 41.9);
+  0.45 * vnoise2(x / 3.5, y / 3.5) + 0.35 * vnoise2(x / 1.6 + 17.3, y / 1.6 + 9.1) + 0.2 * vnoise2(x / 0.7 + 3.7, y / 0.7 + 41.9);
 
 export const cirrusWeather = (x: number, y: number): number =>
   0.6 * vnoise2(x / 30 + 5.1, y / 30 + 2.3) + 0.4 * vnoise2(x / 11 + 29.7, y / 11 + 13.9);
@@ -160,6 +160,12 @@ export const cirrusWeather = (x: number, y: number): number =>
 export function presence(n: number, coverage: number): number {
   const t = 0.8 - 0.62 * coverage;
   return smoothstep(t - 0.09, t + 0.09, n);
+}
+
+/** How tall a cumulus grows at weather value n: climbs slowly to the weather maxima so tops are domes (cumulusTallness in cloud_density.wgsl). */
+export function cumulusTallness(n: number, coverage: number): number {
+  const t = 0.8 - 0.62 * coverage;
+  return smoothstep(t - 0.09, t + 0.3, n);
 }
 
 /** Fair-weather cumulus is convective and dissipates after sunset, so a night keeps this fraction of the daytime cover (a mostly clear night is the default). */
@@ -173,15 +179,16 @@ export function nightCumulusScale(sinSunElevation: number): number {
 }
 
 /** Schneider's height gradient: ramps up over the first 10 % and down over the last 38 % of the (per-cloud scaled) layer. */
-export const cumulusGradient = (hs: number): number => smoothstep(0, 0.1, hs) * (1 - smoothstep(0.62, 1, hs));
+export const cumulusGradient = (hs: number): number => smoothstep(0, 0.04, hs) * (1 - smoothstep(0.62, 1, hs));
 
 /** Cumulus density 0..1 at a plane position (km) and height above the datum (km), with the detail volume at its mean erosion. */
 export function cumulusDensity(f: CloudField, x: number, y: number, hKm: number): number {
   const hf = (hKm - f.cumulusBaseKm) / (f.cumulusTopKm - f.cumulusBaseKm);
   if (hf <= 0 || hf >= 1) return 0;
-  const l = presence(cumulusWeather(x, y), f.cumulusCoverage);
+  const n = cumulusWeather(x, y);
+  const l = presence(n, f.cumulusCoverage);
   if (l <= 0) return 0;
-  const grad = cumulusGradient(hf / mix(0.3, 1, l));
+  const grad = cumulusGradient(hf / mix(0.25, 1, cumulusTallness(n, f.cumulusCoverage)));
   if (grad <= 0) return 0;
   shapeNoise(x / SHAPE_TILE_KM, hKm / SHAPE_TILE_KM, y / SHAPE_TILE_KM);
   const low = SHAPE[1] * 0.625 + SHAPE[2] * 0.25 + SHAPE[3] * 0.125;

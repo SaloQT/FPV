@@ -1,0 +1,21 @@
+{
+ "schemaVersion": 1,
+ "name": "opt-20261010T040710",
+ "diameterIn": 5.170191007462953,
+ "pitchIn": 3.3639156920203086,
+ "pitchTilt": 0.11793508474551662,
+ "blades": 4,
+ "chordRatio": 0.1911007118669028,
+ "chordTaper": -0.06467409912755945,
+ "hubRatio": 0.14,
+ "thicknessRatio": 0.06599541846246619,
+ "airfoil": {
+  "clAlpha": 5.3,
+  "alpha0": -0.05,
+  "clMax": 1.25,
+  "cd0": 0.014,
+  "cdK": 0.06
+ },
+ "densityKgM3": 1200,
+ "notes": "Surrogate search 20261010T040710, seed 1, 80 evaluations, brain ace."
+}

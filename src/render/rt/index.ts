@@ -1,6 +1,7 @@
 import type { DetailName, GpuProfiler } from '../gpuTimer';
 import type { FrameInfo, GBuffer, RenderContext, RenderModule, SceneData } from '../contracts';
-import type { TerrainSampler } from '../../contracts';
+import type { TerrainData, TerrainSampler } from '../../contracts';
+import { CANOPY_SHADOW_SIZE, canopyShadowFor } from '../terrain/canopyShadow';
 import { atmosphereOf } from '../atmosphere';
 import { buildGroups, type RtGroups } from './groups';
 import { createLayouts, type RtLayouts } from './layouts';
@@ -10,6 +11,7 @@ import { probeLimits, ProbeGrid, type ProbeLimits } from './probes';
 import { runSelfTest, type RtSelfTest } from './selfTest';
 import { SceneBuffers } from './sceneBuffers';
 import { RtTextures } from './textures';
+import { ParkLights } from '../park/lights';
 
 export type { RtSelfTest };
 
@@ -88,6 +90,11 @@ class RtModule implements RTModule {
   private clearSky!: GPUTexture;
   private cloudTexture: GPUTexture | null = null;
   private cloudView: GPUTextureView | null = null;
+  /** Canopy shadow map of the current scene (1x1 empty until the vegetation module publishes one), and the terrain it was made for. */
+  private canopyTexture: GPUTexture | null = null;
+  private canopyView: GPUTextureView | null = null;
+  private canopyFor: TerrainData | null = null;
+  private sceneTerrain: TerrainData | null = null;
   private tex: RtTextures | null = null;
   private groups: RtGroups | null = null;
   private groupsGeneration = -1;
@@ -100,7 +107,7 @@ class RtModule implements RTModule {
     rtWidth: 0, rtHeight: 0, fullWidth: 0, fullHeight: 0, divisor: 1, maxSteps: 0, giRays: 0, spec: false, terrain: false,
     staticRoot: 0, dynamicRoot: 0, visitCap: 0, frameIndex: 0, debugView: 0, seed: 0,
     probeStride: 1, probePhase: 0, probeLo: [0, 0, 0], probeRays: 0, probePrevLo: [0, 0, 0], probeAllFresh: true, probeDim: [1, 1, 1],
-    softness: 1, probeSpacing: 1, probeHysteresis: 0.92, rayRange: 300, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1,
+    softness: 1, probeSpacing: 1, probeHysteresis: 0.92, rayRange: 300, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1, cloudSkyGain: 1,
   };
   private parity = 0;
   private lastFrame: number | null = null;
@@ -113,9 +120,11 @@ class RtModule implements RTModule {
 
   async init(rc: RenderContext): Promise<void> {
     this.rc = rc;
+    rc.parkLights ??= new ParkLights(rc.device);
     const d = rc.device;
     this.layouts = createLayouts(d);
     [this.pipes, this.buffers] = await Promise.all([createPipelines(rc, this.layouts), new SceneBuffers(d)]);
+    rc.rtBuffers = this.buffers;
     this.probes = new ProbeGrid(d, rc.quality.probes, this.probeLimits(rc.quality));
     this.paramBuffer = d.createBuffer({ label: 'rt params', size: RT_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.prevPre = d.createBuffer({ label: 'rt prev pre-exposure', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -131,6 +140,12 @@ class RtModule implements RTModule {
 
   setScene(_rc: RenderContext, scene: SceneData): void {
     this.terrain = scene.sampler;
+    this.sceneTerrain = scene.terrain;
+    this.probes.reset();
+  }
+
+  /** Every probe is retraced and the GI, shadow and specular histories are dropped next frame (temporal.wgsl reads the same flag). */
+  resetLighting(): void {
     this.probes.reset();
   }
 
@@ -170,6 +185,28 @@ class RtModule implements RTModule {
     return this.options.probeRayBudget === null ? own : { rayBudget: this.options.probeRayBudget, maxStride: own.maxStride };
   }
 
+  /** Uploads the scene's canopy shadow map once the vegetation module has published it; an empty 1x1 map (no foliage) until then. */
+  private syncCanopy(rc: RenderContext): void {
+    const d = rc.device;
+    if (!this.canopyTexture) {
+      this.canopyTexture = d.createTexture({ label: 'rt no canopy', format: 'rgba16float', size: [1, 1], usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      d.queue.writeTexture({ texture: this.canopyTexture }, new Uint16Array(4), { bytesPerRow: 8 }, [1, 1]);
+      this.canopyView = this.canopyTexture.createView();
+      this.groups = null;
+    }
+    const t = this.sceneTerrain;
+    if (!t || t === this.canopyFor) return;
+    const data = canopyShadowFor(t);
+    if (!data) return;
+    const size = CANOPY_SHADOW_SIZE;
+    this.canopyTexture.destroy();
+    this.canopyTexture = d.createTexture({ label: 'rt canopy shadow', format: 'rgba16float', size: [size, size], usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    d.queue.writeTexture({ texture: this.canopyTexture }, data as Uint16Array<ArrayBuffer>, { bytesPerRow: size * 8 }, [size, size]);
+    this.canopyView = this.canopyTexture.createView();
+    this.canopyFor = t;
+    this.groups = null;
+  }
+
   private allocate(rc: RenderContext): void {
     this.tex?.destroy();
     this.tex = new RtTextures(rc.device, rc.gbuf.rtWidth, rc.gbuf.rtHeight);
@@ -199,12 +236,15 @@ class RtModule implements RTModule {
       this.cloudView = cloud.createView();
       this.groups = null;
     }
+    this.syncCanopy(rc);
     this.buffers.sync(rc.rt);
+    rc.parkLights?.setRoots(this.buffers.staticRoot, this.buffers.dynamicRoot);
     if (this.groups && this.groupsGeneration !== this.buffers.generation) this.groups = null;
     if (!this.groups) {
       this.groupsGeneration = this.buffers.generation;
       this.groups = buildGroups({
         rc, layouts: this.layouts, tex, probes: this.probes, buffers: this.buffers, params: this.paramBuffer, prevPre: this.prevPre, probeSampler: this.probeSampler, cloud: this.cloudView!,
+        canopy: this.canopyView!,
       });
     }
     return this.groups;
@@ -315,6 +355,7 @@ class RtModule implements RTModule {
     p.softness = o.softness; p.probeSpacing = pr.spacing; p.probeHysteresis = o.probeHysteresis; p.rayRange = o.rayRange;
     const cm = this.cloudTexture === this.clearSky ? null : atmosphereOf(rc.device)?.getCloudShadowMapping();
     p.cloudCenterX = cm?.centerX ?? 0; p.cloudCenterZ = cm?.centerZ ?? 0; p.cloudExtentM = cm?.extentM ?? 1;
+    p.cloudSkyGain = atmosphereOf(rc.device)?.getAmbientScale() ?? 1;
     this.block.write(p);
     rc.device.queue.writeBuffer(this.paramBuffer, 0, this.block.buffer);
   }
@@ -326,6 +367,7 @@ class RtModule implements RTModule {
     this.paramBuffer?.destroy();
     this.prevPre?.destroy();
     this.clearSky?.destroy();
+    this.canopyTexture?.destroy();
     this.tex = null;
     this.groups = null;
   }

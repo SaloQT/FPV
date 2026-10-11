@@ -6,7 +6,7 @@
 // Rb + frame.sky.z - frame.camPos.y / 1000 + height. Density is unit-less 0..1; extinction sigma_e [1/km] = CUMULUS_SIGMA_KM * density *
 // cloudDensity, and a segment of length ds [km] has optical depth sigma_e * ds.
 //
-// Cumulus: a 2D value-noise weather map (three octaves, 9 / 4 / 1.8 km) picks where clouds stand and, through the local presence L, how
+// Cumulus: a 2D value-noise weather map (three octaves, 3.5 / 1.6 / 0.7 km, fair-weather cumulus 0.3-2 km across) picks where clouds stand and, through the local presence L, how
 // tall they grow; the vertical profile is Schneider's height gradient; the 128^3 Perlin-Worley / Worley volume carves the billows
 // (density = saturate(shape * gradient - 1 + L), which is his remap-by-coverage in closed form) and the 32^3 volume erodes the edges.
 // Cirrus: a thin slab of the same volume stretched along the wind into 24 x 4 km streaks.
@@ -26,8 +26,16 @@ const NIGHT_CUMULUS_SCALE : f32 = 0.35;
 const NIGHT_CUMULUS_SIN_LO : f32 = -0.2;
 const NIGHT_CUMULUS_SIN_HI : f32 = 0.05;
 const CIRRUS_SIGMA_KM : f32 = 0.9;
-const SHAPE_TILE_KM : f32 = 7.0;
-const DETAIL_TILE_KM : f32 = 1.2;
+const SHAPE_TILE_KM : f32 = 1.6;
+const DETAIL_TILE_KM : f32 = 0.45;
+// Extreme tier (ap.cloudE.x): a second erosion octave this much finer, the shape lookup pushed around by the detail volume by up to
+// WISP_KM so edges tear into wisps and curls, and the erosion this much stronger.
+const FINE_DETAIL_TILE_KM : f32 = 0.13;
+const FINEST_DETAIL_TILE_KM : f32 = 0.04;
+const WISP_KM : f32 = 0.05;
+const FINE_EROSION : f32 = 1.6;
+const EDGE_SHARPEN : f32 = 3.0;
+const BASE_RAG : f32 = 0.12;
 const CIRRUS_STREAK_KM : vec3f = vec3f(24.0, 4.0, 4.0);
 
 fn datumRadius() -> f32 { return frame.sky.x + frame.sky.z - frame.camPos.y * 0.001; }
@@ -57,7 +65,7 @@ fn vnoise2(p : vec2f) -> f32 {
 }
 
 fn cumulusWeather(xz : vec2f) -> f32 {
-  return 0.45 * vnoise2(xz / 9.0) + 0.35 * vnoise2(xz / 4.0 + vec2f(17.3, 9.1)) + 0.2 * vnoise2(xz / 1.8 + vec2f(3.7, 41.9));
+  return 0.45 * vnoise2(xz / 3.5) + 0.35 * vnoise2(xz / 1.6 + vec2f(17.3, 9.1)) + 0.2 * vnoise2(xz / 0.7 + vec2f(3.7, 41.9));
 }
 
 fn cirrusWeather(xz : vec2f) -> f32 {
@@ -70,31 +78,64 @@ fn presence(n : f32, coverage : f32) -> f32 {
   return smoothstep(t - 0.09, t + 0.09, n);
 }
 
+// The base is the condensation level: density climbs within the lowest 4% of the layer (about 50 m), a flat, sharp base.
+// How tall the cloud grows at a weather value: unlike presence, which switches over a narrow band so outlines stay crisp, this climbs
+// slowly to the weather maxima, so each cloud's top is a dome peaking over its core instead of a flat lid at the layer ceiling.
+fn cumulusTallness(n : f32, coverage : f32) -> f32 {
+  let t = 0.80 - 0.62 * coverage;
+  return smoothstep(t - 0.09, t + 0.3, n);
+}
+
 fn cumulusGradient(hs : f32) -> f32 {
-  return smoothstep(0.0, 0.10, hs) * (1.0 - smoothstep(0.62, 1.0, hs));
+  return smoothstep(0.0, 0.04, hs) * (1.0 - smoothstep(0.62, 1.0, hs));
 }
 
 // Cumulus density 0..1 at a plane position (km) and height above the datum (km). detail 0..1 blends the erosion volume in (0 = mean erosion).
 fn cumulusDensity(xz : vec2f, hKm : f32, detail : f32) -> f32 {
   let hf = (hKm - ap.cloudB.x) / (ap.cloudB.y - ap.cloudB.x);
   if (hf <= 0.0 || hf >= 1.0) { return 0.0; }
-  let l = presence(cumulusWeather(xz), cumulusCoverage());
+  let n = cumulusWeather(xz);
+  let l = presence(n, cumulusCoverage());
   if (l <= 0.0) { return 0.0; }
-  let grad = cumulusGradient(hf / mix(0.3, 1.0, l));
+  let fine = ap.cloudE.x * detail;
+  var q = vec3f(xz.x, hKm, xz.y);
+  var v = vec4f(0.5);
+  var hg = hf;
+  if (detail > 0.0) {
+    v = textureSampleLevel(detailNoise, noiseSampler, q / DETAIL_TILE_KM, 0.0);
+    // Wisps: the billows are looked up a little off their place, by an amount that itself varies, so their outlines curl and tear.
+    if (fine > 0.0) { q += (v.rgb - 0.5) * (2.0 * WISP_KM * fine); }
+    // The base is level overall but sags and lifts by tens of metres in rolls and lumps, which is what the low sun picks out from below.
+    hg += BASE_RAG * detail * (v.r - 0.5) * (1.0 - smoothstep(0.05, 0.25, hf));
+  }
+  let grad = cumulusGradient(hg / mix(0.25, 1.0, cumulusTallness(n, cumulusCoverage())));
   if (grad <= 0.0) { return 0.0; }
-  let s = textureSampleLevel(shapeNoise, noiseSampler, vec3f(xz.x, hKm, xz.y) / SHAPE_TILE_KM, 0.0);
+  let s = textureSampleLevel(shapeNoise, noiseSampler, q / SHAPE_TILE_KM, 0.0);
   let low = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
   let shape = saturate((s.r - low + 1.0) / (2.0 - low));
   let d = saturate(shape * grad - 1.0 + l);
   if (d <= 0.0) { return 0.0; }
   var erosion = 0.5;
   if (detail > 0.0) {
-    let v = textureSampleLevel(detailNoise, noiseSampler, vec3f(xz.x, hKm, xz.y) / DETAIL_TILE_KM, 0.0);
-    let f = v.r * 0.625 + v.g * 0.25 + v.b * 0.125;
+    var f = v.r * 0.625 + v.g * 0.25 + v.b * 0.125;
+    if (fine > 0.0) {
+      let w = textureSampleLevel(detailNoise, noiseSampler, q / FINE_DETAIL_TILE_KM + vec3f(0.37, 0.71, 0.13), 0.0);
+      var fw = w.r * 0.5 + w.g * 0.3 + w.b * 0.2;
+      // Extreme only (cloudDetail 1): a third octave of tens of metres, the small cauliflower bumps on the billows of a near cloud.
+      let finest = saturate((ap.cloudE.x - 0.8) * 5.0) * detail;
+      if (finest > 0.0) {
+        let u = textureSampleLevel(detailNoise, noiseSampler, q / FINEST_DETAIL_TILE_KM + vec3f(0.11, 0.53, 0.29), 0.0);
+        fw = mix(fw, 0.65 * fw + 0.35 * (u.r * 0.5 + u.g * 0.3 + u.b * 0.2), finest);
+      }
+      f = mix(f, 0.6 * f + 0.4 * fw, fine);
+    }
     erosion = mix(0.5, mix(f, 1.0 - f, saturate(hf * 10.0)), detail);
   }
-  let e = 0.35 * exp(-l * 0.75) * erosion * 2.0;
-  return saturate((d - e) / (1.0 - e));
+  let e = 0.35 * exp(-l * 0.75) * erosion * 2.0 * mix(1.0, FINE_EROSION, fine);
+  // A cumulus has a sharp skin: droplets evaporate within metres of its edge, so density climbs from nothing to the core's within a few
+  // tens of metres rather than over the whole billow. With the detail in, the ramp above the erosion threshold is steepened (the
+  // threshold itself, and so the cloud's outline and cover, stays put); without it (shadow map, light march, CPU model) it is unchanged.
+  return saturate((d - e) / (1.0 - e) * (1.0 + EDGE_SHARPEN * detail));
 }
 
 // Cirrus density 0..1: fibrous streaks along the wind bearing (ap.eclNorth.w, radians clockwise from north).

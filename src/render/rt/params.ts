@@ -34,6 +34,8 @@ export interface RtParamInput {
   cloudCenterX: number;
   cloudCenterZ: number;
   cloudExtentM: number;
+  /** Gain on the sky dome's radiance for the light the clouds themselves send down (atmosphere getAmbientScale; 1 when clear). */
+  cloudSkyGain: number;
 }
 
 export class RtParamBlock {
@@ -52,6 +54,6 @@ export class RtParamBlock {
     i[20] = p.probePrevLo[0]; i[21] = p.probePrevLo[1]; i[22] = p.probePrevLo[2]; i[23] = p.probeAllFresh ? 1 : 0;
     u[24] = p.probeDim[0]; u[25] = p.probeDim[1]; u[26] = p.probeDim[2]; u[27] = 0;
     f[28] = p.softness; f[29] = p.probeSpacing; f[30] = p.probeHysteresis; f[31] = p.rayRange;
-    f[32] = p.cloudCenterX; f[33] = p.cloudCenterZ; f[34] = p.cloudExtentM; f[35] = 0;
+    f[32] = p.cloudCenterX; f[33] = p.cloudCenterZ; f[34] = p.cloudExtentM; f[35] = p.cloudSkyGain;
   }
 }

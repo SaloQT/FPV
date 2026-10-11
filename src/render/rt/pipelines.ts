@@ -34,7 +34,10 @@ export async function createPipelines(rc: RenderContext, L: RtLayouts): Promise<
     d.createComputePipelineAsync({ label: `rt ${label}`, layout, compute: { module: rc.module(`rt/${path}.wgsl`, defines), entryPoint: 'main' } });
 
   const traceLayout = worldLayout(L.trace);
-  const trace = SIGNALS.map((s) => make(s, s, { GRP: 2 }, traceLayout));
+  // The sun shadow takes foliage from the canopy shadow map (binding 17) rather than from the crown spheres (see shaders/rt/shadow.wgsl).
+  const trace = SIGNALS.map((s) => s === 'shadow'
+    ? make(s, s, { GRP: 2, CANOPY_SHADOW_MAP: true }, worldLayout(L.shadowTrace))
+    : make(s, s, { GRP: 2 }, traceLayout));
   const temporal = SIGNALS.map((s) =>
     make(`${s} temporal`, 'temporal', { GRP: 1, [SIGNAL_DEFINE[s]]: true, CAP: HISTORY_CAP[s] }, localLayout(L.temporal)));
   const atrous = SIGNALS.map((s) => Array.from({ length: ATROUS_ITERATIONS }, (_, i) => {

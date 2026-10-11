@@ -44,7 +44,12 @@ Use `GBUFFER_TARGETS` as the fragment `targets` and `DEPTH_STATE` as `depthStenc
 | 2 | rgba8unorm | r = MaterialId/255, g = translucency, b = wetness, a = emissive strength (x `EMISSIVE_MAX_NITS`) |
 | 3 | rg16float | motion = prevUV - currUV (unjittered `viewProjUnjittered` / `prevViewProj`) |
 
-`MaterialId`: Sky 0, Terrain 1, Grass 2, GateFrame 3, Quad 4, Foliage 5, Rock 6, Emissive 7, Water 8, Fabric 9, Ground 10.
+`MaterialId`: Sky 0, Terrain 1, Grass 2, GateFrame 3, Quad 4, Foliage 5, Rock 6, Emissive 7, Water 8, Fabric 9, Ground 10, SwardFloor 11 (turf between grass blades;
+its g channel is the sward's sun occlusion, not translucency). Grass (2) likewise carries its own sun occlusion in b instead of wetness.
+
+The terrain module also binds a forest-floor cover texture of its own (`terrain/groundCover.ts`, group 2 binding 5): the vegetation module
+rasterises the crowns it placed and publishes the grid, the terrain uploads it. It is not a world binding because group 1 already brings the
+deferred pass to the 16 sampled textures a stage may bind.
 `sunShadow` is r32float (`textureLoad` only), cleared to 1. `giDiffuse.a == 0` means "no GI": lighting falls back to a sky-sampled ambient,
 so RT modules must write alpha >= 1/255. Lighting group-2 bindings: 0 albedo, 1 normal, 2 misc, 3 depth, 4 sunShadow, 5 giDiffuse,
 6 giSpecular, 7 hdrOut. If no module has `encodeSky`, lighting paints sky pixels from the sky-view LUT (decided once at creation).

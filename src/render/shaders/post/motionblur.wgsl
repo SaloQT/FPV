@@ -23,6 +23,8 @@ const HDR_MAX : f32 = 65000.0;
 @group(1) @binding(3) var<storage, read_write> tileMax : array<vec2f>;
 @group(1) @binding(4) var<storage, read_write> tileNeighbor : array<vec2f>;
 @group(1) @binding(5) var outTex : texture_storage_2d<rgba16float, write>;
+// x = the night sky's display factor (nightSkyScale in exposure.ts), the one TAA puts on every sky sample.
+@group(1) @binding(6) var<uniform> mbParams : vec4f;
 
 fn tileCount(dims : vec2u) -> vec2u { return (dims + vec2u(TILE - 1u)) / TILE; }
 
@@ -90,6 +92,15 @@ fn safeHdr(v : vec3f) -> vec3f {
   return clamp(select(v, vec3f(0.0), (bitcast<vec3u>(v) & vec3u(0x7fffffffu)) > vec3u(0x7f800000u)), vec3f(0.0), vec3f(HDR_MAX));
 }
 
+// A sample at the level it will be displayed: TAA holds the night sky darker than the ground sample by sample, so a sky sample blurred into a
+// foreground pixel must carry that factor already, or it shows up to 5x brighter than the sky beside it (a bright fringe round every crown).
+fn shown(c : vec3f, depth : f32) -> vec3f { return c * select(1.0, mbParams.x, depth <= 0.0); }
+
+// Inverse-luminance weight (Karis): a point light far brighter than its surroundings - a star, a gate LED - cannot dominate the gather. Without it
+// a star behind fast foreground (a crown passing the camera at night) is gathered along the foreground's velocity and smears into a bright
+// streak along the silhouette, brighter than both the leaves and the sky, though the star itself does not move.
+fn karis(c : vec3f) -> f32 { return 1.0 / (1.0 + dot(c, vec3f(0.2126, 0.7152, 0.0722))); }
+
 fn cone(dist : f32, len : f32) -> f32 { return saturate(1.0 - dist / max(len, 1e-3)); }
 fn cylinder(dist : f32, len : f32) -> f32 { return select(0.0, 1.0 - smoothstep(0.95 * len, 1.05 * len, dist), len > 1e-3); }
 
@@ -107,8 +118,9 @@ fn blur(@builtin(global_invocation_id) gid : vec3u) {
   let jitter = fract(52.9829189 * fract(dot(vec2f(gid.xy) + 5.588238 * f32(frame.misc.x & 63u), vec2f(0.06711056, 0.00583715))));
   let hi = vec2i(dims) - vec2i(1);
   // The pixel's own streak covers ~lenC pixels, so it is worth N/lenC gather samples (at most N).
-  let wC = f32(SAMPLES) / max(lenC, 1.0);
-  var sum = safeHdr(center.rgb) * wC;
+  let c0 = shown(safeHdr(center.rgb), dC);
+  let wC = f32(SAMPLES) / max(lenC, 1.0) * karis(c0);
+  var sum = c0 * wC;
   var wsum = wC;
   for (var i = 0; i < SAMPLES; i++) {
     let t = (f32(i) + jitter) / f32(SAMPLES) - 0.5;
@@ -122,8 +134,11 @@ fn blur(@builtin(global_invocation_id) gid : vec3u) {
     let fore = saturate(1.0 + (zC - zY) / soft);
     let back = saturate(1.0 + (zY - zC) / soft);
     let a = fore * cone(dist, lenY) + back * cone(dist, lenC) + 2.0 * cylinder(dist, lenY) * cylinder(dist, lenC);
-    sum += safeHdr(textureLoad(hdrTex, qu, 0).rgb) * a;
-    wsum += a;
+    let c = shown(safeHdr(textureLoad(hdrTex, qu, 0).rgb), dY);
+    let w = a * karis(c);
+    sum += c * w;
+    wsum += w;
   }
-  textureStore(outTex, gid.xy, vec4f(sum / wsum, center.a));
+  // TAA applies the sky factor again to a sky pixel, so it is taken back out here.
+  textureStore(outTex, gid.xy, vec4f(sum / wsum / select(1.0, max(mbParams.x, 1e-6), dC <= 0.0), center.a));
 }

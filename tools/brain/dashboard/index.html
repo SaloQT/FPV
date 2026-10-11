@@ -3,97 +3,420 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>FPV brain training</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="top">
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-drone" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 6l-8 6 8 6zM7 6v12"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 6l8 6-8 6zM17 6v12"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12c3-6 5-6 7 0s4 6 7 0 4-6 6 0"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17v.01"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.5 8.5h.01M15.5 8.5h.01M12 12h.01M8.5 15.5h.01M15.5 15.5h.01" stroke-width="3"/></symbol>
+    <symbol id="i-mountain" viewBox="0 0 24 24"><path d="M3 20l6.5-12 4 7 2.5-4L21 20z"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M3 19h5c4.5 0 8-3.5 8-8a4 4 0 0 0-8 0c0 4.5 3.5 8 8 8h5"/></symbol>
+    <symbol id="i-slalom" viewBox="0 0 24 24"><path d="M5 21c0-5 14-4 14-9S5 7 5 3"/><path d="M15 6v.01M9 18v.01" stroke-width="3"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M3 21V11l5 3v-3l5 3v-3l5 3V4h3v17z"/></symbol>
+    <symbol id="i-wheel" viewBox="0 0 24 24"><circle cx="12" cy="10" r="7"/><path d="M12 3v14M5 10h14M7 5l10 10M17 5L7 15M8 21l4-4 4 4"/></symbol>
+    <symbol id="i-coaster" viewBox="0 0 24 24"><path d="M2 17c3 0 4-11 7.5-11S13 14 16 14s3.5-5 6-5"/><path d="M2 21h20M6 21v-5M12 21v-6M18 21v-8"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h7.5a3 3 0 0 0 0-6h-7a3 3 0 0 1 0-6H16"/></symbol>
+    <symbol id="i-eye"viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  </svg>
+  <a class="skip-link" href="#content">Skip to content</a>
+
+  <header class="appbar">
+    <a class="brand" href="/" aria-label="FPV brain training: all runs">
+      <span class="brand-mark"><svg class="icon"><use href="#i-drone"/></svg></span>
+      <span class="brand-name">FPV brain trainer</span>
+    </a>
     <div class="run">
-      <h1 id="runName">Training</h1>
-      <span id="status" class="pill">connecting</span>
+      <h1 id="runName">Runs</h1>
+      <span id="status" class="badge" role="status">connecting</span>
+      <span id="runTemplate" class="chip" hidden></span>
     </div>
-    <dl class="readouts">
-      <div><dt>Iteration</dt><dd id="rIter">–</dd></div>
-      <div><dt>Elapsed</dt><dd id="rElapsed">–</dd></div>
-      <div><dt>Decisions</dt><dd id="rSteps">–</dd></div>
-      <div><dt>Decisions/s</dt><dd id="rSps">–</dd></div>
-      <div><dt>Return</dt><dd id="rReturn">–</dd></div>
-      <div><dt>Crash rate</dt><dd id="rCrash">–</dd></div>
-      <div><dt>Best lap</dt><dd id="rBest">–</dd></div>
-    </dl>
-    <div class="commands">
-      <button id="btnSave" type="button" title="Write a checkpoint now">Save checkpoint</button>
-      <button id="btnStop" type="button" class="danger" title="Finish after this iteration and save">Stop training</button>
+    <button id="btnWatch" type="button" class="btn" title="Open the game in a new tab with saved brains flying: one drone, or a race of up to 32">
+      <svg class="icon"><use href="#i-eye"/></svg><span>Watch in game</span>
+    </button>
+    <div class="commands" hidden>
+      <button id="btnSave" type="button" class="btn" title="Write a checkpoint after the current iteration">
+        <svg class="icon"><use href="#i-save"/></svg><span>Save checkpoint</span>
+      </button>
+      <button id="btnStop" type="button" class="btn btn-danger" title="Finish the current iteration, save the brain and end the run">
+        <svg class="icon"><use href="#i-stop"/></svg><span>Stop and save</span>
+      </button>
     </div>
   </header>
 
-  <main>
-    <section class="mapcol">
-      <div class="toolbar">
-        <label>World
-          <select id="worldSel"></select>
-        </label>
-        <button id="btnOverview" type="button" title="All worlds side by side (O)">All worlds</button>
-        <span class="sep"></span>
-        <label class="check"><input id="layPath" type="checkbox" checked> Path</label>
-        <label class="check"><input id="layObst" type="checkbox" checked> Obstacles</label>
-        <label class="check"><input id="layBoxes" type="checkbox"> Colliders</label>
-        <label>Trail
-          <input id="trailLen" type="range" min="0.5" max="12" step="0.5" value="4">
-          <output id="trailOut">4 s</output>
-        </label>
-        <label>Colour
-          <select id="trailMode">
-            <option value="drone">by drone</option>
-            <option value="speed">by speed</option>
-          </select>
-        </label>
-      </div>
-      <div class="mapwrap">
-        <canvas id="map" aria-label="Top-down view of the training worlds"></canvas>
-        <div id="mapTip" class="tip" hidden></div>
-        <div id="mapInfo" class="mapinfo"></div>
-        <div id="gateLegend" class="gatelegend" aria-label="Gate kinds"></div>
-      </div>
-      <div class="toolbar small">
-        <span class="label">Elevation</span>
-        <div class="seg" role="group" aria-label="Profile projection">
-          <button id="profDist" type="button" class="on" title="Height against distance along the course">Along course</button>
-          <button id="profSide" type="button" title="Height against position along the track's long axis: loops stay loops">Side view</button>
+  <main id="content" tabindex="-1">
+    <!-- Home: start a run, previous runs -->
+    <div id="runHome" class="home" hidden>
+      <form id="startForm" class="start" novalidate aria-labelledby="startTitle">
+        <div class="page-head">
+          <h2 id="startTitle">New training run</h2>
+          <p class="muted">Pick a template for what you want the brain to get better at, choose a starting brain and a duration, then start. Stop and save at any time.</p>
         </div>
-        <span id="profInfo" class="muted"></span>
-      </div>
-      <canvas id="profile" class="profile" aria-label="Elevation profile of the selected world"></canvas>
-    </section>
 
-    <section class="chartcol">
-      <div class="toolbar">
-        <label>Smoothing
-          <input id="smooth" type="range" min="0" max="0.99" step="0.01" value="0.6">
-          <output id="smoothOut">0.60</output>
-        </label>
-        <button id="btnResetZoom" type="button" title="Show every iteration (double-click a chart does the same)">Reset zoom</button>
-        <span class="muted hint">Ctrl/Shift + wheel zoom · drag pan · click to scrub · double-click reset</span>
-        <button id="btnTable" type="button" aria-expanded="false" aria-controls="tableView">Table</button>
+        <section class="card step" aria-labelledby="templateTitle">
+          <header class="step-head">
+            <span class="step-num" aria-hidden="true">1</span>
+            <div>
+              <h3 id="templateTitle">Template</h3>
+              <p class="muted">A template sets the rewards, the worlds and the learning settings for one goal. You can change any of them below.</p>
+            </div>
+          </header>
+          <div id="templateFilters" class="filters" role="group" aria-label="Show templates for"></div>
+          <div id="templateGrid" class="template-grid" role="radiogroup" aria-labelledby="templateTitle"></div>
+        </section>
+
+        <section class="card step" aria-labelledby="basicsTitle">
+          <header class="step-head">
+            <span class="step-num" aria-hidden="true">2</span>
+            <div>
+              <h3 id="basicsTitle">Brain and duration</h3>
+              <p class="muted">Continuing a saved brain writes a new run and keeps the original file as it is.</p>
+            </div>
+          </header>
+          <div class="basics">
+            <div class="field">
+              <label for="startBrain">Starting brain</label>
+              <select id="startBrain" name="resume" aria-describedby="brainHint"><option value="">New brain</option></select>
+              <p id="brainHint" class="field-hint"></p>
+            </div>
+            <div class="field">
+              <label for="minutes">Duration</label>
+              <div class="input-unit"><input id="minutes" name="minutes" type="number" min="0.1" max="1440" step="0.1" value="10" required aria-describedby="minutesHint"><span aria-hidden="true">min</span></div>
+              <div class="quick-picks" role="group" aria-label="Duration presets">
+                <button type="button" data-minutes="5">5</button><button type="button" data-minutes="10">10</button><button type="button" data-minutes="30">30</button><button type="button" data-minutes="60">60</button><button type="button" data-minutes="120">120</button>
+              </div>
+              <p id="minutesHint" class="field-hint">Training stops at this time, or earlier when you stop it.</p>
+            </div>
+            <div class="field">
+              <label for="runNameInput">Run name <span class="optional">optional</span></label>
+              <input id="runNameInput" name="name" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]*" placeholder="Automatic" autocomplete="off" aria-describedby="nameHint">
+              <p id="nameHint" class="field-hint">Letters, numbers, hyphens and underscores. Also the saved brain's file name.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card step" aria-labelledby="worldsTitle">
+          <header class="step-head">
+            <span class="step-num" aria-hidden="true">3</span>
+            <div>
+              <h3 id="worldsTitle">Worlds</h3>
+              <p class="muted">The track styles the generated worlds are built in, and the theme parks flown as extra worlds.</p>
+            </div>
+            <span id="worldsChanged" class="chip chip-accent step-flag" hidden>Changed from the template</span>
+          </header>
+          <div class="world-block">
+            <div class="block-head">
+              <h4 id="stylesTitle">Track styles</h4>
+              <span id="styleCount" class="block-count"></span>
+              <div class="block-actions">
+                <button id="stylesAll" type="button" class="btn btn-sm btn-ghost">Select all</button>
+                <button id="stylesNone" type="button" class="btn btn-sm btn-ghost">Clear</button>
+              </div>
+            </div>
+            <div id="trainingStyles" class="style-grid" role="group" aria-labelledby="stylesTitle"></div>
+          </div>
+          <div class="world-block">
+            <div class="block-head">
+              <h4 id="parksTitle">Theme parks</h4>
+              <span id="parkCount" class="block-count"></span>
+            </div>
+            <p class="block-note muted">Each park is one more world, flown along the route you pick: its race course, the park tour, or a coaster's line with a gate every 30 m. A park takes 10 to 20 s to build when the run starts.</p>
+            <div class="park-builder" role="group" aria-labelledby="parksTitle">
+              <div class="field park-seed">
+                <label for="parkSeed">Park seed</label>
+                <div class="seed-row">
+                  <input id="parkSeed" type="number" min="0" max="999999999" step="1" value="1337" inputmode="numeric" autocomplete="off" data-picker>
+                  <button id="parkDice" type="button" class="btn btn-icon" title="Random seed" aria-label="Random seed"><svg class="icon"><use href="#i-dice"/></svg></button>
+                </div>
+              </div>
+              <div class="field">
+                <span id="parkSizeLabel" class="field-label">Size</span>
+                <div id="parkSize" class="segmented" role="group" aria-labelledby="parkSizeLabel"></div>
+              </div>
+              <div class="field park-route">
+                <span id="parkRouteLabel" class="field-label">Route</span>
+                <div id="parkRoute" class="segmented" role="group" aria-labelledby="parkRouteLabel"></div>
+              </div>
+              <div id="parkCoasterField" class="field park-coasters">
+                <span id="parkCoasterLabel" class="field-label">Coaster</span>
+                <div id="parkCoasters" class="coaster-picks" role="group" aria-labelledby="parkCoasterLabel"></div>
+              </div>
+              <div class="park-add-row">
+                <button id="parkAdd" type="button" class="btn btn-primary"><svg class="icon"><use href="#i-plus"/></svg><span>Add park</span></button>
+                <p id="parkHint" class="field-hint" aria-live="polite"></p>
+              </div>
+            </div>
+            <ul id="parkList" class="park-list" aria-labelledby="parksTitle"></ul>
+            <input id="parks" name="parks" type="hidden">
+          </div>
+        </section>
+
+        <section class="card step" aria-labelledby="reviewTitle">
+          <header class="step-head">
+            <span class="step-num" aria-hidden="true">4</span>
+            <div>
+              <h3 id="reviewTitle">Review settings</h3>
+              <p class="muted">What the template changes from the defaults, and why.</p>
+            </div>
+          </header>
+          <div id="templateSummary" class="template-summary" aria-live="polite"></div>
+          <details id="trainingOptions" class="advanced">
+            <summary><svg class="icon chev"><use href="#i-chevron"/></svg><span>All settings</span><span id="customCount" class="chip chip-accent" hidden></span></summary>
+            <p class="settings-note muted">Settings apply when the run starts and stay fixed for it. Rewards and most learning settings are built into the GPU kernels.</p>
+            <div class="advanced-body">
+              <div id="groupTabs" class="group-tabs" role="tablist" aria-label="Setting groups" aria-orientation="vertical"></div>
+              <div id="trainingFields" class="group-panels">
+                <section class="settings-group" data-group="Run and worlds" aria-label="Run and worlds">
+                  <div id="runFields" class="inline-fields">
+                    <div class="inline-option">
+                      <label for="worlds">Worlds</label><input id="worlds" name="worlds" type="number" min="1" max="192" value="48" required aria-describedby="worlds-help">
+                      <small id="worlds-help" class="setting-help">Generated training worlds. Few worlds overfit: the brain learns those tracks by heart.</small>
+                    </div>
+                    <div class="inline-option">
+                      <label for="iters">Maximum iterations</label><input id="iters" name="iters" type="number" min="0" max="2147483647" value="0" required aria-describedby="iters-help">
+                      <small id="iters-help" class="setting-help">0 uses the duration only; otherwise the run stops at whichever limit comes first.</small>
+                    </div>
+                    <div class="inline-option">
+                      <label for="every">Checkpoint interval (minutes)</label><input id="every" name="every" type="number" min="0.01" max="1440" step="any" value="5" required aria-describedby="every-help">
+                      <small id="every-help" class="setting-help">How often the brain file is written while training.</small>
+                    </div>
+                    <div class="inline-option">
+                      <label for="recipes">Random recipe worlds</label><input id="recipes" name="recipes" type="number" min="0" max="192" placeholder="Auto" aria-describedby="recipes-help">
+                      <small id="recipes-help" class="setting-help">Worlds built from random track-builder recipes. Blank uses the default mix; 0 uses only the selected styles.</small>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="advanced-foot">
+              <button id="resetSettings" type="button" class="btn btn-sm">Reset to template</button>
+            </div>
+          </details>
+        </section>
+
+        <div class="start-bar">
+          <div class="start-summary">
+            <strong id="startSummary">Balanced</strong>
+            <p id="runMessage" role="status" aria-live="polite"></p>
+          </div>
+          <button id="btnStart" class="btn btn-primary btn-lg" type="submit"><svg class="icon"><use href="#i-play"/></svg><span>Start training</span></button>
+        </div>
+      </form>
+
+      <aside class="history card" aria-labelledby="previousTitle">
+        <header class="history-head">
+          <h2 id="previousTitle">Previous runs</h2>
+          <span id="runCount" class="count"></span>
+        </header>
+        <div class="search">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="runFilter" type="search" placeholder="Filter by name, template or status" aria-label="Filter previous runs" autocomplete="off">
+        </div>
+        <div id="previousRuns" class="run-list" aria-live="polite">Loading runs…</div>
+      </aside>
+    </div>
+
+    <!-- One run: live or replayed -->
+    <div id="runPage" class="run-page" hidden>
+      <div id="alerts" class="alerts">
+        <div id="runProgress" class="alert alert-info" role="status" hidden></div>
+        <div id="gpuAlert" class="alert alert-critical" role="alert" hidden></div>
+        <div id="learnAlert" class="alert alert-warning" role="alert" hidden></div>
       </div>
-      <div id="tableView" class="tableview" hidden>
-        <table>
-          <caption id="tableCaption">Values at the cursor</caption>
-          <thead><tr><th scope="col">Chart</th><th scope="col">Series</th><th scope="col">Value</th><th scope="col">Smoothed</th></tr></thead>
-          <tbody id="tableBody"></tbody>
-        </table>
-      </div>
-      <div id="charts" class="charts"></div>
-    </section>
+
+      <dl class="readouts kpis" hidden>
+        <div class="kpi"><dt>Iteration</dt><dd id="rIter">–</dd><span id="rIterNote" class="kpi-note"></span></div>
+        <div class="kpi kpi-elapsed"><dt>Elapsed</dt><dd id="rElapsed">–</dd><span id="rElapsedNote" class="kpi-note"></span><span class="meter" aria-hidden="true"><span id="rElapsedBar"></span></span></div>
+        <div class="kpi"><dt>Decisions</dt><dd id="rSteps">–</dd><span id="rSps" class="kpi-note">–</span></div>
+        <div class="kpi"><dt>Mean return</dt><dd id="rReturn">–</dd><span id="dReturn" class="kpi-note delta"></span></div>
+        <div class="kpi"><dt>Crash rate</dt><dd id="rCrash">–</dd><span id="dCrash" class="kpi-note delta"></span></div>
+        <div class="kpi"><dt>Best lap</dt><dd id="rBest">–</dd><span id="dBest" class="kpi-note delta"></span></div>
+      </dl>
+
+      <nav id="viewActions" class="tabs" hidden>
+        <a id="backLink" class="btn btn-ghost btn-sm" href="/"><svg class="icon"><use href="#i-back"/></svg><span>All runs</span></a>
+        <div class="tablist" role="tablist" aria-label="Run views">
+          <button id="tabTraining" role="tab" type="button" aria-selected="true" aria-controls="runView">Training</button>
+          <button id="tabSettings" role="tab" type="button" aria-selected="false" aria-controls="runSettings" tabindex="-1">Settings</button>
+          <button id="tabCompare" role="tab" type="button" aria-selected="false" aria-controls="comparePanel" tabindex="-1">Compare brains</button>
+        </div>
+      </nav>
+
+      <section id="runView" class="run-view" role="tabpanel" aria-labelledby="tabTraining" hidden>
+        <section class="panel mapcol" aria-label="Training worlds">
+          <div class="toolbar">
+            <label class="inline">World <select id="worldSel"></select></label>
+            <button id="btnOverview" type="button" class="btn btn-sm" title="All worlds side by side (O)">All worlds</button>
+            <details class="popover">
+              <summary class="btn btn-sm"><svg class="icon"><use href="#i-layers"/></svg><span>Layers</span></summary>
+              <div class="popover-body">
+                <label class="check"><input id="layPath" type="checkbox" checked> Course path</label>
+                <label class="check"><input id="layObst" type="checkbox" checked> Obstacles</label>
+                <label class="check"><input id="layBoxes" type="checkbox"> Colliders</label>
+                <label class="stack">Trail length <span class="range-row"><input id="trailLen" type="range" min="0.5" max="12" step="0.5" value="4"><output id="trailOut" for="trailLen">4 s</output></span></label>
+                <label class="stack">Trail colour
+                  <select id="trailMode">
+                    <option value="drone">By drone</option>
+                    <option value="speed">By speed</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+            <button id="btnElevation" type="button" class="btn btn-sm" aria-pressed="false" aria-controls="elevation">Elevation</button>
+          </div>
+          <div class="mapwrap">
+            <canvas id="map" aria-label="Top-down view of the training worlds: click a world to open it, drag to pan, wheel to zoom"></canvas>
+            <div id="mapTip" class="tip" hidden></div>
+            <div id="mapInfo" class="mapinfo"></div>
+          </div>
+          <div id="gateLegend" class="gatelegend" aria-label="Gate kinds"></div>
+          <div id="elevation" class="elevation" hidden>
+            <div class="toolbar toolbar-sub">
+              <span class="label">Elevation</span>
+              <div class="seg" role="group" aria-label="Profile projection">
+                <button id="profDist" type="button" class="on" aria-pressed="true" title="Height against distance along the course">Along course</button>
+                <button id="profSide" type="button" aria-pressed="false" title="Height against position along the track's long axis: loops stay loops">Side view</button>
+              </div>
+              <span id="profInfo" class="muted"></span>
+            </div>
+            <canvas id="profile" class="profile" aria-label="Elevation profile of the selected world"></canvas>
+          </div>
+        </section>
+
+        <section class="panel chartcol" aria-label="Training charts">
+          <div class="toolbar">
+            <div class="seg" role="group" aria-label="Charts shown">
+              <button id="chartsKey" type="button" class="on" aria-pressed="true">Key metrics</button>
+              <button id="chartsAll" type="button" aria-pressed="false">All metrics</button>
+            </div>
+            <label class="inline" title="Exponential moving average of each line">Smoothing
+              <input id="smooth" type="range" min="0" max="0.99" step="0.01" value="0.6">
+              <output id="smoothOut" for="smooth">0.60</output>
+            </label>
+            <span class="grow"></span>
+            <button id="btnResetZoom" type="button" class="btn btn-sm" title="Show every iteration (double-clicking a chart does the same)">Reset zoom</button>
+            <button id="btnTable" type="button" class="btn btn-sm" aria-pressed="false" aria-controls="tableView">Table</button>
+            <details class="popover popover-right">
+              <summary class="btn btn-sm btn-icon" aria-label="Chart and keyboard controls"><svg class="icon"><use href="#i-help"/></svg></summary>
+              <div class="popover-body shortcuts">
+                <h4>Charts</h4>
+                <dl>
+                  <dt>Ctrl or Shift + wheel</dt><dd>Zoom</dd>
+                  <dt>Drag</dt><dd>Pan</dd>
+                  <dt>Click</dt><dd>Jump to that iteration</dd>
+                  <dt>Double-click</dt><dd>Show every iteration</dd>
+                  <dt>Legend</dt><dd>Show or hide a line</dd>
+                </dl>
+                <h4>Playback</h4>
+                <dl>
+                  <dt><kbd>Space</kbd></dt><dd>Play or pause</dd>
+                  <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous or next trace</dd>
+                  <dt><kbd>L</kbd></dt><dd>Follow live</dd>
+                  <dt><kbd>O</kbd></dt><dd>All worlds</dd>
+                </dl>
+              </div>
+            </details>
+          </div>
+          <div id="tableView" class="tableview" hidden>
+            <table>
+              <caption id="tableCaption">Values at the cursor</caption>
+              <thead><tr><th scope="col">Chart</th><th scope="col">Series</th><th scope="col">Value</th><th scope="col">Smoothed</th></tr></thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+          <div id="charts" class="charts"></div>
+        </section>
+      </section>
+
+      <section id="runSettings" class="run-settings" role="tabpanel" aria-labelledby="tabSettings" hidden>
+        <div class="card">
+          <p class="muted">These settings stay fixed for the run. To train on with different settings, stop and save, then continue the saved brain in a new run.</p>
+          <div id="currentSettings" class="settings-readout"></div>
+        </div>
+      </section>
+
+      <section id="comparePanel" class="compare" role="tabpanel" aria-labelledby="tabCompare" hidden>
+        <div class="card">
+          <div class="page-head">
+            <h2 id="compareTitle">Compare brains</h2>
+            <p class="muted">Fly saved brains on one shared test course, in the game's own flight simulation on the CPU. To include this run's progress, save a checkpoint first, then refresh the brain list.</p>
+          </div>
+          <div class="compare-grid">
+            <div class="compare-course">
+              <h3>Course</h3>
+              <div class="form-grid">
+                <label class="field">Style <select id="compareStyle"><option>race</option><option>freestyle</option><option>mountain</option><option>sprint</option><option>technical</option><option>acro</option><option>industrial</option></select></label>
+                <label class="field">Seed <input id="compareSeed" type="number" min="0" max="2147483647" value="900001"></label>
+                <label class="field">Gates <input id="compareGates" type="number" min="4" max="80" value="12"></label>
+                <label class="field">Difficulty (%) <input id="compareDifficulty" type="number" min="0" max="100" value="50"></label>
+                <label class="field">Laps <input id="compareLaps" type="number" min="1" max="10" value="3"></label>
+              </div>
+              <div class="button-row">
+                <button id="compareGenerate" type="button" class="btn">Generate course</button>
+                <button id="compareExport" type="button" class="btn btn-ghost" disabled>Export course</button>
+              </div>
+              <div class="compare-mapwrap"><canvas id="compareMap" aria-label="Generated comparison course; drag to pan and wheel to zoom"></canvas><div id="compareTip" class="tip" hidden></div></div>
+            </div>
+            <div class="compare-brains-col">
+              <h3>Brains</h3>
+              <div id="compareBrains" class="compare-brains"></div>
+              <div class="form-grid">
+                <label class="field">Runs per brain <input id="compareRuns" type="number" min="1" max="10" value="3"></label>
+                <label class="field">Time limit per run (sim s) <input id="compareSeconds" type="number" min="10" max="600" value="180"></label>
+                <label class="field">Wind (m/s) <input id="compareWind" type="number" min="0" max="20" value="0"></label>
+              </div>
+              <div class="button-row">
+                <button id="compareStart" type="button" class="btn btn-primary">Compare selected brains</button>
+                <button id="compareRefresh" type="button" class="btn btn-ghost">Refresh brains</button>
+              </div>
+              <p id="compareStatus" class="status-line" role="status">Choose a course and brains.</p>
+            </div>
+          </div>
+          <div class="compare-table">
+            <table>
+              <caption class="muted">Ranked by completion rate, then average completed lap. Open tracks measure a single run; still-air repeats may be identical. Crashes and recovery time stay in the result.</caption>
+              <thead><tr><th scope="col">Brain</th><th scope="col">Finished</th><th scope="col">Avg lap</th><th scope="col">Best lap</th><th scope="col">Crashes</th><th scope="col">Stalls</th><th scope="col">Training observations</th></tr></thead>
+              <tbody id="compareResults"></tbody>
+            </table>
+          </div>
+          <details class="report">
+            <summary><svg class="icon chev"><use href="#i-chevron"/></svg>Run report: settings, course, lap times and gate events</summary>
+            <div class="button-row"><button id="compareCopy" type="button" class="btn btn-sm" disabled>Copy run report</button></div>
+            <textarea id="compareReport" readonly aria-label="Comparison run report"></textarea>
+          </details>
+        </div>
+      </section>
+    </div>
   </main>
 
-  <footer class="timeline">
-    <div class="transport">
-      <button id="btnBack" type="button" title="Previous trace (←)" aria-label="Previous trace">◀︎</button>
-      <button id="btnPlay" type="button" title="Play or pause (space)" aria-label="Play or pause">❚❚</button>
-      <button id="btnFwd" type="button" title="Next trace (→)" aria-label="Next trace">▶︎</button>
-      <button id="btnLive" type="button" class="live on" title="Follow new iterations (L)">Live</button>
-      <label>Speed
+  <footer class="timeline" hidden>
+    <div class="transport" role="group" aria-label="Playback">
+      <button id="btnBack" type="button" class="btn btn-icon" title="Previous trace (←)" aria-label="Previous trace"><svg class="icon"><use href="#i-prev"/></svg></button>
+      <button id="btnPlay" type="button" class="btn btn-icon btn-play" title="Play or pause (Space)" aria-label="Pause"><svg class="icon"><use href="#i-pause"/></svg></button>
+      <button id="btnFwd" type="button" class="btn btn-icon" title="Next trace (→)" aria-label="Next trace"><svg class="icon"><use href="#i-next"/></svg></button>
+      <button id="btnLive" type="button" class="btn btn-sm live on" title="Follow new iterations (L)" aria-pressed="true"><span class="live-dot" aria-hidden="true"></span>Live</button>
+      <label class="inline">Speed
         <select id="speed">
           <option value="0.25">0.25×</option>
           <option value="0.5">0.5×</option>
@@ -104,22 +427,79 @@
         </select>
       </label>
     </div>
-    <canvas id="scrub" class="scrub" aria-label="Timeline: click or drag to scrub"></canvas>
+    <canvas id="scrub" class="scrub" aria-label="Timeline of every iteration: click or drag to scrub"></canvas>
     <div id="playInfo" class="playinfo muted">–</div>
   </footer>
 
-  <div id="confirm" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
-    <div class="box">
+  <dialog id="confirm" class="dialog" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+    <form method="dialog">
       <h2 id="confirmTitle">Stop training?</h2>
-      <p>The trainer finishes the current iteration, saves the brain and exits.</p>
-      <div class="row">
-        <button id="confirmNo" type="button">Keep training</button>
-        <button id="confirmYes" type="button" class="danger">Stop and save</button>
+      <p id="confirmText">The trainer finishes the current iteration, saves the brain and ends the run. You can continue the saved brain in a new run.</p>
+      <div class="button-row end">
+        <button id="confirmNo" value="cancel" class="btn" autofocus>Keep training</button>
+        <button id="confirmYes" value="stop" class="btn btn-danger-solid">Stop and save</button>
       </div>
-    </div>
-  </div>
-  <div id="toast" class="toast" hidden role="status"></div>
+    </form>
+  </dialog>
+  <dialog id="watch" class="dialog dialog-wide" aria-labelledby="watchTitle" aria-describedby="watchIntro">
+    <form id="watchForm" novalidate>
+      <h2 id="watchTitle">Watch in game</h2>
+      <p id="watchIntro" class="muted">The game opens in a new tab. The first brain you pick flies your quad and the camera rides it; the other drones race alongside as ghosts, and copies of a brain each fly their own line.</p>
+      <div class="watch-cols">
+      <section class="watch-section watch-drones" aria-labelledby="watchDronesTitle">
+        <div class="watch-head"><h3 id="watchDronesTitle">Drones</h3><span id="watchTotal" class="field-hint"></span></div>
+        <div id="watchBrains" class="watch-brains" role="list" aria-labelledby="watchDronesTitle"></div>
+      </section>
+      <section class="watch-section watch-track" aria-labelledby="watchTrackTitle">
+        <h3 id="watchTrackTitle">Track</h3>
+        <div class="watch-tabs" role="radiogroup" aria-labelledby="watchTrackTitle">
+          <label id="watchTrainingChoice" class="watch-tab"><input type="radio" name="watchTrack" value="training"><svg class="icon"><use href="#i-layers"/></svg><span>Training world</span></label>
+          <label class="watch-tab"><input type="radio" name="watchTrack" value="generated" checked><svg class="icon"><use href="#i-flag"/></svg><span>Generated track</span></label>
+          <label class="watch-tab"><input type="radio" name="watchTrack" value="park"><svg class="icon"><use href="#i-coaster"/></svg><span>Theme park</span></label>
+        </div>
+        <div id="watchTrainingPanel" class="watch-panel">
+          <p class="watch-note muted">Exactly the track the brain trained on. The game rebuilds it at low graphics, as the trainer built it.</p>
+          <select id="watchWorld" class="watch-world" aria-label="Training world"></select>
+        </div>
+        <div id="watchGenerated" class="watch-panel watch-gen">
+          <p class="watch-note muted">Any style and seed, at the graphics you choose.</p>
+          <label class="field">Style<select id="watchStyle"></select></label>
+          <label class="field">Seed<input id="watchSeed" data-label="Seed" type="number" min="0" max="4294967295" step="1" inputmode="numeric"></label>
+          <label class="field">Gates<input id="watchGates" data-label="Gates" type="number" min="4" max="40" step="1" inputmode="numeric"></label>
+          <label class="field">Laps<input id="watchLaps" data-label="Laps" type="number" min="1" max="10" step="1" inputmode="numeric"></label>
+          <label class="field">Difficulty (%)<input id="watchDiff" data-label="Difficulty" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+          <label class="field">Graphics<select id="watchQuality"></select></label>
+        </div>
+        <div id="watchPark" class="watch-panel watch-park">
+          <p class="watch-note muted">Any park size, flown along its race course, the park tour or a coaster's line.</p>
+          <div class="field watch-park-seed">
+            <label for="watchParkSeed">Park seed</label>
+            <div class="seed-row">
+              <input id="watchParkSeed" data-label="Park seed" type="number" min="0" max="999999999" step="1" value="1337" inputmode="numeric" autocomplete="off">
+              <button id="watchParkDice" type="button" class="btn btn-icon" title="Random seed" aria-label="Random seed"><svg class="icon"><use href="#i-dice"/></svg></button>
+            </div>
+          </div>
+          <label class="field watch-park-quality">Graphics<select id="watchParkQuality"></select></label>
+          <div class="field watch-park-wide"><span id="watchParkSizeLabel" class="field-label">Size</span><div id="watchParkSize" class="segmented" role="group" aria-labelledby="watchParkSizeLabel"></div></div>
+          <div class="field watch-park-wide"><span id="watchParkRouteLabel" class="field-label">Route</span><div id="watchParkRoute" class="segmented" role="group" aria-labelledby="watchParkRouteLabel"></div></div>
+          <div id="watchParkCoasterField" class="field watch-park-wide"><span id="watchParkCoasterLabel" class="field-label">Coaster</span><div id="watchParkCoasters" class="coaster-picks" role="group" aria-labelledby="watchParkCoasterLabel"></div></div>
+        </div>
+      </section>
+      </div>
+      <div class="watch-foot">
+        <p id="watchMessage" class="watch-message" role="status" aria-live="polite"></p>
+        <div class="button-row end">
+          <button id="watchCancel" type="button" class="btn">Cancel</button>
+          <button id="watchGo" type="submit" class="btn btn-primary"><svg class="icon"><use href="#i-eye"/></svg><span>Open the game</span></button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
 
+  <script type="module" src="js/watch.js"></script>
   <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/runs.js"></script>
+  <script type="module" src="js/compare.js"></script>
 </body>
 </html>

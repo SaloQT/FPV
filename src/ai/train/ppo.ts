@@ -11,7 +11,7 @@ import { ACT_SIZE, OBS_SIZE } from '../spec';
 import { DEFAULT_RATES, type RateProfile } from '../../sim/fc/rates';
 import { QUAD_5IN_6S } from '../../sim/presets';
 import { Rng } from '../../sim/math3d';
-import { actorSizes, criticSizes, makeBrain, paramCount, type Brain, type BrainStats } from '../brain';
+import { actorSizes, criticSizes, makeBrain, paramCount, widenInputs, type Brain, type BrainStats } from '../brain';
 import { DEFAULT_ENV, checkTraceEnvs, envShader, envSlot, type EnvConfig } from '../gpu/envKernel';
 import { ENV_LAYOUT } from '../gpu/envState';
 import { QUAD_LAYOUT } from '../gpu/quadState';
@@ -19,14 +19,17 @@ import {
   WORLD_GROUP, bindGroup, compileModule, dispatch, pipeline, readBuffer, storageBuffer, uniformBuffer, type BindKind, type Binding,
 } from '../gpu/gpu';
 import {
-  adamTickWgsl, adamWgsl, envStatsWgsl, gaeWgsl, gatherWgsl, gemmGrid, gemmWgsl, lossFinalWgsl, lossWgsl, normWgsl, reduceWgsl,
+  adamTickWgsl, adamWgsl, envStatsWgsl, gaeWgsl, gatherGrid, gatherWgsl, gemmGrid, gemmWgsl, lossFinalWgsl, lossWgsl, normWgsl, reduceWgsl,
   rolloutStatsWgsl, sampleWgsl, type GemmSpec, type Tile,
 } from '../gpu/nn';
 import { packWorlds, type TrainWorld } from './worlds';
 import { uploadWorlds } from './worldGpu';
 import type { IterationTrace } from './trace';
+import { KernelProfiler, type KernelProfile } from './kernelProfile';
 
 export interface PpoConfig {
+  /** Per-dispatch timestamps; splits compute passes and adds profiling overhead. */
+  profile?: boolean;
   envs: number;
   /** Rollout length per iteration, policy steps. */
   steps: number;
@@ -44,6 +47,11 @@ export interface PpoConfig {
   maxNorm: number;
   hidden: number[];
   logStdInit: number;
+  adamBeta1?: number;
+  adamBeta2?: number;
+  adamEps?: number;
+  logStdMin?: number;
+  logStdMax?: number;
   seed: number;
   /** Rows per split-K chunk of the weight-gradient kernels. */
   chunk: number;
@@ -75,6 +83,14 @@ export const DEFAULT_PPO: PpoConfig = {
   traceEnvs: 0,
 };
 
+/** Keep the previous optimizer constants when callers omit the new settings. */
+export function ppoOptimizerSettings(c: PpoConfig) {
+  return {
+    adam: { beta1: c.adamBeta1 ?? 0.9, beta2: c.adamBeta2 ?? 0.999, eps: c.adamEps ?? 1e-5, maxNorm: c.maxNorm },
+    logStdMin: c.logStdMin ?? -3, logStdMax: c.logStdMax ?? 0.5,
+  };
+}
+
 /** Statistics of one iteration (sums over every environment and every minibatch step). */
 export interface IterationMetrics {
   iteration: number;
@@ -96,6 +112,7 @@ export interface IterationMetrics {
   criticGradNorm: number;
   logStd: number[];
   gpuMs: number;
+  kernelProfile?: KernelProfile;
   /** Positions and flags of the traced drones over this iteration's steps (when traceEnvs > 0). */
   trace?: IterationTrace;
 }
@@ -180,6 +197,7 @@ function partialSpec(L: Layer, chunk: number): GemmSpec {
 }
 
 interface Step {
+  label: string;
   p: GPUComputePipeline;
   g: GPUBindGroup[];
   grid: [number, number, number];
@@ -203,6 +221,8 @@ export class PpoTrainer {
   private readonly samples: number;
   private readonly mb: number;
   private stagingIndex = 0;
+  private permutationReady = false;
+  private profiler: KernelProfiler | null = null;
 
   private constructor(
     readonly device: GPUDevice,
@@ -224,7 +244,11 @@ export class PpoTrainer {
     this.obsR = bufs.obsR;
     this.rng = new Rng(cfg.seed * 7919 + 13);
     const size = STAGING_HEAD + this.traceBytes();
-    this.staging = [0, 1].map(() => device.createBuffer({ size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }));
+    this.staging = this.makeStaging(size);
+  }
+
+  private makeStaging(size: number): GPUBuffer[] {
+    return [0, 1].map(() => this.device.createBuffer({ size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }));
   }
 
   /** Bytes of one iteration's trace (all steps). */
@@ -252,10 +276,11 @@ export class PpoTrainer {
     const aCount = paramCount(aSizes) + ACT_SIZE, cCount = paramCount(cSizes);
     let aInit: Float32Array, cInit: Float32Array;
     if (init) {
+      const wide = widenInputs(init);
       aInit = new Float32Array(aCount);
-      aInit.set(init.actor);
+      aInit.set(wide.actor);
       aInit.set(init.logStd, aCount - ACT_SIZE);
-      cInit = new Float32Array(init.critic);
+      cInit = wide.critic;
     } else {
       aInit = initNetwork(aSizes, [...hidden.map(() => Math.SQRT2), 0.01], rng, ACT_SIZE);
       // Start near hover: tanh(bias) puts the throttle stick at the game's hover throttle (0.32).
@@ -312,6 +337,12 @@ export class PpoTrainer {
     const hM = [hidden.map((h, l) => sb(MB * h * 4, `mb-actor-h${l}`)), hidden.map((h, l) => sb(MB * h * 4, `mb-critic-h${l}`))];
     const t = new PpoTrainer(device, cfg, env, rates, bufs, actor, critic);
     await t.build(worlds, hR, hM, chunks);
+    if (cfg.profile && device.features.has('timestamp-query')) {
+      const dispatches = 1 + t.rollout.length + t.finish.length + t.update.reduce((n, u) => n + u.length, 0);
+      t.profiler = new KernelProfiler(device, dispatches);
+      for (const buffer of t.staging) buffer.destroy();
+      t.staging.splice(0, t.staging.length, ...t.makeStaging(STAGING_HEAD + t.traceBytes() + t.profiler.bytes));
+    }
     return t;
   }
 
@@ -330,8 +361,11 @@ export class PpoTrainer {
     };
     const gemmKinds = (s: GemmSpec): BindKind[][] => [s.kind === 'dtanh' ? ['ro', 'ro', 'ro', 'rw'] : ['ro', 'ro', 'rw']];
     const step = async (code: string, kinds: BindKind[][], entries: (Binding | null)[][], grid: [number, number, number], label: string, entry = 'main'): Promise<Step> => {
+      if (grid.some(n => !Number.isInteger(n) || n < 1 || n > d.limits.maxComputeWorkgroupsPerDimension)) {
+        throw new Error(`${label}: dispatch ${grid.join(' × ')} exceeds GPU limit ${d.limits.maxComputeWorkgroupsPerDimension}; reduce environments/rollout steps/network size or increase minibatches`);
+      }
       const p = await make(code, kinds, label, entry);
-      return { p, g: entries.map((e, i) => bindGroup(d, p, i, e, label)), grid };
+      return { label, p, g: entries.map((e, i) => bindGroup(d, p, i, e, label)), grid };
     };
     const gemm = (s: GemmSpec, entries: Binding[], rows: number, label: string): Promise<Step> => step(gemmWgsl(s), gemmKinds(s), [entries], gemmGrid(s, rows), label);
     const slice = (buf: GPUBuffer, index: number, bytes: number): Binding => ({ buffer: buf, offset: index * bytes, size: bytes });
@@ -356,7 +390,7 @@ export class PpoTrainer {
       for (let l = 0; l < net.layers.length; l++) {
         const L = net.layers[l];
         const last = l === net.layers.length - 1;
-        steps.push(await gemm(fwdSpec(L, !last), [l === 0 ? x : hs[l - 1], net.params, last ? out : hs[l]], rows, `${tag}-fwd${k}${l}`));
+        steps.push(await gemm(fwdSpec(L, !last), [l === 0 ? x : hs[l - 1], net.params, last ? out : hs[l]], rows, `${tag}-${k === 0 ? 'actor' : 'critic'}-forward-layer${l}`));
       }
       return steps;
     };
@@ -373,16 +407,18 @@ export class PpoTrainer {
     }
     // Bootstrap value, advantages, statistics
     this.finish.push(...await forward(this.critic, 1, slice(b.obsR, T, N * OBS_SIZE * 4), hR[1], slice(b.valR, T, N * 4), N, 'boot'));
-    this.finish.push(await step(gaeWgsl(N, T, c.gamma, c.lambda), [['ro', 'ro', 'ro', 'rw', 'rw']], [[b.valR, b.rewR, b.doneR, b.advR, b.retR]], [N / 64, 1, 1], 'gae'));
+    this.finish.push(await step(gaeWgsl(N, T, c.gamma, c.lambda), [['ro', 'ro', 'ro', 'rw', 'rw']], [[b.valR, b.rewR, b.doneR, b.advR, b.retR]], [N / 128, 1, 1], 'gae'));
     this.finish.push(await step(rolloutStatsWgsl(samples), [['ro', 'ro', 'ro', 'rw', 'rw']], [[b.advR, b.rewR, b.doneR, b.stats, b.metrics]], [1, 1, 1], 'rollout-stats'));
     const first = envSlot('sEpisodes');
     this.finish.push(await step(envStatsWgsl(N, first, 8, envSlot('sBestLap')), [['rw', 'rw']], [[b.E, b.metrics]], [1, 1, 1], 'env-stats'));
 
     // Update
-    const gather = gatherWgsl(MB, OBS_SIZE);
+    const gatherDispatch = gatherGrid(MB, OBS_SIZE, d.limits.maxComputeWorkgroupsPerDimension);
+    const gather = gatherWgsl(MB, OBS_SIZE, gatherDispatch[1] > 1 ? gatherDispatch[0] : undefined);
     const loss = lossWgsl(MB, logStdOff, c);
     const lossFinal = lossFinalWgsl(MB / 256, MB, logStdOff, c.entCoef);
-    const adamCfg = { beta1: 0.9, beta2: 0.999, eps: 1e-5, maxNorm: c.maxNorm };
+    const optimizer = ppoOptimizerSettings(c);
+    const adamCfg = optimizer.adam;
     const tick = await step(adamTickWgsl(adamCfg), [['rw']], [[b.opt]], [1, 1, 1], 'adam-tick');
     const backward = async (net: Net, k: number, dOut: GPUBuffer): Promise<Step[]> => {
       const steps: Step[] = [];
@@ -390,12 +426,12 @@ export class PpoTrainer {
       for (let l = net.layers.length - 1; l >= 0; l--) {
         const L = net.layers[l];
         const x = l === 0 ? b.mObs : hM[k][l - 1];
-        steps.push(await gemm(partialSpec(L, c.chunk), [dCur, x, b.part], chunks, `dW${k}${l}`));
-        steps.push(await step(reduceWgsl(L.out, L.inn, chunks, L.wOff), [['ro', 'rw']], [[b.part, net.grad]], [Math.ceil((L.out * (L.inn + 1)) / 256), 1, 1], `reduce${k}${l}`));
+        steps.push(await gemm(partialSpec(L, c.chunk), [dCur, x, b.part], chunks, `dW-${k === 0 ? 'actor' : 'critic'}-layer${l}`));
+        steps.push(await step(reduceWgsl(L.out, L.inn, chunks, L.wOff), [['ro', 'rw']], [[b.part, net.grad]], [Math.ceil((L.out * (L.inn + 1)) / 256), 1, 1], `reduce-${k === 0 ? 'actor' : 'critic'}-layer${l}`));
         if (l > 0) {
           const dNext = dCur === b.dA ? b.dB : b.dA;
           const s = dtanhSpec(L);
-          steps.push(await step(gemmWgsl(s), gemmKinds(s), [[dCur, net.params, hM[k][l - 1], dNext]], gemmGrid(s, MB), `dX${k}${l}`));
+          steps.push(await step(gemmWgsl(s), gemmKinds(s), [[dCur, net.params, hM[k][l - 1], dNext]], gemmGrid(s, MB), `dX-${k === 0 ? 'actor' : 'critic'}-layer${l}`));
           dCur = dNext;
         }
       }
@@ -410,11 +446,11 @@ export class PpoTrainer {
     const norm = async (net: Net, slot: number): Promise<Step> => step(normWgsl(net.count, slot), [['ro', 'rw', 'rw']], [[net.grad, b.norms, b.metrics]], [1, 1, 1], `norm${slot}`);
     const adamKinds: BindKind[][] = [['rw', 'ro', 'rw', 'rw', 'ro', 'ro', 'uniform']];
     const adam = async (net: Net, slot: number, clampFrom: number): Promise<Step> =>
-      step(adamWgsl(net.count, slot, adamCfg, clampFrom, -3, 0.5), adamKinds, [[net.params, net.grad, net.m1, net.m2, b.norms, b.opt, b.lr]], [Math.ceil(net.count / 256), 1, 1], `adam${slot}`);
+      step(adamWgsl(net.count, slot, adamCfg, clampFrom, optimizer.logStdMin, optimizer.logStdMax), adamKinds, [[net.params, net.grad, net.m1, net.m2, b.norms, b.opt, b.lr]], [Math.ceil(net.count / 256), 1, 1], `adam${slot}`);
     const tail = [await norm(this.actor, 0), await norm(this.critic, 1), tick, await adam(this.actor, 0, logStdOff), await adam(this.critic, 1, -1)];
     const gatherKinds: BindKind[][] = [['ro', 'ro', 'ro', 'ro', 'ro', 'ro', 'ro', 'rw', 'rw', 'rw']];
     for (let k = 0; k < c.epochs * c.minibatches; k++) {
-      const g = await step(gather, gatherKinds, [[slice(b.perm, k, MB * 4), b.obsR, b.uR, b.logpR, b.advR, b.retR, b.stats, b.mObs, b.mData, b.mU]], [MB / 64, 1, 1], 'gather');
+      const g = await step(gather, gatherKinds, [[slice(b.perm, k, MB * 4), b.obsR, b.uR, b.logpR, b.advR, b.retR, b.stats, b.mObs, b.mData, b.mU]], gatherDispatch, 'gather');
       this.update.push([g, ...fwdA, ...fwdC, lossStep, finalStep, ...bwA, ...bwC, ...tail]);
     }
     this.probeSteps = this.update[0].slice(0, this.update[0].length - tail.length);
@@ -429,7 +465,9 @@ export class PpoTrainer {
    */
   async probeGradients(): Promise<{ obs: Float32Array; u: Float32Array; data: Float32Array; actor: Float32Array; critic: Float32Array; actorGrad: Float32Array; criticGrad: Float32Array }> {
     const d = this.device;
-    this.shuffle();
+    // A previous iteration may have prepared this permutation while its GPU work ran.
+    if (!this.permutationReady) this.shuffle();
+    this.permutationReady = false;
     const enc = d.createCommandEncoder();
     const pass = enc.beginComputePass();
     if (this.pendingInit) {
@@ -470,18 +508,33 @@ export class PpoTrainer {
     const d = this.device, c = this.cfg;
     const frac = Math.min(1, this.iteration / Math.max(1, c.lrIterations));
     d.queue.writeBuffer(this.lrBuf, 0, new Float32Array([c.lr + (c.lrEnd - c.lr) * frac, 0, 0, 0]));
-    this.shuffle();
+    // A previous iteration may have prepared this permutation while its GPU work ran.
+    if (!this.permutationReady) this.shuffle();
+    this.permutationReady = false;
     const enc = d.createCommandEncoder();
     enc.clearBuffer(this.metrics);
-    const pass = enc.beginComputePass();
-    if (this.pendingInit) {
-      this.run(pass, this.pendingInit);
-      this.pendingInit = null;
+    if (this.profiler) {
+      this.profiler.begin();
+      const timed = (s: Step): void => {
+        const pass = enc.beginComputePass(this.profiler!.pass(s.label));
+        this.run(pass, s);
+        pass.end();
+      };
+      if (this.pendingInit) { timed(this.pendingInit); this.pendingInit = null; }
+      for (const s of this.rollout) timed(s);
+      for (const s of this.finish) timed(s);
+      for (const u of this.update) for (const s of u) timed(s);
+    } else {
+      const pass = enc.beginComputePass();
+      if (this.pendingInit) {
+        this.run(pass, this.pendingInit);
+        this.pendingInit = null;
+      }
+      for (const s of this.rollout) this.run(pass, s);
+      for (const s of this.finish) this.run(pass, s);
+      for (const u of this.update) for (const s of u) this.run(pass, s);
+      pass.end();
     }
-    for (const s of this.rollout) this.run(pass, s);
-    for (const s of this.finish) this.run(pass, s);
-    for (const u of this.update) for (const s of u) this.run(pass, s);
-    pass.end();
     const N = c.envs, T = c.steps, obsBytes = N * OBS_SIZE * 4;
     // The last observation starts the next rollout (via a scratch copy: a buffer cannot copy into itself).
     enc.copyBufferToBuffer(this.obsR, T * obsBytes, this.bufs.obsTmp, 0, obsBytes);
@@ -492,11 +545,20 @@ export class PpoTrainer {
     enc.copyBufferToBuffer(this.actor.params, (this.actor.count - ACT_SIZE) * 4, staging, 128, 16);
     const traceBytes = this.traceBytes();
     if (traceBytes > 0) enc.copyBufferToBuffer(this.bufs.trace, 0, staging, STAGING_HEAD, traceBytes);
+    const profileOffset = STAGING_HEAD + traceBytes;
+    this.profiler?.resolve(enc, staging, profileOffset);
     const t0 = performance.now();
     d.queue.submit([enc.finish()]);
-    await staging.mapAsync(GPUMapMode.READ);
+    const readback = staging.mapAsync(GPUMapMode.READ);
+    // Queue order keeps this upload behind the submitted iteration. Preparing the
+    // next permutation here hides the CPU shuffle behind the current GPU work.
+    this.shuffle();
+    this.permutationReady = true;
+    await readback;
     const gpuMs = performance.now() - t0;
     const mapped = staging.getMappedRange();
+    const kernelProfile: KernelProfile | undefined = this.profiler ? this.profiler.read(mapped, profileOffset)
+      : c.profile ? { mode: 'unsupported', totalMs: null, spanMs: null, kernels: [] } : undefined;
     const m = new Float32Array(mapped.slice(0, STAGING_HEAD));
     const trace: IterationTrace | undefined = traceBytes > 0 ? { K: c.traceEnvs, T, data: new Float32Array(mapped.slice(STAGING_HEAD, STAGING_HEAD + traceBytes)) } : undefined;
     staging.unmap();
@@ -524,6 +586,7 @@ export class PpoTrainer {
       criticGradNorm: m[17] / updates,
       logStd: Array.from(m.subarray(32, 36)),
       gpuMs,
+      ...(kernelProfile ? { kernelProfile } : {}),
       ...(trace ? { trace } : {}),
     };
   }
@@ -537,6 +600,8 @@ export class PpoTrainer {
       name,
       hidden: this.actor.sizes.slice(1, -1),
       rates: this.rates,
+      // env.wgsl spawns away from the pad at the game's checkpoints
+      episode: { stallSeconds: this.env.stallSeconds, ceiling: this.env.ceiling, respawn: 'last-gate' },
       actor: a.slice(0, n),
       logStd: a.slice(n, n + ACT_SIZE),
       critic: cr.slice(0, this.critic.count),

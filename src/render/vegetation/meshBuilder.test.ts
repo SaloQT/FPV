@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Vec3 } from '../../contracts';
-import { KIND, MeshBuilder, VERTEX_STRIDE, card, norm, octEncode, packMeshes, tube, type MeshData } from './meshBuilder';
+import { KIND, barkRadiusCode, MeshBuilder, VERTEX_STRIDE, card, norm, octEncode, packMeshes, tube, type MeshData } from './meshBuilder';
 import { buildVariantAssets } from './variants';
 
 const SLOW = 60000;
@@ -22,7 +22,7 @@ const zero = (): number => 0;
 function straightTube(sides: number, tip = false): MeshData {
   const b = new MeshBuilder();
   const pts: Vec3[] = [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 3, 0]];
-  tube(b, pts, [0.3, 0.25, 0.2, 0.1], { sides, kind: KIND.bark, sway: (y) => y / 3, ao: zero, phase: 0.5, tip });
+  tube(b, pts, [0.3, 0.25, 0.2, 0.1], { sides, kind: KIND.bark, sway: (y) => y / 3, ao: zero, tip });
   return b.build();
 }
 
@@ -77,23 +77,35 @@ describe('tube', () => {
   it('runs the bark texture along the branch in metres and wraps u once around', () => {
     const m = straightTube(4);
     expect(m.uv[1]).toBeCloseTo(0, 6);
-    expect(m.uv[(3 * 5) * 2 + 1]).toBeCloseTo(3 / 32, 6);
+    expect(m.uv[(3 * 5) * 2 + 1]).toBeCloseTo(3 / 64, 6);
     for (let j = 0; j <= 4; j++) expect(m.uv[j * 2]).toBeCloseTo(j / 4, 6);
   });
 
-  it('closes a tapering twig to a point and carries sway, kind and phase per vertex', () => {
+  it('closes a tapering twig to a point and carries sway, kind and the ring radius per vertex', () => {
     const m = straightTube(5, true);
     for (let j = 0; j <= 5; j++) expect(Math.hypot(m.pos[(18 + j) * 3], m.pos[(18 + j) * 3 + 2])).toBeCloseTo(0, 6);
     for (let i = 0; i < m.vertexCount; i++) {
       expect(m.attr[i * 4 + 2]).toBe(KIND.bark);
-      expect(m.attr[i * 4 + 3]).toBe(128);
+      const ring = Math.floor(i / 6), radius = ring === 3 ? 0 : [0.3, 0.25, 0.2][ring];
+      expect(m.attr[i * 4 + 3]).toBe(Math.round(barkRadiusCode(radius) * 255));
       expect(m.attr[i * 4 + 1]).toBe(Math.round((m.pos[i * 3 + 1] / 3) * 255));
     }
   });
 
+  it('spreads the foot into root ridges that fade with height, with outward normals', () => {
+    const b = new MeshBuilder();
+    const pts: Vec3[] = [[0, -0.5, 0], [0, 0, 0], [0, 0.3, 0], [0, 1, 0], [0, 3, 0]];
+    tube(b, pts, [0.3, 0.3, 0.3, 0.3, 0.3], { sides: 12, kind: KIND.bark, sway: zero, ao: zero, buttress: { count: 5, amp: 0.5, height: 0.4, phase: 0.2 }, gnarl: { amp: 0.05, seed: 0.3 } });
+    const m = b.build(), ring = (i: number): number[] => Array.from({ length: 12 }, (_, j) => Math.hypot(m.pos[(i * 13 + j) * 3], m.pos[(i * 13 + j) * 3 + 2]));
+    const spread = (r: number[]): number => Math.max(...r) - Math.min(...r);
+    expect(Math.max(...ring(1))).toBeGreaterThan(0.38);
+    expect(spread(ring(1))).toBeGreaterThan(3 * spread(ring(4)));
+    for (let i = 0; i < m.vertexCount; i++) expect(m.nrm[i * 3] * m.pos[i * 3] + m.nrm[i * 3 + 2] * m.pos[i * 3 + 2]).toBeGreaterThan(0);
+  });
+
   it('ignores a single point', () => {
     const b = new MeshBuilder();
-    tube(b, [[0, 0, 0]], [1], { sides: 5, kind: 0, sway: zero, ao: zero, phase: 0 });
+    tube(b, [[0, 0, 0]], [1], { sides: 5, kind: 0, sway: zero, ao: zero });
     expect(b.vertexCount).toBe(0);
   });
 });

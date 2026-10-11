@@ -3,7 +3,7 @@
  * and colliders, the start pad, wind, the session's track. All entry points leave the app consistent or throw before
  * touching it, so a failed rebuild keeps the old world flying.
  */
-import type { ProgressFn, TrackData, TrackRecipe } from '../contracts';
+import { gameplayQuality, type ObstacleCollider, type ProgressFn, type TrackData, type TrackRecipe } from '../contracts';
 import { generateTerrainAsync, createTerrainSampler } from '../world/terrain';
 import { generateTrack, trackColliders } from '../world/track';
 import type { AppSettings } from '../ui/settingsSchema';
@@ -11,6 +11,10 @@ import type { AppCtx } from './state';
 import type { PadGround } from './padGround';
 import type { WorldSettings } from './preview';
 import { buildTrack, buildWorld, type TrackRequest, type World, type WorldDeps } from './world';
+import { parkRecipeFromSettings, type ParkSettings } from '../world/park/settings';
+import { ParkRuntime } from '../world/park/runtime';
+import { parkSenseColliders } from '../world/park/raceColliders';
+import type { ParkData } from '../world/park/types';
 
 export const worldDeps: WorldDeps = { generateTerrain: generateTerrainAsync, createSampler: createTerrainSampler, generateTrack };
 
@@ -23,8 +27,9 @@ export function sessionTrack(ground: PadGround, track: TrackData): TrackData {
 /** Difficulty in whole percent, as a share link carries it, so a link rebuilds exactly the track that was generated. */
 const wholePercent = (d: number): number => Math.round(d * 100) / 100;
 
-export function trackRequest(s: Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty'>, seed: number = s.seed): TrackRequest {
-  return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: wholePercent(s.difficulty) };
+export function trackRequest(s: Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty'> & ParkSettings, seed: number = s.seed): TrackRequest {
+  return { seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: wholePercent(s.difficulty),
+    ...(s.worldKind === 'theme-park' ? { parkRecipe: parkRecipeFromSettings(s, seed) } : {}) };
 }
 
 /** The request that builds a track-builder recipe: the generator takes the seed, gates, laps and difficulty from the recipe itself. */
@@ -60,16 +65,33 @@ export function refreshColliders(ctx: AppCtx): void {
   const colliders = trackColliders(world.track, world.sampler);
   for (const c of ctx.mods.vegetation.vegetationColliders()) colliders.push(c);
   ctx.physics.setColliders(colliders);
+  ctx.physics.collision.environment = ctx.park?.collision ?? null;
   ctx.colliders = colliders;
-  ctx.brains.setColliders(colliders);
+  // On a park route the brains sense the park round its line through box stand-ins; the quads still hit its exact shapes.
+  const park = ctx.park?.park, track = world.track;
+  let sense: ObstacleCollider[] | null = park && track.path.length > 1 ? null : colliders;
+  ctx.senseColliders = () => sense ??= [...colliders, ...raceSenseColliders(park!, track)];
+  ctx.brains.setColliders(colliders, ctx.senseColliders, ctx.physics.collision.environment);
+}
+
+/** The park's box stand-ins round a route take seconds to build, so each route builds them once. */
+const senseCache = new WeakMap<TrackData, ObstacleCollider[]>();
+function raceSenseColliders(park: ParkData, track: TrackData): ObstacleCollider[] {
+  let boxes = senseCache.get(track);
+  if (!boxes) senseCache.set(track, boxes = parkSenseColliders(park, track));
+  return boxes;
 }
 
 /** Puts `world` on screen and in the physics, on the pad, disarmed. */
 export function loadWorld(ctx: AppCtx, world: World): void {
+  // Brains fly a park tour or coaster route from their own start and gates (parkPilotTrack), set up when they are started there.
+  if (world.park && world.track.parkCourse !== 'race') ctx.brains.stop();
   ctx.world = world;
+  ctx.park = world.park ? new ParkRuntime(world.park) : undefined;
+  ctx.session.onPhysicsStep = ctx.park ? dt => { ctx.park!.drone = ctx.physics.state.pos; ctx.park!.advance(dt); } : null;
   ctx.ground.set(world.sampler, world.track);
   ctx.physics.setTerrain(ctx.ground);
-  ctx.renderer.setScene({ terrain: world.terrain, sampler: world.sampler, track: world.track });
+  ctx.renderer.setScene({ terrain: world.terrain, sampler: world.sampler, track: world.track, park: ctx.park });
   applyWind(ctx);
   refreshColliders(ctx);
   ctx.mods.objects.setActiveGate(0);
@@ -111,11 +133,12 @@ async function withOverlay(ctx: AppCtx, title: string, job: (progress: (stage: s
 export function newTrack(ctx: AppCtx): Promise<boolean> {
   const s = ctx.store.get();
   const w = ctx.world;
+  if (s.worldKind === 'theme-park' || w.park) return withOverlay(ctx, 'Generating park', progress => buildWorld({ ...trackRequest(s, (w.seed + 1) >>> 0), quality: s.quality }, worldDeps, progress));
   const recipe = w.track.recipe;
   if (recipe !== undefined) {
     return withOverlay(ctx, 'Placing track', async () => ({ ...w, ...buildTrack(w.sampler, recipeRequest({ ...recipe, seed: (recipe.seed + 1) >>> 0 }), worldDeps) }));
   }
-  const terrainChanged = s.quality !== w.quality || s.seed !== w.baseSeed;
+  const terrainChanged = gameplayQuality(s.quality) !== gameplayQuality(w.quality) || s.seed !== w.baseSeed;
   if (terrainChanged) return newWorld(ctx);
   const seed = w.seed + 1;
   return withOverlay(ctx, 'Placing track', async () => {
@@ -130,8 +153,8 @@ export function newTrack(ctx: AppCtx): Promise<boolean> {
  */
 export async function newWorld(ctx: AppCtx, fresh = false): Promise<boolean> {
   const s = ctx.store.get();
-  const sameSettings = s.seed === ctx.world.baseSeed && s.quality === ctx.world.quality;
-  const req = { ...trackRequest(s, fresh && sameSettings ? s.seed + 1 : s.seed), quality: s.quality };
+  const sameSettings = s.seed === ctx.world.baseSeed && gameplayQuality(s.quality) === gameplayQuality(ctx.world.quality);
+  const req = { ...trackRequest(s, fresh && sameSettings ? (s.seed + 1) >>> 0 : s.seed), quality: s.quality };
   const ok = await withOverlay(ctx, 'Generating terrain', (progress) => buildWorld(req, worldDeps, progress));
   if (ok) ctx.store.patch({ seed: ctx.world.baseSeed });
   return ok;
@@ -139,6 +162,7 @@ export async function newWorld(ctx: AppCtx, fresh = false): Promise<boolean> {
 
 /** Same terrain, a track for the settings: waits one task first so a progress bar can paint before the generator runs. */
 export async function buildTrackOnly(world: World, s: WorldSettings): Promise<World> {
+  if (world.park || s.worldKind === 'theme-park') return buildWorldQuietly(s, () => {});
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   return { ...world, ...buildTrack(world.sampler, trackRequest(s, s.trackSeed ?? s.seed), worldDeps) };
 }

@@ -4,6 +4,7 @@ import { G0, Rng, TWO_PI } from './math3d';
 import { Motor } from './motor';
 import { BATTERY_4S_1300, BATTERY_6S_1300, QUAD_5IN_6S, getPreset } from './presets';
 import { Propeller } from './propeller';
+import { PACK_FLAT_SOC } from './quad';
 import { DT, airborneQuad, benchStatic, hoverStick, inp, run } from './testkit';
 
 const cfg = QUAD_5IN_6S;
@@ -221,5 +222,30 @@ describe('propeller', () => {
     expect(prop.torque).toBeGreaterThan(0);
     expect(prop.hDrag).toBeGreaterThan(0);
     expect(prop.flapGain).toBeGreaterThan(0);
+  });
+});
+
+describe('battery across a reset', () => {
+  it('keeps the charge on a kept reset, drops the sag, and starts full on a fresh one', () => {
+    const q = airborneQuad();
+    run(q, 2, inp({ throttle: 0.8, armed: true }));
+    const used = q.state.batteryMah, loaded = q.state.batteryVoltage;
+    expect(used).toBeGreaterThan(10);
+    q.reset([0, 300, 0], 0, 'kept');
+    expect(q.state.batteryMah).toBeCloseTo(used, 9);
+    expect(q.state.batteryVoltage).toBeGreaterThan(loaded);
+    expect(q.state.batteryVoltage).toBeLessThan(cfg.battery.cells * cellOcv(1));
+    expect(q.packFlat()).toBe(false);
+    q.reset([0, 300, 0], 0);
+    expect(q.state.batteryMah).toBe(0);
+    expect(q.state.batteryVoltage).toBeCloseTo(cfg.battery.cells * cellOcv(1), 9);
+  });
+
+  it('calls a pack flat at PACK_FLAT_SOC', () => {
+    const q = airborneQuad();
+    q.battery.mah = cfg.battery.capacityMah * (1 - PACK_FLAT_SOC) + 1;
+    expect(q.packFlat()).toBe(true);
+    q.battery.mah = cfg.battery.capacityMah * (1 - PACK_FLAT_SOC) - 10;
+    expect(q.packFlat()).toBe(false);
   });
 });

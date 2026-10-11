@@ -34,7 +34,8 @@ describe('placeFarForest on a generated terrain and race track', () => {
       expect(fields.inside(c.x, c.z, 6)).toBe(true);
       expect(c.y).toBeCloseTo(fields.height(c.x, c.z), 3);
       expect(c.height).toBeGreaterThan(3);
-      expect(c.height).toBeLessThan(40);
+      // The tallest variant (a 30 m forest beech) at the largest instance scale.
+      expect(c.height).toBeLessThan(46);
       expect(c.width).toBeGreaterThanOrEqual(FAR_CELL);
       expect(c.width).toBeLessThanOrEqual(FAR_CELL * 1.5);
       expect(c.info & 7).toBeLessThan(4);
@@ -86,7 +87,7 @@ describe('placeFarForest on a generated terrain and race track', () => {
 
 describe('far card species', () => {
   it('maps the tree variants to four classes and round-trips the info word', () => {
-    expect([...VARIANTS_OF.spruce, ...VARIANTS_OF.pine, ...VARIANTS_OF.oak, ...VARIANTS_OF.birch].map(farSpecies)).toEqual([0, 0, 1, 2, 2, 3]);
+    expect([...VARIANTS_OF.spruce, ...VARIANTS_OF.pine, ...VARIANTS_OF.oak, ...VARIANTS_OF.beech, ...VARIANTS_OF.birch].map(farSpecies)).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3]);
     const w = packFarInfo(3, 2, 0xabcd);
     expect(w & 7).toBe(3);
     expect(((w >> 3) & 3) + 1).toBe(2);

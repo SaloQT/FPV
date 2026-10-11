@@ -72,6 +72,8 @@ export class FlightEvents {
   private lowTimer = 0;
   private tumbleTimer = 0;
   private crashedSinceArm = false;
+  /** The flight was completed (`completed`) since the last arm. */
+  private done = false;
   private sinceCrash = Infinity;
   private groundIdle = 0;
   private beaconTimer = 0;
@@ -84,6 +86,17 @@ export class FlightEvents {
 
   reset(): void {
     this.started = false;
+  }
+
+  /**
+   * The flight ended well (a finished race): until the next arm, no knock before or after this sounds the lost-model beacon once
+   * the quad is down.
+   */
+  completed(): void {
+    this.done = true;
+    this.crashedSinceArm = false;
+    this.groundIdle = 0;
+    this.beaconTimer = 0;
   }
 
   update(s: EventInput, dt: number): FlightFlags {
@@ -105,6 +118,7 @@ export class FlightEvents {
       if (s.armed) {
         f.armed = true;
         this.crashedSinceArm = false;
+        this.done = false;
         this.groundIdle = 0;
       } else {
         f.disarmed = true;
@@ -141,7 +155,7 @@ export class FlightEvents {
     f.crash = true;
     f.crashSpeed = speed;
     f.propStrike = speed > PROP_STRIKE_SPEED && meanOmega(s) > SPIN_OMEGA;
-    this.crashedSinceArm = true;
+    if (!this.done) this.crashedSinceArm = true;
     this.sinceCrash = 0;
   }
 
@@ -158,6 +172,7 @@ export class FlightEvents {
     this.lowTimer = 0;
     this.tumbleTimer = 0;
     this.crashedSinceArm = false;
+    this.done = false;
     this.sinceCrash = Infinity;
     this.groundIdle = 0;
     this.beaconTimer = 0;

@@ -17,8 +17,29 @@ export function hasShader(path: string): boolean {
   return sources.has(path);
 }
 
+type ShaderListener = (path: string, included: readonly string[], defines: Defines, code: string) => void;
+let listener: ShaderListener | null = null;
+/**
+ * For tools (the render server, tools/render-worker.mjs): `l` hears every resolve, with the root path, every file it included, the
+ * defines and the resulting code.
+ */
+export function setShaderListener(l: ShaderListener | null): void {
+  listener = l;
+}
+
+/** For tools (the render server): replaces one file's WGSL (path relative to shaders/), so the next resolve reads the edited text. */
+export function setShaderSource(path: string, text: string): void {
+  sources.set(path, text);
+}
+
 export function resolveShader(path: string, defines: Defines = {}): string {
   const included = new Set<string>();
+  const code = resolveText(path, defines, included);
+  listener?.(path, [...included], defines, code);
+  return code;
+}
+
+function resolveText(path: string, defines: Defines, included: Set<string>): string {
   const out: string[] = [];
   const emit = (p: string, stack: string[]) => {
     if (included.has(p)) return;

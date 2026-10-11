@@ -136,8 +136,8 @@ describe('density profiles', () => {
     expect(cumulusGradient(1)).toBe(0);
     expect(cumulusGradient(0.1)).toBeCloseTo(1, 12);
     expect(cumulusGradient(0.62)).toBeCloseTo(1, 12);
-    expect(cumulusGradient(0.05)).toBeGreaterThan(0);
-    expect(cumulusGradient(0.05)).toBeLessThan(1);
+    expect(cumulusGradient(0.02)).toBeGreaterThan(0);
+    expect(cumulusGradient(0.02)).toBeLessThan(1);
     expect(cumulusGradient(0.8)).toBeGreaterThan(0);
     expect(cumulusGradient(0.8)).toBeLessThan(cumulusGradient(0.7));
   });

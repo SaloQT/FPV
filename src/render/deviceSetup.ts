@@ -1,4 +1,4 @@
-const OPTIONAL_FEATURES: readonly GPUFeatureName[] = ['timestamp-query', 'float32-filterable', 'indirect-first-instance', 'shader-f16'];
+const OPTIONAL_FEATURES: readonly GPUFeatureName[] = ['timestamp-query', 'float32-filterable', 'indirect-first-instance', 'shader-f16', 'texture-compression-bc'];
 
 const RAISED_LIMITS: readonly (keyof GPUSupportedLimits)[] = [
   'maxStorageBufferBindingSize',

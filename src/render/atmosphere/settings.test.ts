@@ -5,7 +5,7 @@ describe('atmosphere settings', () => {
   it('ships defaults that are already valid', () => {
     expect(sanitizeAtmosphereSettings({})).toEqual(DEFAULT_ATMOSPHERE_SETTINGS);
     expect(DEFAULT_ATMOSPHERE_SETTINGS.cumulusBaseKm).toBeCloseTo(1.5, 12);
-    expect(DEFAULT_ATMOSPHERE_SETTINGS.cumulusTopKm).toBeCloseTo(4, 12);
+    expect(DEFAULT_ATMOSPHERE_SETTINGS.cumulusTopKm).toBeCloseTo(2.8, 12);
     expect(DEFAULT_ATMOSPHERE_SETTINGS.cirrusBaseKm).toBeGreaterThanOrEqual(8);
     expect(DEFAULT_ATMOSPHERE_SETTINGS.cirrusTopKm).toBeLessThanOrEqual(10);
     expect(DEFAULT_ATMOSPHERE_SETTINGS.seed).toBeNull();

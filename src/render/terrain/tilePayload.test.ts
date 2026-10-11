@@ -109,12 +109,13 @@ describe('exact tile payload cache', () => {
 
 vi.mock('./detailTextures', () => ({ createDetailTextures: () => ({ viewA: {}, viewB: {}, sampler: {}, destroy() {} }) }));
 import { createTerrainModule } from './index';
-import { levelCount } from './clipmap';
+import { drawnLevels } from './clipmap';
 import type { FrameInfo, RenderContext, SceneData } from '../contracts';
 
-it('matches active mock-GPU bytes and stats every frame, preserving parameter writes and reuploading after scene/init', () => {
+it('matches active mock-GPU bytes and stats every frame, preserving parameter writes and reuploading after scene/init', async () => {
   vi.stubGlobal('GPUBufferUsage', { STORAGE: 1, COPY_DST: 2, UNIFORM: 4, INDEX: 8 });
   vi.stubGlobal('GPUShaderStage', { VERTEX: 1, FRAGMENT: 2 });
+  vi.stubGlobal('GPUTextureUsage', { TEXTURE_BINDING: 4, COPY_DST: 2 });
   type Buffer = { label: string; data: Uint8Array; destroy(): void; getMappedRange(): ArrayBuffer; unmap(): void };
   let gpu: Buffer | undefined, tileWrites = 0, paramWrites = 0;
   const device = {
@@ -124,8 +125,9 @@ it('matches active mock-GPU bytes and stats every frame, preserving parameter wr
       if (desc.label === 'terrain-tiles') gpu = b;
       return b;
     },
-    createBindGroupLayout: () => ({}), createBindGroup: () => ({}), createPipelineLayout: () => ({}), createRenderPipeline: () => ({}),
-    queue: { writeBuffer(b: Buffer, offset: number, data: Float32Array, start = 0, size = data.length) {
+    createBindGroupLayout: () => ({}), createBindGroup: () => ({}), createPipelineLayout: () => ({}), createRenderPipeline: () => ({}), createRenderPipelineAsync: async () => ({}),
+    createTexture: () => ({ createView: () => ({}), destroy() {} }),
+    queue: { writeTexture() {}, writeBuffer(b: Buffer, offset: number, data: Float32Array, start = 0, size = data.length) {
       // WebGPU TypedArray offsets and sizes are in elements and copy bytes immediately.
       b.data.set(new Uint8Array(data.buffer, data.byteOffset + start * 4, size * 4), offset);
       if (b.label === 'terrain-tiles') tileWrites++;
@@ -136,7 +138,7 @@ it('matches active mock-GPU bytes and stats every frame, preserving parameter wr
   const height = Float32Array.from({ length: 128 * 128 }, (_, i) => 20 + 20 * Math.sin(i * .03));
   const scene = { terrain: { height, resolution: 128, cellSize: 4, origin: [-256, -256], minHeight: 0, maxHeight: 40, waterLevel: 10 } } as unknown as SceneData;
   const frame = { time: 0, camera: { pos: [0, 30, 0], quat: [0, 0, 0, 1], fovY: 1.2, aspect: 1.7 } } as unknown as FrameInfo;
-  const mod = createTerrainModule(); mod.init!(rc); mod.setScene!(rc, scene);
+  const mod = createTerrainModule(); mod.init!(rc); await mod.ready?.(); mod.setScene!(rc, scene);
   const clip = new Clipmap(), frustum = new Frustum(), ref = new Float32Array(2 * MAX_TILES * TILE_FLOATS);
   let referenceMask: WaterMask;
   const renew = () => { const t = scene.terrain; referenceMask = new WaterMask(t.height, t.resolution, t.cellSize, t.origin, t.minHeight, t.maxHeight, t.waterLevel); };
@@ -162,7 +164,7 @@ it('matches active mock-GPU bytes and stats every frame, preserving parameter wr
     if ([0, 20, 40, 60, 80, 100, 120, 140].includes(i)) expect(tileWrites).toBe(oldTiles + 1);
     if (i > 0 && i < 150 && ![20,40,60,80,100,120,140].includes(i)) expect(tileWrites).toBe(oldTiles);
     frustum.setFromCamera(cam.pos, cam.quat, cam.fovY, cam.aspect);
-    const levels = levelCount(t.cellSize, rc.quality.terrainViewDistance);
+    const levels = drawnLevels(t.cellSize, rc.quality.terrainViewDistance);
     const count = clip.build(cam.pos[0],cam.pos[2],t.origin[0],t.origin[1],t.cellSize,levels,t.minHeight,t.maxHeight,frustum);
     const packed = original(clip.tiles,count,t.origin[0],t.origin[1],referenceMask!,ref);
     expect(gpu!.data.slice(0,(count+packed.water)*TILE_FLOATS*4)).toEqual(new Uint8Array(ref.buffer,0,(count+packed.water)*TILE_FLOATS*4));

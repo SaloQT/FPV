@@ -3,30 +3,88 @@
  * and the spectator race, where brain 0 flies the player's quad through the session and every other brain flies its own
  * QuadPhysics in lockstep with the session's physics steps, on the same ground, colliders and wind.
  *
- * URL: `?brain=name` flies that brain once the list is in, `?race=a,b,c` starts a race between those brains.
+ * URL: `?brain=name` flies that brain once the list is in, `?race=a,b,c` starts a race between those brains, and
+ * `?race=ultimate*15,g*10,x*5` races 15 quads flown by ultimate, 10 by g and 5 by x.
+ *
+ * Race pilots sample their sticks from the brain's own action spread, as in training, each from its own seeded stream: copies
+ * of one brain then fly their own lines instead of one path. A brain flying alone (Fly) uses the mean action.
  */
-import { parseBrain, type Brain } from '../ai/brain';
+import { episodeLimits, parseBrain, type Brain } from '../ai/brain';
 import { BrainPilot } from '../ai/brainPilot';
-import { BrainRacer, STALL_RESPAWN_S } from '../ai/racer';
-import { BRAIN_PHYSICS_HZ } from '../ai/spec';
+import { BrainRacer, pastTraining } from '../ai/racer';
+import { BRAIN_PHYSICS_HZ, DEFAULT_EPISODE_LIMITS, type EpisodeLimits } from '../ai/spec';
 import type { ObstacleCollider, QuadState, TrackData, Vec3 } from '../contracts';
 import { createRaceSnapshot, type RaceSnapshot } from '../game/gateTimer';
 import { HOVER_THROTTLE } from '../game/sessionTypes';
 import { formatTimeCentis } from '../game/units';
 import type { RivalQuad } from '../render/objects';
 import { rateProfileOf } from '../sim/fc/ratePresets';
-import type { BrainListing, BrainMenuHost } from '../ui/menuBrains';
-import { RaceBoard, type BoardRow } from '../ui/raceBoard';
+import { Rng } from '../sim/math3d';
+import type { BrainListing, BrainMenuHost, RaceEntry } from '../ui/menuBrains';
+import { RaceBoard, type BoardRow, type BoardTeam } from '../ui/raceBoard';
 import { raceStartEnabled } from './flow';
 import type { AppCtx } from './state';
+import type { EnvironmentCollision } from '../world/park/types';
+import { parkPilotTrack } from '../world/park/pilotGates';
+import { sessionTrack } from './scene';
 
-/** Most quads in one race (the player's included). */
-export const MAX_RACERS = 8;
-/** Rear LED colour of each racer, the player's quad first (its own LEDs stay red). */
+const PARK_ROUTE_HINT = 'Free exploration has no course for an AI pilot: pick the park tour, a coaster or the race course as the Flight route in the World menu.';
+
+/** Most quads in one race (the player's included). Each steps its own physics on the main thread, about 0.7 % of a core. */
+export const MAX_RACERS = 32;
+/** Rear LED colour of each brain in a race, the first brain's first (the player's quad keeps its red LEDs). */
 export const RACER_COLOURS: readonly Vec3[] = [
   [1, 0.04, 0.02], [0.1, 0.45, 1], [0.1, 1, 0.25], [1, 0.75, 0.05], [0.85, 0.1, 1], [0.1, 1, 1], [1, 0.35, 0.05], [1, 1, 1],
 ];
+/** Leaderboard rows at most, plus the followed quad; the rest of a big race shows as a count. */
+export const BOARD_ROWS = 10;
 const BOARD_HZ = 5;
+
+export type { RaceEntry };
+
+/** One quad of a race. */
+export interface RaceSlot {
+  /** Index of its brain in the race's entries. */
+  group: number;
+  name: string;
+  /** "ultimate #3" when the brain flies several quads, else the brain's name. */
+  label: string;
+}
+
+/** A `race=` value: `a,b,c` (a quad each) or `ultimate*15,g*10`. A brain named twice adds up; a count below 1 drops it. */
+export function parseRaceParam(text: string): RaceEntry[] {
+  const out: RaceEntry[] = [];
+  for (const part of text.split(',')) {
+    const m = /^(.*?)(?:\*\s*(\d+))?$/.exec(part.trim());
+    const name = m?.[1].trim() ?? '';
+    const count = m?.[2] === undefined ? 1 : Number(m[2]);
+    if (!name || !(count >= 1)) continue;
+    const e = out.find((x) => x.name === name);
+    if (e) e.count += count;
+    else out.push({ name, count });
+  }
+  return out;
+}
+
+/** The `race=` value for these entries (the inverse of parseRaceParam). */
+export function raceParam(entries: readonly RaceEntry[]): string {
+  return entries.filter((e) => e.count >= 1).map((e) => (e.count === 1 ? e.name : `${e.name}*${Math.floor(e.count)}`)).join(',');
+}
+
+/** The quads of a race in start order, each brain's in turn, at most `max`. */
+export function raceSlots(entries: readonly RaceEntry[], max = MAX_RACERS): RaceSlot[] {
+  const out: RaceSlot[] = [];
+  entries.forEach((e, group) => {
+    const n = Math.floor(e.count);
+    for (let k = 1; k <= n && out.length < max; k++) out.push({ group, name: e.name, label: n > 1 ? `${e.name} #${k}` : e.name });
+  });
+  return out;
+}
+
+/** Quads the entries ask for in all. */
+export function raceSize(entries: readonly RaceEntry[]): number {
+  return entries.reduce((n, e) => n + Math.max(0, Math.floor(e.count)), 0);
+}
 
 interface Entry {
   name: string;
@@ -76,25 +134,35 @@ export class BrainHub implements BrainMenuHost {
   private flyingName: string | null = null;
   /** The brain that flew any part of the run since the last reset (it gets the finish), or null when only the pilot did. */
   private runBrain: string | null = null;
+  /** The rivals, slot 1 onwards (slot 0 is the player's quad). */
   private racers: BrainRacer[] = [];
-  private names: string[] = [];
+  /** Every quad of the running race, the player's first. */
+  private slots: RaceSlot[] = [];
+  /** The race's brains, by entry (RaceSlot.group). */
+  private raceBrains: Brain[] = [];
   private racerTrack: TrackData | null = null;
+  /** The session's track while brains fly a park tour or coaster route (parkPilotTrack), else null. */
+  private pilotTrack: TrackData | null = null;
   private followIdx = 0;
   private msg = '';
   private boardIn = 0;
   /** The player's quad under a brain: gates cleared so far and the session time of the last one, for the stall rescue. */
   private ownGates = -1;
+  private ownPlacements = -1;
   private ownGateAt = 0;
+  /** Where the training of the brain on the player's quad ended its episodes. */
+  private ownLimits: EpisodeLimits = { ...DEFAULT_EPISODE_LIMITS };
   private board: RaceBoard | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly rivals: RivalQuad[] = [];
   private readonly standings: RaceStanding[] = [];
-  /** Rivals (by slot) whose finish of the current race was already reported to `onResult`. */
+  /** Brains (by entry) whose finish of the current race was already recorded: the first finish of a brain's quads counts. */
   private readonly reported = new Set<number>();
 
   /**
-   * A rival of the spectator race finished: its name and final race state (the leaderboards record it). The player's own quad
-   * is not reported here; the session's finish covers it, whoever flies it.
+   * A rival of the spectator race finished: its brain's name and final race state (the leaderboards record it). Only the first
+   * of a brain's quads to finish is reported. The player's own quad is not reported here; the session's finish covers it,
+   * whoever flies it.
    */
   onResult: ((name: string, snap: RaceSnapshot) => void) | null = null;
 
@@ -116,7 +184,7 @@ export class BrainHub implements BrainMenuHost {
   }
 
   racing(): readonly string[] {
-    return this.racers.length ? this.names : [];
+    return this.racers.length ? this.slots.map((s) => s.label) : [];
   }
 
   following(): number {
@@ -133,9 +201,11 @@ export class BrainHub implements BrainMenuHost {
   }
 
   fly(name: string): void {
+    if (this.parkWithoutLine()) { this.say(PARK_ROUTE_HINT); return; }
     void this.run(async () => {
       const brain = await this.brain(name);
       this.endRace();
+      this.usePilotGates();
       this.takeQuad(brain);
       this.restartAndWatch();
       this.say(`${brain.name} is flying your quad.`);
@@ -147,6 +217,7 @@ export class BrainHub implements BrainMenuHost {
     if (!ctx || (!this.flyingName && !this.racers.length)) return;
     this.endRace();
     this.release(ctx);
+    this.dropPilotGates(ctx);
     this.say('Your sticks again.');
   }
 
@@ -160,25 +231,33 @@ export class BrainHub implements BrainMenuHost {
     });
   }
 
-  race(names: readonly string[]): void {
-    if (names.length < 2) {
+  race(entries: readonly RaceEntry[]): void {
+    if (entries.length && this.parkWithoutLine()) { this.say(PARK_ROUTE_HINT); return; }
+    const slots = raceSlots(entries);
+    if (slots.length < 2) {
       this.stop();
       return;
     }
     void this.run(async () => {
-      const picked = names.slice(0, MAX_RACERS);
-      const brains = await Promise.all(picked.map((n) => this.brain(n)));
+      const used = entries.slice(0, slots[slots.length - 1].group + 1);
+      const brains = await Promise.all(used.map((e) => this.brain(e.name)));
       const ctx = this.app();
       if (!ctx) return;
       this.endRace();
-      this.takeQuad(brains[0]);
-      this.names = brains.map((b) => b.name);
-      this.racers = brains.slice(1).map((b, i) => this.makeRacer(ctx, b, i + 1));
+      this.slots = slots;
+      this.raceBrains = brains;
+      this.usePilotGates();
+      this.takeQuad(brains[slots[0].group], this.sampler(ctx, 0));
+      this.racers = slots.slice(1).map((_, i) => this.makeRacer(ctx, i + 1));
       this.racerTrack = ctx.session.raceTrack;
       this.followIdx = 0;
       ctx.session.setRaceStart(true);
       this.restartAndWatch();
-      this.say(`Race: ${this.names.join(', ')}.${picked.length < names.length ? ` Only ${MAX_RACERS} quads fit in one race.` : ''}`);
+      const who = used.map((e, g) => {
+        const n = slots.filter((s) => s.group === g).length;
+        return n > 1 ? `${e.name} ×${n}` : e.name;
+      });
+      this.say(`Race: ${who.join(', ')}.${raceSize(entries) > MAX_RACERS ? ` Only ${MAX_RACERS} quads fit in one race.` : ''}`);
     });
   }
 
@@ -209,7 +288,7 @@ export class BrainHub implements BrainMenuHost {
     const q = new URLSearchParams(search);
     const race = q.get('race');
     const fly = q.get('brain');
-    if (race) this.race(race.split(',').map((s) => s.trim()).filter(Boolean));
+    if (race) this.race(parseRaceParam(race));
     else if (fly) this.fly(fly);
   }
 
@@ -221,16 +300,23 @@ export class BrainHub implements BrainMenuHost {
     if (!ctx || !this.racers.length) return;
     this.reported.clear();
     if (ctx.session.raceTrack !== this.racerTrack) {
-      this.racers = this.racers.map((r, i) => this.makeRacer(ctx, r.brain, i + 1));
+      this.racers = this.racers.map((_, i) => this.makeRacer(ctx, i + 1));
       this.racerTrack = ctx.session.raceTrack;
     } else {
       for (const r of this.racers) r.restart();
     }
   }
 
-  /** The colliders changed (new world, new vegetation): the rivals hit the same ones. */
-  setColliders(colliders: readonly ObstacleCollider[]): void {
-    for (const r of this.racers) r.physics.setColliders([...colliders]);
+  /** The colliders changed (new world, new vegetation): the rivals hit the same ones, and every brain senses them. */
+  /** On a park race course the brains sense `sense()` (box stand-ins for the park) and the rivals also hit its exact shapes (`environment`). */
+  setColliders(colliders: readonly ObstacleCollider[], sense: () => readonly ObstacleCollider[] = () => colliders, environment: EnvironmentCollision | null = null): void {
+    for (const r of this.racers) {
+      r.physics.setColliders([...colliders]);
+      r.physics.collision.environment = environment;
+      r.pilot.setColliders(sense());
+    }
+    const own = this.app()?.session.pilot;
+    if (own instanceof BrainPilot) own.setColliders(sense());
   }
 
   /** After `session.frame`: steps the rivals as far as the session's physics went, and refreshes the leaderboard. */
@@ -253,18 +339,22 @@ export class BrainHub implements BrainMenuHost {
     }
   }
 
-  /** Like the rivals: a brain on the player's quad that clears no gate for STALL_RESPAWN_S goes back to its last gate. */
+  /**
+   * Like the rivals: a brain on the player's quad that flies past where its training ended episodes goes back to its last gate.
+   * Its stall clock starts again at each gate and each respawn, as a training episode did.
+   */
   private rescueStall(ctx: AppCtx): void {
     const r = ctx.snap.race;
     const s = ctx.session;
     const gates = (r.lap - 1) * r.gateCount + r.gatesPassed;
     const now = ctx.snap.simTime;
-    if (gates !== this.ownGates || !ctx.physics.state.armed || r.finished || now < this.ownGateAt) {
+    if (gates !== this.ownGates || s.placements !== this.ownPlacements || !ctx.physics.state.armed || r.finished || now < this.ownGateAt) {
       this.ownGates = gates;
+      this.ownPlacements = s.placements;
       this.ownGateAt = now;
       return;
     }
-    if (now - this.ownGateAt < STALL_RESPAWN_S || (s.state !== 'flying' && s.state !== 'ready')) return;
+    if (!pastTraining(this.ownLimits, ctx.ground.data, ctx.physics.state.pos, now - this.ownGateAt) || (s.state !== 'flying' && s.state !== 'ready')) return;
     this.ownGateAt = now;
     s.respawn();
   }
@@ -298,13 +388,18 @@ export class BrainHub implements BrainMenuHost {
     return e.brain;
   }
 
-  private takeQuad(brain: Brain): void {
+  /** Puts `brain` on the player's quad; with `sample` it samples its sticks (a race pilot), else it flies the mean action. */
+  private takeQuad(brain: Brain, sample: Rng | null = null): void {
     const ctx = this.app();
     if (!ctx) return;
     const cells = ctx.physics.config.battery.cells;
-    ctx.session.pilot = new BrainPilot(brain, ctx.ground.groundHeightAt, cells);
+    const pilot = new BrainPilot(brain, ctx.ground.groundHeightAt, cells, sample);
+    pilot.setColliders(ctx.senseColliders());
+    ctx.session.pilot = pilot;
     ctx.physics.fc.setRates(brain.rates);
     this.flyingName = brain.name;
+    this.ownLimits = episodeLimits(brain);
+    ctx.session.respawnAhead = this.ownLimits.respawn === 'next-gate';
     this.runBrain = brain.name;
     const hz = ctx.store.get().physicsHz;
     if (hz !== BRAIN_PHYSICS_HZ) this.msg = `Brains were trained at ${BRAIN_PHYSICS_HZ} Hz physics; this sim runs at ${hz} Hz, so they may fly worse.`;
@@ -314,6 +409,7 @@ export class BrainHub implements BrainMenuHost {
   /** Hands the sticks back. A quad in the air keeps hover throttle so it does not drop before the pilot catches it. */
   private release(ctx: AppCtx): void {
     ctx.session.pilot = null;
+    ctx.session.respawnAhead = false;
     this.flyingName = null;
     ctx.physics.fc.setRates(rateProfileOf(ctx.store.get().rates));
     const s = ctx.physics.state;
@@ -321,26 +417,60 @@ export class BrainHub implements BrainMenuHost {
     if (s.armed && !s.onGround) ctx.input.setThrottle(HOVER_THROTTLE);
   }
 
-  private makeRacer(ctx: AppCtx, brain: Brain, slot: number): BrainRacer {
+  /** The quad in race slot `slot` (1 onwards; slot 0 is the player's quad). */
+  private makeRacer(ctx: AppCtx, slot: number): BrainRacer {
     const track = ctx.session.raceTrack;
     if (!track) throw new Error('a race needs a track');
     const settings = ctx.store.get();
     const calm = settings.windSpeed <= 0;
-    const racer = new BrainRacer(brain, { ground: ctx.ground, groundHeightAt: ctx.ground.groundHeightAt, track, colliders: ctx.colliders }, {
+    const { group } = this.slots[slot];
+    const racer = new BrainRacer(this.raceBrains[group], { ground: ctx.ground, groundHeightAt: ctx.ground.groundHeightAt, track, colliders: ctx.colliders, senseColliders: ctx.senseColliders(), environment: ctx.physics.collision.environment }, {
       config: ctx.physics.config,
       seed: settings.seed + 7919 * slot,
       wind: { ...ctx.wind.physics, turbulence: calm ? 0 : 1, gustsPerMinute: calm ? 0 : 1.5 },
       altitudeM: settings.observer.altitudeM,
+      sample: this.sampler(ctx, slot),
     });
-    this.rivals[slot - 1] = { state: racer.physics.state, led: RACER_COLOURS[slot % RACER_COLOURS.length] };
+    this.rivals[slot - 1] = { state: racer.physics.state, led: RACER_COLOURS[group % RACER_COLOURS.length] };
     return racer;
+  }
+
+  /** A theme park flown freely: no gates and no guide line, so nothing for a brain to steer by. */
+  private parkWithoutLine(): boolean {
+    const world = this.app()?.world;
+    return !!world?.park && !world.track.gates.length && world.track.path.length < 2;
+  }
+
+  /**
+   * On a park tour or coaster route the session flies the route as a brain does while brains fly (parkPilotTrack): pilot gates
+   * along a coaster's guide line, and a start pad on the lawn behind gate 0.
+   */
+  private usePilotGates(): void {
+    const ctx = this.app(), world = ctx?.world;
+    if (!ctx || !world?.park || world.track.parkCourse === 'race' || (this.pilotTrack && ctx.session.raceTrack === this.pilotTrack)) return;
+    const track = parkPilotTrack(world.park, world.track);
+    if (!track) return;
+    this.pilotTrack = track.start === world.track.start ? sessionTrack(ctx.ground, track) : track;
+    ctx.session.replaceTrack(this.pilotTrack);
+  }
+
+  /** Back to the route as the player flies it, without its pilot gates. */
+  private dropPilotGates(ctx: AppCtx): void {
+    if (this.pilotTrack && ctx.session.raceTrack === this.pilotTrack) ctx.session.replaceTrack(sessionTrack(ctx.ground, ctx.world.track));
+    this.pilotTrack = null;
+  }
+
+  /** The random stream race slot `slot` samples its sticks from: fixed by the world seed, different for every slot. */
+  private sampler(ctx: AppCtx, slot: number): Rng {
+    return new Rng(Math.imul(ctx.store.get().seed + 104729 * (slot + 1), 0x9e3779b1));
   }
 
   private endRace(): void {
     const ctx = this.app();
     if (this.racers.length && ctx) ctx.session.setRaceStart(raceStartEnabled(ctx));
     this.racers = [];
-    this.names = [];
+    this.slots = [];
+    this.raceBrains = [];
     this.rivals.length = 0;
     this.followIdx = 0;
     this.racerTrack = null;
@@ -361,40 +491,57 @@ export class BrainHub implements BrainMenuHost {
   private paintBoard(ctx: AppCtx): void {
     const n = ctx.session.raceTrack?.gates.length ?? 0;
     const own = ctx.snap.race;
-    const rows: { snap: RaceSnapshot; name: string; pos: Vec3; crashed: boolean }[] = [{ snap: own, name: this.names[0], pos: ctx.physics.state.pos, crashed: ctx.physics.state.crashed }];
+    const rows: { snap: RaceSnapshot; slot: RaceSlot; pos: Vec3; crashed: boolean }[] = [{ snap: own, slot: this.slots[0], pos: ctx.physics.state.pos, crashed: ctx.physics.state.crashed }];
     this.racers.forEach((r, i) => {
-      rows.push({ snap: r.timer.fill(createRaceSnapshot(), r.time), name: this.names[i + 1], pos: r.physics.state.pos, crashed: r.physics.state.crashed });
+      rows.push({ snap: r.timer.fill(createRaceSnapshot(), r.time), slot: this.slots[i + 1], pos: r.physics.state.pos, crashed: r.physics.state.crashed });
     });
     const track = ctx.session.raceTrack;
     this.standings.length = 0;
     for (const r of rows) {
       const g = track?.gates[r.snap.nextGate];
       this.standings.push({
-        name: r.name, finished: r.snap.finished, finishTime: r.snap.totalTime,
+        name: r.slot.label, finished: r.snap.finished, finishTime: r.snap.totalTime,
         progress: r.snap.finished ? Infinity : (r.snap.lap - 1) * n + r.snap.gatesPassed,
         toGate: g ? Math.hypot(g.pos[0] - r.pos[0], g.pos[1] - r.pos[1], g.pos[2] - r.pos[2]) : 0,
       });
     }
     const order = rankRacers(this.standings);
-    const board: BoardRow[] = order.map((i) => {
+    const colour = (group: number): string => css(RACER_COLOURS[group % RACER_COLOURS.length]);
+    const board: BoardRow[] = [];
+    order.forEach((i, at) => {
+      if (at >= BOARD_ROWS && i !== this.followIdx) return;
       const r = rows[i];
       const s = r.snap;
-      return {
-        name: r.name,
-        colour: css(RACER_COLOURS[i % RACER_COLOURS.length]),
+      board.push({
+        place: at + 1,
+        name: r.slot.label,
+        colour: colour(r.slot.group),
         progress: s.finished ? 'Finished' : r.crashed ? 'Crashed' : `Lap ${s.lap}/${s.laps} · gate ${s.gatesPassed}/${n}`,
         time: formatTimeCentis(s.totalTime),
         followed: i === this.followIdx,
-      };
+      });
     });
+    // A brain flying several quads gets a line of its own: its best place and how many have finished.
+    const teams: BoardTeam[] = [];
+    if (rows.length > this.raceBrains.length) {
+      this.raceBrains.forEach((b, group) => {
+        const mine = order.map((i, at) => ({ i, at })).filter(({ i }) => rows[i].slot.group === group);
+        teams.push({ name: b.name, colour: colour(group), count: mine.length, best: mine[0].at + 1, finished: mine.filter(({ i }) => rows[i].snap.finished).length });
+      });
+      teams.sort((a, b) => a.best - b.best);
+    }
+    // The player's quad's finish is recorded by the session; a rival's only when it is the first of its brain to finish.
+    if (rows[0].snap.finished) this.reported.add(rows[0].slot.group);
     for (let i = 1; i < rows.length; i++) {
-      if (!rows[i].snap.finished || this.reported.has(i)) continue;
-      this.reported.add(i);
-      this.onResult?.(rows[i].name, rows[i].snap);
+      const group = rows[i].slot.group;
+      if (!rows[i].snap.finished || this.reported.has(group)) continue;
+      this.reported.add(group);
+      this.onResult?.(rows[i].slot.name, rows[i].snap);
     }
     const done = rows.every((r) => r.snap.finished);
     if (!this.board) this.board = new RaceBoard(ctx.root);
-    this.board.show(done ? 'Race over' : 'Race', board);
+    this.board.place(ctx.store.get().osdScale);
+    this.board.show(done ? 'Race over' : 'Race', board, teams, rows.length - board.length);
   }
 
   private uniqueName(name: string): string {

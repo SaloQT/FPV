@@ -14,7 +14,9 @@ export const POLICY_HZ = 50;
 export const BRAIN_PHYSICS_HZ = DEFAULT_PHYSICS_HZ;
 export const PHYSICS_PER_ACTION = BRAIN_PHYSICS_HZ / POLICY_HZ;
 
-export const OBS_SIZE = 40;
+export const OBS_SIZE = 99;
+/** Brains saved before obstacle sensing read only the first LEGACY_OBS_SIZE slots, which kept their meaning. */
+export const LEGACY_OBS_SIZE = 40;
 export const ACT_SIZE = 4;
 
 /** Observation slots (see `observe` for the maths; the WGSL builder writes the same slots). */
@@ -36,7 +38,25 @@ export const OBS = {
   motor: 34, // motor speeds / 3500 (rad/s)
   battery: 38, // per-cell terminal voltage - 3.8
   g1Along: 39, // signed distance along the next gate's travel axis, clamped to +-60, / 20
+  rays: 40, // SENSE_RAYS range rays, rows from the top, each left to right: 1 - distance / SENSE_RANGE to the first surface, 0 = clear
+  // Per NEAR_SIDES side (right, left, up, down, back, front: the body axis the way to it leans along most), the nearest collider
+  // surface within NEAR_RANGE: unit vector to it in body axes, 1 - distance / NEAR_RANGE; zeros = none
+  near: 75,
 } as const;
+
+/**
+ * Obstacle sensing (sense.ts): range rays spread SENSE_STEP_DEG apart over the FPV camera's view, which looks SENSE_TILT_DEG up
+ * from the nose (the game's default camera tilt), against the ground and every collider (gate frames, track obstacles, trees,
+ * rocks); and the nearest collider surface on each side of the quad.
+ */
+export const SENSE_ROWS = 5;
+export const SENSE_COLS = 7;
+export const SENSE_RAYS = SENSE_ROWS * SENSE_COLS;
+export const SENSE_STEP_DEG = 20;
+export const SENSE_TILT_DEG = 30;
+export const SENSE_RANGE = 30;
+export const NEAR_SIDES = 6;
+export const NEAR_RANGE = 8;
 
 export const VEL_SCALE = 0.1;
 export const RATE_SCALE = 0.1;
@@ -46,6 +66,30 @@ export const DIST_MAX = 60;
 export const DIST_SCALE = 1 / 20;
 export const MOTOR_SCALE = 1 / 3500;
 export const CELL_VOLT_CENTRE = 3.8;
+
+/**
+ * When training ends an episode early (env.wgsl): no gate cleared for `stallSeconds`, or the quad left the world (off the
+ * terrain, `ceiling` m over its highest point or FLOOR_MARGIN_M under its lowest). A brain file records its run's values; the
+ * game puts a brain back where its training started episodes at the same limits, because past them it flies what it never
+ * trained on.
+ */
+export interface EpisodeLimits {
+  stallSeconds: number;
+  ceiling: number;
+  /**
+   * Where training started episodes away from the pad, which is where the game puts the brain back: 'last-gate', the game's own
+   * checkpoint (1.5 m before the last cleared gate, the gate after it due next), or 'next-gate' (1.5 m before the gate due
+   * next), what brains trained before their file recorded this started from.
+   */
+  respawn: RespawnAt;
+}
+
+export type RespawnAt = 'last-gate' | 'next-gate';
+
+export const DEFAULT_EPISODE_LIMITS: Readonly<EpisodeLimits> = { stallSeconds: 8, ceiling: 120, respawn: 'last-gate' };
+/** Brains saved before their file recorded their limits: trained at the defaults, with gate spawns before the gate due next. */
+export const UNRECORDED_EPISODE_LIMITS: Readonly<EpisodeLimits> = { ...DEFAULT_EPISODE_LIMITS, respawn: 'next-gate' };
+export const FLOOR_MARGIN_M = 10;
 
 /** The action at a reset: sticks centred, throttle at zero (what the flight controller needs to arm). */
 export const REST_ACTION: readonly number[] = [0, 0, 0, -1];

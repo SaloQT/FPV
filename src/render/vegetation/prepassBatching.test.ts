@@ -1,3 +1,4 @@
+import { SceneRegistry } from '../rtRegistry';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../contracts';
 import type { RenderContext, SceneData } from '../contracts';
@@ -28,7 +29,7 @@ function assets(): TreeAssets {
     cullLayout: {}, finalizeLayout: {}, drawLayout: {}, atlasView: {}, atlasDataView: {}, destroy() {},
   } as unknown as TreeAssets;
 }
-function fixture() {
+async function fixture() {
   const commands: Command[] = [];
   const mappings: (() => void)[] = [];
   const device = {
@@ -44,12 +45,15 @@ function fixture() {
     createBindGroupLayout: (d: GPUBindGroupLayoutDescriptor) => d,
     createPipelineLayout: (d: GPUPipelineLayoutDescriptor) => d,
     createComputePipeline: (d: GPUComputePipelineDescriptor) => d,
+    createComputePipelineAsync: async (d: GPUComputePipelineDescriptor) => d,
+    createRenderPipelineAsync: async (d: GPURenderPipelineDescriptor) => d,
     createRenderPipeline: (d: GPURenderPipelineDescriptor) => d,
+    createTexture: (d: GPUTextureDescriptor) => ({ label: d.label, createView: () => ({ label: d.label }), destroy() {} }),
   };
   const rc = {
     device, quality: resolveQuality({ quality: 'low', performance240: false }), settings: DEFAULT_SETTINGS,
     frame: { group: { label: 'frame' }, layout: {} }, world: { group: { label: 'world' }, layout: {} },
-    rt: { setStatic() {} }, module: () => ({}),
+    rt: new SceneRegistry(), module: () => ({}),
   } as unknown as RenderContext;
   const enc = {
     clearBuffer(b: Named) { commands.push(['clear', b.label]); },
@@ -68,6 +72,7 @@ function fixture() {
   const a = assets();
   const params = { label: 'params' } as GPUBuffer;
   const pipes = new GrassPipelines(rc);
+  await pipes.ready;
   const systems = (count = 1, readback = false) => ({
     grass: new GrassSystem(rc, pipes, params, readback),
     trees: new TreeSystem(rc, a, params, packInstances([{ set: instances(count), count }], a.variants), readback),
@@ -82,7 +87,7 @@ function commandContent(commands: Command[]) {
   };
 }
 async function moduleFixture(count = 1) {
-  const f = fixture();
+  const f = await fixture();
   vi.spyOn(TreeAssets, 'create').mockResolvedValue(f.a);
   vi.spyOn(placement, 'placeVegetation').mockReturnValue({
     plants: instances(count), rocks: instances(0), trees: count, bushes: 0, obstacleTrees: 0, plantRing: new Float32Array(count),
@@ -92,6 +97,7 @@ async function moduleFixture(count = 1) {
   vi.spyOn(farPlacement, 'placeFarForest').mockReturnValue({ count: 0, words: new Uint32Array(), uncovered: 0 });
   const mod = createVegetationModule();
   await mod.init(f.rc);
+  await mod.ready?.();
   const scene = { terrain: { resolution: 2, cellSize: 1, origin: [0, 0] }, track: null } as SceneData;
   return { ...f, mod, scene, encode: () => mod.encodePre!(f.enc, f.rc, {} as never) };
 }
@@ -101,10 +107,11 @@ describe('vegetation prepass batching', () => {
     vi.stubGlobal('GPUShaderStage', { COMPUTE: 4, VERTEX: 1, FRAGMENT: 2 });
     vi.stubGlobal('GPUBufferUsage', { STORAGE: 128, UNIFORM: 64, COPY_DST: 8, COPY_SRC: 4, INDIRECT: 256, VERTEX: 32, INDEX: 16, MAP_READ: 1 });
     vi.stubGlobal('GPUMapMode', { READ: 1 });
+    vi.stubGlobal('GPUTextureUsage', { TEXTURE_BINDING: 4, COPY_DST: 2 });
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-  it('keeps standalone grass/tree encoding at the original two passes and six dispatches', () => {
-    const f = fixture(), s = f.systems();
+  it('keeps standalone grass/tree encoding at the original two passes and six dispatches', async () => {
+    const f = await fixture(), s = f.systems();
     s.grass.encodePre(f.enc, f.rc); s.trees.encodePre(f.enc, f.rc);
     expect(f.commands.filter(c => c[0] === 'begin')).toEqual([['begin', 'grass-cull'], ['begin', 'tree-cull']]);
     expect(f.commands.filter(c => c[0] === 'pipeline').map(c => c[1])).toEqual([
@@ -145,7 +152,7 @@ describe('vegetation prepass batching', () => {
     expect(f.commands).toEqual([]);
   });
   it('keeps readback cadence and skips copies while queued or mapping', async () => {
-    const f = fixture(), s = f.systems(1, true);
+    const f = await fixture(), s = f.systems(1, true);
     const encode = () => { s.grass.encodePre(f.enc, f.rc); s.trees.encodePre(f.enc, f.rc); };
     for (let i = 0; i < 100; i++) encode();
     expect(f.commands.filter(c => c[0] === 'copy')).toHaveLength(2);

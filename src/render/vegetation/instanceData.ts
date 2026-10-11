@@ -22,6 +22,8 @@ export interface PackedInstances {
   /** Per variant: first slot and instance count. */
   first: Uint32Array;
   count: Uint32Array;
+  /** Per run, the slot each of its instances went to. */
+  runSlots: Uint32Array[];
 }
 
 export interface InstanceRun {
@@ -49,11 +51,14 @@ export function packInstances(runs: readonly InstanceRun[], assets: readonly Var
   const instances = new ArrayBuffer(Math.max(slots, SLOT_ALIGN) * INSTANCE_BYTES);
   const f32 = new Float32Array(instances), u32 = new Uint32Array(instances);
   const fill = new Uint32Array(VARIANT_COUNT);
+  const runSlots: Uint32Array[] = [];
   for (const r of runs) {
-    const s = r.set;
+    const s = r.set, slotOf = new Uint32Array(r.count);
+    runSlots.push(slotOf);
     for (let i = 0; i < r.count; i++) {
       const v = s.variant[i];
-      const o = (first[v] + fill[v]++) * INSTANCE_WORDS;
+      const slot = first[v] + fill[v]++, o = slot * INSTANCE_WORDS;
+      slotOf[i] = slot;
       f32[o] = s.pos[i * 3]; f32[o + 1] = s.pos[i * 3 + 1]; f32[o + 2] = s.pos[i * 3 + 2];
       f32[o + 3] = s.scale[i];
       f32[o + 4] = s.yaw[i];
@@ -70,5 +75,5 @@ export function packInstances(runs: readonly InstanceRun[], assets: readonly Var
     vf[o + 8] = a.height; vf[o + 9] = d.swayHz; vf[o + 10] = d.swayStrength; vf[o + 11] = d.flutter;
     vf[o + 12] = d.tone[0]; vf[o + 13] = d.tone[1]; vf[o + 14] = d.tone[2]; vf[o + 15] = d.translucency;
   }
-  return { slots, instances, variants, first, count };
+  return { slots, instances, variants, first, count, runSlots };
 }

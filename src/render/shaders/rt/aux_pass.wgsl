@@ -17,7 +17,9 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let z = linearDepth(textureLoad(gDepth, src, 0));
   var nrm = textureLoad(gNormal, src, 0);
   let misc = textureLoad(gMisc, src, 0);
-  let wet = misc.b;
+  // misc.b is wetness, except on trees, where it is the shadow of the bark's furrows (tree.wgsl).
+  let mat = u32(misc.r * 255.0 + 0.5);
+  let wet = select(misc.b, 0.0, mat == 5u);
   // Thin grass alternates with the ground as coverage and sample pixels change. A blade's shading normal is unsuitable
   // for ray bias and history validation: use the underlying sward plane, while deferred lighting keeps the blade normal.
   let grass = u32(misc.r * 255.0 + 0.5) == 2u && misc.g > 0.0;

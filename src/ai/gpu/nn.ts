@@ -189,7 +189,7 @@ export function gaeWgsl(envs: number, steps: number, gamma: number, lambda: numb
 @group(0) @binding(2) var<storage, read> dones : array<f32>;
 @group(0) @binding(3) var<storage, read_write> adv : array<f32>;
 @group(0) @binding(4) var<storage, read_write> ret : array<f32>;
-@compute @workgroup_size(64)
+@compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
   let e = gid.x;
   if (e >= ${u(envs)}) { return; }
@@ -244,8 +244,18 @@ fn main(@builtin(local_invocation_index) lid : u32) {
 }`;
 }
 
+/** Spread oversized gathers across Y without changing their linear feature-lane ordering. */
+export function gatherGrid(mb: number, obs: number, limit = 65535): [number, number, number] {
+  if (![mb, obs, limit].every(n => Number.isSafeInteger(n) && n > 0)) throw new Error('Invalid gather dimensions');
+  const groups = Math.ceil(mb * obs / 64);
+  const x = Math.min(groups, limit), y = Math.ceil(groups / x);
+  if (y > limit) throw new Error('Gather exceeds GPU dispatch limits; reduce the batch size');
+  return [x, y, 1];
+}
+
 /** Copies one minibatch out of the rollout through a permutation, normalising the advantages. */
-export function gatherWgsl(mb: number, obs: number): string {
+export function gatherWgsl(mb: number, obs: number, dispatchX?: number): string {
+  const index = dispatchX === undefined ? 'gid.x' : `(gid.x + gid.y * ${u(dispatchX * 64)})`;
   return `
 @group(0) @binding(0) var<storage, read> perm : array<u32>;
 @group(0) @binding(1) var<storage, read> obsAll : array<f32>;
@@ -259,12 +269,15 @@ export function gatherWgsl(mb: number, obs: number): string {
 @group(0) @binding(9) var<storage, read_write> mU : array<vec4f>;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
-  let i = gid.x;
+  let i = ${index} / ${u(obs)};
+  let k = ${index} % ${u(obs)};
   if (i >= ${u(mb)}) { return; }
   let s = perm[i];
-  for (var k = 0u; k < ${u(obs)}; k++) { mObs[i * ${u(obs)} + k] = obsAll[s * ${u(obs)} + k]; }
+  mObs[i * ${u(obs)} + k] = obsAll[s * ${u(obs)} + k];
+  if (k == 0u) {
   mU[i] = uAll[s];
   mData[i] = vec4f(logpAll[s], (advAll[s] - stats[0]) / stats[1], retAll[s], 0.0);
+  }
 }`;
 }
 

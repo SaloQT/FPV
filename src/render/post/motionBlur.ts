@@ -1,4 +1,5 @@
 import type { FrameInfo, RenderContext } from '../contracts';
+import { nightSkyScale } from './exposure';
 import type { MotionBlurStage, OutSize, PostFlags, PostParams } from './types';
 
 /**
@@ -63,6 +64,9 @@ export function createMotionBlurStage(): MotionBlurStage {
   let outView: GPUTextureView | null = null;
   let tileMax: GPUBuffer | null = null;
   let tileNeighbor: GPUBuffer | null = null;
+  /** The night sky's display factor (nightSkyScale, as TAA applies it), so sky samples are mixed into foreground pixels at the level they show. */
+  let params: GPUBuffer | null = null;
+  const paramData = new Float32Array(4);
   let group: GPUBindGroup | null = null;
   let width = 0;
   let height = 0;
@@ -87,8 +91,10 @@ export function createMotionBlurStage(): MotionBlurStage {
         entries: [
           tex(0, 'float'), tex(1, 'float'), tex(2, 'depth'), buf(3), buf(4),
           { binding: 5, visibility: C, storageTexture: { access: 'write-only', format: 'rgba16float' } },
+          { binding: 6, visibility: C, buffer: { type: 'uniform' } },
         ],
       });
+      params ??= rc.device.createBuffer({ label: 'motion blur params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const module = rc.module('post/motionblur.wgsl', motionBlurDefines());
       const pipelineLayout = rc.device.createPipelineLayout({ bindGroupLayouts: [rc.frame.layout, layout] });
       const make = (entryPoint: string) => rc.device.createComputePipeline({ label: `motion blur ${entryPoint}`, layout: pipelineLayout, compute: { module, entryPoint } });
@@ -116,15 +122,18 @@ export function createMotionBlurStage(): MotionBlurStage {
         entries: [
           { binding: 0, resource: g.views.hdr }, { binding: 1, resource: g.views.motion }, { binding: 2, resource: g.views.depth },
           { binding: 3, resource: { buffer: tileMax } }, { binding: 4, resource: { buffer: tileNeighbor } }, { binding: 5, resource: outView },
+          { binding: 6, resource: { buffer: params! } },
         ],
       });
     },
 
-    encode(enc: GPUCommandEncoder, ctx: RenderContext, _f: FrameInfo, _p: PostParams, flags: PostFlags) {
+    encode(enc: GPUCommandEncoder, ctx: RenderContext, _f: FrameInfo, p: PostParams, flags: PostFlags) {
       active = false;
       // Motion vectors across a camera cut or first frame point at nothing: never smear then.
-      if (flags.reset || !group) return;
+      if (flags.reset || !group || !params) return;
       active = true;
+      paramData[0] = nightSkyScale(p.preExposure);
+      ctx.device.queue.writeBuffer(params, 0, paramData);
       const pass = enc.beginComputePass({ label: 'motion blur' });
       pass.setBindGroup(0, ctx.frame.group);
       pass.setBindGroup(1, group);
@@ -143,6 +152,8 @@ export function createMotionBlurStage(): MotionBlurStage {
 
     destroy() {
       release();
+      params?.destroy();
+      params = null;
     },
   };
 }

@@ -5,7 +5,8 @@
 // UNIT CHAIN: unit-less transmittances exp(-tau) with tau = sigma_e [1/km] * density * ds [km], for a ground point at the datum
 // (world y = 0). Texel (i, j) covers world x = cx + ((i + 0.5) / N - 0.5) * E, z = cz + ((j + 0.5) / N - 0.5) * E, with the map centre
 // (cx, cz) = AtmosParams.cloudC.zw and side E = AtmosParams.cloudD.w, both in metres.
-// Output: r = sun transmittance, g = moon transmittance (1 for a light below the horizon), b = zenith transmittance of both layers (how
+// Output: r = sun transmittance to the ground (direct plus the diffuse share the cloud passes on, see groundTransmittance), g = the same for
+// the moon (1 for a light below the horizon), b = zenith transmittance exp(-tau) of both layers (how
 // much sky light the cloud above lets through), a = 1.
 //
 // Group 1: 3 output (rgba16float), plus everything sky/cloud_density.wgsl declares.
@@ -34,12 +35,22 @@ fn layerTau(o : vec3f, l : vec3f, cirrus : bool, steps : i32, datumR : f32, jitt
   return tau;
 }
 
-fn columnTransmittance(o : vec3f, l : vec3f, steps : i32, datumR : f32, jitter : f32) -> f32 {
-  if (l.y <= 0.0) { return 1.0; }
+fn columnTau(o : vec3f, l : vec3f, steps : i32, datumR : f32, jitter : f32) -> f32 {
+  if (l.y <= 0.0) { return 0.0; }
   var tau = 0.0;
   if (ap.cloudA.x > 0.0) { tau += layerTau(o, l, false, steps, datumR, jitter); }
   if (ap.cloudA.y > 0.0) { tau += layerTau(o, l, true, max(steps / 2, 4), datumR, jitter); }
-  return exp(-tau);
+  return tau;
+}
+
+// A cloud scatters the sunlight it stops rather than absorbing it, mostly forward (g about 0.85), so the ground under it still gets a share
+// as diffuse light through its body and out of its base. Two-stream theory for a non-absorbing slab puts the total (direct plus diffuse)
+// transmission at 1 / (1 + 0.75 (1 - g) tau): about 0.25 under a small cumulus of tau 30, where exp(-tau) is nothing. That is why the shadow
+// of a fair-weather cloud is a soft dimming to a third of full sun, not a black patch. Moon and sun light take the same share.
+const CLOUD_DIFFUSE_K : f32 = 0.11;
+
+fn groundTransmittance(tau : f32) -> f32 {
+  return max(exp(-tau), 1.0 / (1.0 + CLOUD_DIFFUSE_K * tau));
 }
 
 @compute @workgroup_size(8, 8)
@@ -58,12 +69,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   // Anchor the sample pattern to world columns so recentering the map also keeps overlapping shadows unchanged.
   let column = vec2i(floor(world / (ap.cloudD.w / f32(dims.x))));
   let jitter = hash21(bitcast<vec2u>(column)) * 0.999;
-  let sun = columnTransmittance(o, frame.sunDir.xyz, CUMULUS_STEPS, datumR, jitter);
+  let sun = groundTransmittance(columnTau(o, frame.sunDir.xyz, CUMULUS_STEPS, datumR, jitter));
   // select evaluates both values; skip the entire moon column when moonlight is disabled.
   var moon = 1.0;
   if (ap.flags.x > 0.5) {
-    moon = columnTransmittance(o, frame.moonDir.xyz, CUMULUS_STEPS, datumR, jitter);
+    moon = groundTransmittance(columnTau(o, frame.moonDir.xyz, CUMULUS_STEPS, datumR, jitter));
   }
-  let zenith = columnTransmittance(o, vec3f(0.0, 1.0, 0.0), ZENITH_STEPS, datumR, jitter);
+  let zenith = exp(-columnTau(o, vec3f(0.0, 1.0, 0.0), ZENITH_STEPS, datumR, jitter));
   textureStore(outTex, texel, vec4f(sun, moon, zenith, 1.0));
 }

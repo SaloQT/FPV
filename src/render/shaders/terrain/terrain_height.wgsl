@@ -1,6 +1,9 @@
 // Height, normal and material-map lookups that stay defined outside the finite terrain: the map is mirrored across its borders
-// (continuous heights) and faded toward a flat far height over TERRAIN_FAR_FADE_M so the horizon never ends in a cliff.
+// (continuous heights) and faded over TERRAIN_FAR_FADE_M toward the far country, low hills a few kilometres across around a far height,
+// so the horizon never ends in a cliff or a dead-flat plain. Inside the map the heights are the map's own, unchanged; outside it there is
+// no collision, only scenery.
 #include "common/world_bindings.wgsl"
+#include "terrain/noise.wgsl"
 
 const TERRAIN_FAR_FADE_M : f32 = 600.0;
 const TERRAIN_FAR_FRACTION : f32 = 0.35;
@@ -27,9 +30,19 @@ fn terrainFarHeight() -> f32 {
   return frame.terrain.z + TERRAIN_FAR_FRACTION * (frame.terrain.w - frame.terrain.z);
 }
 
+// Rolling far-country relief: 0 at the map edge, growing over the first few kilometres out, and kept between -0.15 and +0.4 of the
+// relief around the far height, so it stays inside the map's own height range (the clipmap's culling bounds) and above its water.
+fn terrainFarHills(xz : vec2f, outside : f32) -> f32 {
+  let n = tnFbm(xz * 0.00045 + vec2f(5.1, 2.3), 3);
+  let range = frame.terrain.w - frame.terrain.z;
+  return clamp((n - 0.42) * 1.1, -0.15, 0.4) * range * smoothstep(0.0, 2500.0, outside);
+}
+
 fn terrainHeightMirrored(xz : vec2f) -> f32 {
   let h = terrainHeightAt(terrainMirrorXz(xz));
-  return mix(h, terrainFarHeight(), smoothstep(0.0, TERRAIN_FAR_FADE_M, terrainOutsideDistance(xz)));
+  let outside = terrainOutsideDistance(xz);
+  if (outside <= 0.0) { return h; }
+  return mix(h, terrainFarHeight() + terrainFarHills(xz, outside), smoothstep(0.0, TERRAIN_FAR_FADE_M, outside));
 }
 
 // Normal of terrainHeightMirrored by central differences over +-eps metres.

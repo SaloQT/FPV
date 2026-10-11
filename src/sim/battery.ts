@@ -41,6 +41,12 @@ export class Battery {
     this.vPolar = 0;
   }
 
+  /** At rest with the charge it has left (a respawn after a crash keeps the pack in the quad). */
+  rest(): void {
+    this.current = 0;
+    this.vPolar = 0;
+  }
+
   soc(): number {
     return clamp(1 - this.mah / this.p.capacityMah, 0, 1);
   }

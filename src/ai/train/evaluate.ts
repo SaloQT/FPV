@@ -3,6 +3,7 @@
  * rules), deterministically: the number the brain menu and the spectator race should agree with.
  */
 import { createRaceSnapshot } from '../../game/gateTimer';
+import { Rng } from '../../sim/math3d';
 import type { Brain } from '../brain';
 import { BrainRacer } from '../racer';
 import { BRAIN_PHYSICS_HZ } from '../spec';
@@ -10,10 +11,13 @@ import type { TrainWorld } from './worlds';
 
 export interface EvalResult {
   name: string;
+  nextGate: number;
+  lapTimes: number[];
+  events: { time: number; gate: number; event: string; segmentSeconds: number; crashes: number; stalls: number }[];
   gates: number;
   laps: number;
   crashes: number;
-  /** Put back at the last gate after STALL_RESPAWN_S without a gate. */
+  /** Put back at the last gate for flying past where training ended episodes (BrainRacer.stalls). */
   stalls: number;
   /** Race time when finished, s, else NaN. */
   finish: number;
@@ -24,26 +28,39 @@ export interface EvalResult {
   wallMs: number;
 }
 
-export function evaluateBrain(brain: Brain, world: TrainWorld, opts: { seconds?: number; windSpeed?: number; seed?: number } = {}): EvalResult {
+export function evaluateBrain(
+  brain: Brain, world: TrainWorld,
+  opts: { seconds?: number; windSpeed?: number; seed?: number; /** Seed for sampling the sticks as a spectator racer does; default the mean action. */ sample?: number } = {},
+): EvalResult {
   const wind = opts.windSpeed ?? 0;
   const calm = wind <= 0;
   const racer = new BrainRacer(brain, { ground: world.ground, groundHeightAt: world.ground.groundHeightAt, track: world.track, colliders: world.colliders }, {
     seed: opts.seed ?? 1,
     wind: { meanSpeed: wind, turbulence: calm ? 0 : 1, gustsPerMinute: calm ? 0 : 1.5 },
+    sample: opts.sample === undefined ? undefined : new Rng(opts.sample),
   });
   racer.go = true;
   const dt = 1 / BRAIN_PHYSICS_HZ;
   const steps = Math.round((opts.seconds ?? 120) * BRAIN_PHYSICS_HZ);
   let gates = 0, laps = 0;
+  const events: EvalResult['events'] = [];
+  let lastGateAt = 0;
   const t0 = performance.now();
   for (let i = 0; i < steps && !racer.finished; i++) {
+    const gate = racer.timer.nextGate;
     const ev = racer.step(dt);
+    if (ev !== 'none') {
+      events.push({ time: racer.time, gate, event: ev, segmentSeconds: racer.time - lastGateAt, crashes: racer.crashes, stalls: racer.stalls });
+      if (ev === 'gate' || ev === 'lap' || ev === 'finish') lastGateAt = racer.time;
+    }
     if (ev === 'gate' || ev === 'lap' || ev === 'finish') gates++;
     if (ev === 'lap' || ev === 'finish') laps++;
   }
   const snap = racer.timer.fill(createRaceSnapshot(), racer.time);
   return {
-    name: brain.name, gates, laps, crashes: racer.crashes, stalls: racer.stalls, finish: racer.finishedAt, bestLap: snap.bestLap,
+    nextGate: racer.timer.nextGate, lapTimes: [...snap.lapTimes], events, name: brain.name, gates, laps, crashes: racer.crashes, stalls: racer.stalls, finish: racer.finishedAt, bestLap: snap.bestLap,
     seconds: racer.time, wallMs: performance.now() - t0,
   };
 }
+
+

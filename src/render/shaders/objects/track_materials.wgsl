@@ -104,6 +104,15 @@ fn padSurf(m : MatIn, s : Surf) -> Surf {
   let foam = vec3f(0.07, 0.07, 0.075) * (0.8 + 0.4 * fbm2(p * 40.0) + 0.3 * speck);
   o.albedo = mix(mix(foam, vec3f(0.85, 0.55, 0.03), border), vec3f(0.8, 0.8, 0.78), mark);
   o.roughness = mix(0.9, 0.55, max(border, mark));
+  // Use: the take-off spot in the middle is scuffed pale and the paint worn through where quads land, boots leave soil in patches
+  // round the edge, and dust settles over all of it.
+  let r = length(p);
+  let worn = smoothstep(0.32, 0.05, r) * (0.4 + 0.6 * fbm2(p * 9.0));
+  o.albedo = mix(o.albedo, mix(o.albedo, vec3f(0.16, 0.15, 0.14), 0.7), worn * 0.6);
+  let boots = smoothstep(0.62, 0.72, fbm2(p * 6.0 + 11.0)) * smoothstep(0.25, 0.48, r);
+  o.albedo = mix(o.albedo, vec3f(0.12, 0.09, 0.065), boots * 0.7);
+  o.albedo = mix(o.albedo, vec3f(0.3, 0.27, 0.22), 0.18 * fbm2(p * 3.0 + 5.0));
+  o.roughness = mix(o.roughness, 0.95, max(worn * 0.5, boots));
   return o;
 }
 
@@ -160,6 +169,60 @@ fn aboveGround(p : vec3f) -> f32 {
   return p.y - terrainHeightAt(p.xz);
 }
 
+// Weathering of the track props, from the world position, the normal and the vertex AO: dust settled on faces that look up, grime in the
+// crevices the AO marks, soil splashed up the bottom half metre, paint chipped off where crashes and transport knock it (mostly low down)
+// and fine horizontal scuffs. Detail finer than a pixel (m.fp, metres) fades out so it does not shimmer.
+// The large-scale terms are what still reads from 10-50 m, where the fine ones average out: rain streaks running down vertical faces,
+// grime gathering over the bottom metre and a half, blotchy tone across a face and sun fading on faces turned to the sky and south.
+struct Wear { dust : f32, grime : f32, splash : f32, chips : f32, scuff : f32, streak : f32, low : f32, tone : f32, fade : f32 };
+
+fn wearAt(m : MatIn) -> Wear {
+  let p = m.world;
+  let h = aboveGround(p);
+  let fine = 1.0 - saturate1(m.fp / 0.01);
+  var w : Wear;
+  w.dust = smoothstep(0.5, 0.95, m.n.y) * (0.3 + 0.7 * fbm3(p * 3.1));
+  w.grime = saturate1((1.0 - m.ao) * 1.6) * (0.6 + 0.4 * fbm3(p * 7.0));
+  w.splash = smoothstep(0.55, 0.0, h) * (0.3 + 0.7 * fbm3(p * vec3f(9.0, 2.5, 9.0)));
+  w.chips = smoothstep(0.73, 0.8, fbm3(p * 9.0 + 7.0)) * (0.35 + 0.65 * smoothstep(1.3, 0.2, h)) * fine;
+  w.scuff = smoothstep(0.82, 0.97, vnoise3(p * vec3f(4.0, 90.0, 4.0))) * smoothstep(0.4, 0.8, fbm3(p * 2.0 + 3.0)) * fine;
+  // Streaks: a noise across the face (along its horizontal tangent) stretched down it; past a few centimetres a pixel they go to their mean.
+  let vert = 1.0 - abs(m.n.y);
+  let side = vec2f(-m.n.z, m.n.x);
+  let across = dot(p.xz, side / max(length(side), 1e-4));
+  let streak = smoothstep(0.5, 0.85, vnoise2(vec2f(across * 7.0, p.y * 0.6))) * (0.4 + 0.6 * fbm3(p * 0.8 + 5.0));
+  w.streak = vert * mix(streak, 0.12, saturate1(m.fp / 0.05));
+  w.low = smoothstep(1.6, 0.0, h);
+  w.tone = fbm3(p * 0.45 + 3.7);
+  w.fade = saturate1(m.n.y) * 0.7 + saturate1(m.n.z) * 0.3;
+  return w;
+}
+
+// Applies wear to a painted surface: chips show `bare` (the metal or board under the paint, metalness `bareMetal`), scuffs lighten and
+// roughen the paint, then grime, dust and splashed soil go on top.
+fn weathered(s : Surf, w : Wear, bare : vec3f, bareMetal : f32) -> Surf {
+  var o = s;
+  // Paint is never one flat tone: blotches across a face, and sun-faded (paler, greyer) where it faces the sky.
+  let fresh = o.albedo;
+  let lum = dot(fresh, vec3f(0.2126, 0.7152, 0.0722));
+  let paint = mix(fresh, vec3f(lum) * 1.15 + 0.02, 0.3 * w.fade) * (0.85 + 0.3 * w.tone);
+  o.albedo = mix(paint, mix(paint, vec3f(dot(paint, vec3f(0.33))), 0.4) * 1.3 + 0.03, w.scuff * 0.6);
+  o.roughness = min(o.roughness + 0.25 * w.scuff, 1.0);
+  o.albedo = mix(o.albedo, bare, w.chips);
+  o.metalness = mix(o.metalness, bareMetal, w.chips);
+  o.roughness = mix(o.roughness, mix(0.85, 0.35, bareMetal), w.chips);
+  o.albedo *= 1.0 - 0.45 * w.grime;
+  o.albedo = mix(o.albedo, vec3f(0.31, 0.27, 0.22), 0.45 * w.dust);
+  o.albedo = mix(o.albedo, vec3f(0.11, 0.085, 0.06), 0.8 * w.splash);
+  o.roughness = mix(o.roughness, 0.9, max(0.5 * w.dust, 0.7 * w.splash));
+  o.metalness *= 1.0 - max(w.dust, w.splash) * 0.8;
+  // Rain streaks, and the grime that builds up toward the ground.
+  o.albedo *= (1.0 - 0.45 * w.streak) * (1.0 - 0.2 * w.low);
+  o.albedo = mix(o.albedo, vec3f(0.15, 0.125, 0.095), 0.25 * w.low * (0.5 + 0.5 * w.tone));
+  o.roughness = min(o.roughness + 0.15 * w.low + 0.1 * w.streak, 1.0);
+  return o;
+}
+
 fn containerSurf(m : MatIn, s : Surf) -> Surf {
   var o = s;
   o.material = MAT_GATE;
@@ -191,7 +254,9 @@ fn concreteSurf(m : MatIn, s : Surf) -> Surf {
     o.roughness = 0.92;
     return o;
   }
-  var col = vec3f(0.36, 0.355, 0.34) * (0.8 + 0.35 * grain);
+  // Cast concrete weathers to about 0.25-0.3: blotchy from the pour and the curing, darker in damp patches.
+  let damp = smoothstep(0.55, 0.8, fbm3(p * 0.9 + 7.0));
+  var col = vec3f(0.3, 0.295, 0.28) * (0.82 + 0.3 * grain) * (0.85 + 0.3 * fbm3(p * 0.35 + 1.3)) * (1.0 - 0.25 * damp);
   // Formwork: pour lines every 1.2 m and form-tie holes on a 0.6 m grid.
   let lift = abs(fract(uv.y / 1.2 + 0.5) - 0.5) * 1.2;
   let line = 1.0 - smoothstep(0.0, 0.008 + m.fp, lift);
@@ -202,6 +267,10 @@ fn concreteSurf(m : MatIn, s : Surf) -> Surf {
     let stain = smoothstep(0.45, 0.75, vnoise2(vec2f((p.x - p.z) * 3.0, p.y * 0.25)));
     col = mix(col, col * 0.55, stain);
   }
+  // A green-black film of algae on the faces turned from the sun (north, -z), low down and in the damp patches.
+  let north = saturate1(-m.n.z) * (1.0 - abs(m.n.y));
+  let algae = saturate1(north * (smoothstep(1.2, 0.0, aboveGround(p)) * (0.4 + 0.6 * fbm3(p * 3.0)) + 0.4 * damp));
+  col = mix(col, vec3f(0.07, 0.085, 0.05), 0.6 * algae);
   col = mix(col, vec3f(0.13, 0.1, 0.07), smoothstep(0.5, 0.0, aboveGround(p)) * 0.6);
   o.albedo = col;
   o.roughness = 0.9;
@@ -247,7 +316,7 @@ fn panelSurf(m : MatIn, s : Surf, gate : u32) -> Surf {
   let info = gates[min(gate, arrayLength(&gates) - 1u)];
   let uv = m.uv;
   let joint = abs(fract(uv.x / 1.22 + 0.5) - 0.5) * 1.22;
-  var col = vec3f(0.6, 0.6, 0.58) * (0.9 + 0.12 * fbm2(uv * 3.0)) * (1.0 - 0.35 * (1.0 - smoothstep(0.0, 0.006 + m.fp, joint)));
+  var col = vec3f(0.52, 0.52, 0.5) * (0.9 + 0.12 * fbm2(uv * 3.0)) * (1.0 - 0.35 * (1.0 - smoothstep(0.0, 0.006 + m.fp, joint)));
   if (m.a2 > 0.5) {
     let hw = floor(m.a2 / 1000.0) / 100.0;
     let hh = (m.a2 - floor(m.a2 / 1000.0) * 1000.0) / 100.0;
@@ -276,10 +345,9 @@ fn shadeTrack(m : MatIn) -> Surf {
     case ${K_GATE_FRAME}u: {
       let info = gates[min(gate, arrayLength(&gates) - 1u)];
       let grain = vnoise2(m.uv * 320.0) * (1.0 - saturate1(m.fp / 0.004));
-      let h = m.world.y - terrainHeightAt(m.world.xz);
-      let dirt = smoothstep(0.55, 0.0, h) * (0.2 + 0.6 * fbm2(m.uv * 25.0));
-      o.albedo = mix(info.colour.rgb * (0.88 + 0.16 * grain), vec3f(0.11, 0.085, 0.06), dirt);
-      o.roughness = 0.4 + 0.12 * grain + 0.4 * dirt;
+      // Gate colours are display-bright; a gloss paint reflects at most about 0.75 of them.
+      o.albedo = info.colour.rgb * 0.75 * (0.88 + 0.16 * grain);
+      o.roughness = 0.4 + 0.12 * grain;
     }
     case ${K_GATE_CHEVRON}u: {
       let st = stripes((m.uv.x + m.uv.y) / 0.05, m.fp / 0.05);
@@ -333,6 +401,30 @@ fn shadeTrack(m : MatIn) -> Surf {
     case ${K_STEEL_PAINT}u: { o = steelSurf(m, o); }
     case ${K_GATE_PANEL}u: { o = panelSurf(m, o, gate); }
     default: {}
+  }
+  // Weathering of the painted and moulded props (gates, poles, boards, steel, concrete); the LED strips, cones, rocks, trunks and the pad keep
+  // their own. The kind picks what shows under chipped paint (bare: colour, metalness; a negative red keeps the surface's own colour) and
+  // which terms apply; wearAt and weathered then run once, so the compiler inlines their noise once rather than once per kind.
+  var bare = vec4f(-1.0);
+  var chips = 1.0;
+  var fade = 1.0;
+  var scuff = 1.0;
+  switch (m.kind) {
+    case ${K_GATE_FRAME}u: { bare = vec4f(0.62, 0.62, 0.64, 0.9); }
+    case ${K_GATE_CHEVRON}u, ${K_GATE_CHECKER}u, ${K_GATE_PANEL}u: { bare = vec4f(0.42, 0.4, 0.36, 0.0); }
+    case ${K_GATE_BASE}u: { bare = vec4f(o.albedo, 0.0); chips = 0.0; }
+    case ${K_POLE}u, ${K_STEEL_PAINT}u, ${K_CONTAINER}u, ${K_HAZARD}u: { bare = vec4f(0.5, 0.5, 0.52, 0.85); }
+    // Concrete has no paint to chip or fade: knocked edges show the paler aggregate, the rest is streaks, grime and dust. Asphalt keeps its own.
+    case ${K_CONCRETE}u: { if (u32(m.a2 + 0.5) != 1u) { bare = vec4f(0.36, 0.34, 0.31, 0.0); fade = 0.0; scuff = 0.0; } }
+    case ${K_FLAGPOLE}u: { bare = vec4f(o.albedo, 1.0); chips = 0.0; }
+    default: {}
+  }
+  if (bare.r >= 0.0) {
+    var w = wearAt(m);
+    w.chips *= chips;
+    w.fade *= fade;
+    w.scuff *= scuff;
+    o = weathered(o, w, bare.rgb, bare.a);
   }
   return o;
 }

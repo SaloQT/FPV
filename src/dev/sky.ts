@@ -35,7 +35,7 @@ function readParams() {
   return {
     t, timeMs, lat: num('lat', 46), lon: num('lon', 8), alt: num('alt', 300), az: num('az', 180), el: num('el', 20), fov: num('fov', 60),
     clouds: q.has('clouds') ? Math.min(1, Math.max(0, num('clouds', 0))) : null, cirrus: q.has('cirrus') ? num('cirrus', 0) : null,
-    quality: (quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high') as Settings['quality'],
+    quality: (quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high') as Settings['quality'],
     stars: q.get('stars') !== '0', mw: q.get('mw') !== '0', seed: num('seed', DEFAULT_SETTINGS.seed), frames, scale: num('scale', 1),
     startTime: num('st', 1000), osd: q.get('osd') !== '0', look: (q.get('look') ?? '').toLowerCase(), ev: num('ev', 0),
     sunel: q.has('sunel') && q.get('sunel') !== '' && Number.isFinite(Number(q.get('sunel'))) ? Number(q.get('sunel')) : null,

@@ -9,7 +9,7 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * the centre and, mildly, the ground. By day the darkest 30% of the frame (forest shade) is cut from that mean too: a frame of dark shade
  * with sunlit grass and sky used to open the camera 2.5 EV, which washed the grass out to code 200 and blew the sky; now the sunlit parts
  * decide (grass near code 140, the shade still readable) and an overcast frame, with everything dim, still brightens. The exposure then
- * follows highlight priority: the brightest ~12% of the frame (sunlit ground, sky, clouds) never lands above ~0.7 scene-linear (code ~200),
+ * follows highlight priority: the brightest ~12% of the frame (sunlit ground, sky, clouds) never lands above ~0.85 scene-linear (code ~215),
  * which keeps a dusk sky off the white plateau (sun 5 degrees up: 1.4% of the frame at code 250 or more instead of 3.5%); a low sun with a bright sky near
  * it lowers the exposure up to protectMaxEv. The key itself falls with the metered scene luminance so a
  * dark scene stays dark.
@@ -20,29 +20,57 @@ import type { ExposureStage, OutSize, PostFlags, PostParams } from './types';
  * The adapted state is the TOTAL exposure (pre-exposure * ratio) in EV, which makes it independent of CPU pre-exposure changes, and the
  * metering never sees the ratio it produces (open loop), so the adaptation cannot oscillate.
  * Night: below ~0.03 nits of CPU-estimated scene luminance the metered mean (black trees, a few stars) is replaced by that estimate, so the
- * exposure follows the astronomy (moonless: the full +22.8 EV of a Starvis-class starlight camera, a grey card at about code 10 while the sky stays where the +20.3 EV exposure had it, near black with stars and Milky Way readable (nightSkyScale); moon up:
- * the same gain until the 0.18-card reaches its dusk display level, then it falls), and the key stays flat below keyNightKneeNits.
+ * exposure follows the astronomy, and below keyNightKneeNits (about civil dusk) the key falls only keyNightSlope per EV, the way a low-light FPV
+ * camera keeps a night picture faint but readable, with its noise, rather than black: a 0.18 card shows at about code 54 in deep twilight, 44 under
+ * the moon and 33 on a moonless night, where the camera runs near its +24.5 EV maximum. The sky is held where the +22.0 EV exposure had it
+ * (nightSkyScale), so a moonless sky stays a dark blue-grey above a fainter ground, with its stars and Milky Way.
  */
 export const EXPOSURE_TUNING = {
   bins: 64,
-  evMin: -12,
-  evMax: 8,
-  /** Trimmed-mean luminance the exposure aims for after the ratio (FPV cameras run a touch brighter than 0.18). */
-  key: 0.22,
+  /**
+   * Histogram range (log2 of the pre-exposed luminance). The top reaches 14 EV over the key: a lamp-lit night (a theme park after dark) sits
+   * 10-14 EV over the astronomy's estimate the pre-exposure is set from, and with the top at 8 its lit tenth piled into the last bin, so the
+   * lamp cap saw too little light and a third of the frame burned white. The bottom still holds 8 EV of shadow under the key.
+   */
+  evMin: -10,
+  evMax: 12,
+  /**
+   * Trimmed-mean luminance the exposure aims for after the ratio. 0.3 puts a sunlit meadow at a median of about code 120-135, as matched
+   * reference photos of the same scenes do (0.22 left frames about 15 codes darker than the photos at every time of day).
+   */
+  key: 0.3,
   /** Metered scene luminance (nits) under which the key falls, and by how much per EV of scene luminance (0: constant key). */
   keyKneeNits: 100,
   keySlope: 0.3,
-  /** Below this scene luminance (deep twilight, moonlight) the key falls only keyNightSlope per EV, so a 0.18 card keeps its dark but readable display level until the gain runs out. */
-  keyNightKneeNits: 0.1,
-  keyNightSlope: 0,
+  /**
+   * Below this scene luminance (sun about 5 degrees down) the key falls only keyNightSlope per EV, so a 0.18 card stays faint but readable from
+   * deep twilight to a moonless night (codes about 54, 44 and 33 for twilight, moonlight and starlight), as a low-light camera shows them.
+   */
+  keyNightKneeNits: 0.78,
+  keyNightSlope: 0.05,
   /**
    * The CPU's scene-luminance estimate (astronomy only) takes over from the metered mean in the dark: its weight is 0 above nightBlendHiNits and
    * 1 below nightBlendLoNits. A night frame is mostly black trees and a few stars, so its metered mean says nothing about how bright the night is.
    */
   nightBlendHiNits: 0.03,
   nightBlendLoNits: 0.003,
-  /** In the dark only a metered mean more than this many EV above the estimate counts (artificial light): the exposure may fall for it, never rise. */
+  /** In the dark a metered mean more than this many EV above the estimate (artificial light) lowers the exposure one EV per EV. */
   nightMarginEv: 2,
+  /**
+   * Lamp cap: in the dark the brightest clipFrac of the frame (lamp-lit paths, walls and guests) may sit at most clipEv + nightLampEv over the
+   * key. The metered mean soft-clips its highlights about 4.5 EV over the key, so on its own (nightMarginEv) a floodlit theme park lowered the
+   * exposure only about 2.5 EV and burned a third of the frame to white; a moonlit or starlit frame never reaches the cap, and small bright
+   * things (gate LEDs, a few lamps far off) are under clipFrac of the frame, so they glow without darkening the night.
+   */
+  nightLampEv: 1,
+  /**
+   * A night frame metered darker than the estimate (the shade of trees under the moon, a forest at night) lifts the gain the way a low-light
+   * camera's auto exposure does: nightLiftRate EV per EV beyond nightLiftFromEv below the estimate, at most nightLiftMaxEv, and never past
+   * maxGainEv. An open moonlit field (about an EV under a 0.18 card) is left as the astronomy sets it.
+   */
+  nightLiftFromEv: 1,
+  nightLiftRate: 0.5,
+  nightLiftMaxEv: 2,
   /**
    * By day and dusk the darkest 30% of the weighted frame (forest shade, tree trunks, a tunnel mouth) is ignored by the mean: shade must not
    * decide how bright the sunlit parts are. In the dark only 5% is, as the night regime was tuned with. The shade trim fades in with the CPU's
@@ -61,19 +89,27 @@ export const EXPOSURE_TUNING = {
   /** The bottom row weighs 1 + vertBias and the top row 1 - vertBias: the ground leads, but the sky counts (a sunlit meadow is not metered as if it were forest shade). */
   vertBias: 0.3,
   /**
-   * Highlight priority: the brightest clipFrac of the (weighted) frame (sunlit ground, sky, clouds) may sit at most clipEv above the key, i.e. at ~0.7
-   * scene-linear (display code ~200); the exposure gives up to protectMaxEv to get there (a low sun with a bright sky near it).
+   * Highlight priority: the brightest clipFrac of the (weighted) frame (sunlit ground, sky, clouds) may sit at most clipEv above the key, i.e. at ~0.85
+   * scene-linear (display code ~215, where matched reference photos put their p95); the exposure gives up to protectMaxEv to get there (a low sun with a bright sky near it).
    */
   clipFrac: 0.12,
-  clipEv: 1.7,
+  clipEv: 1.5,
   protectMaxEv: 3,
+  /**
+   * Sparse highlights: the brightest sparseClipFrac (sunflecks on a forest floor, a sunlit rock in shade) may sit at most clipEv +
+   * sparseClipExtraEv above the key. They are too few to reach the clipFrac quantile, so without this a dark forest interior was opened
+   * up until its sunflecks blew out. Where the clipFrac rule already binds (open, sunlit scenes) this one changes nothing.
+   */
+  sparseClipFrac: 0.03,
+  sparseClipExtraEv: 0.8,
   /**
    * Sky/ground separation (G-buffer depth: the sky pass owns the pixels left at depth 0). The ground leads the metering: every sky bin above
    * the ground's own metered mean + skyCapEv is folded onto that level, so a dusk sky 6 EV over the ground cannot set the exposure (the grass
-   * used to sit at code 15-25 with the sun 5 degrees up) while a daylight sky, 1-2 EV over the grass, is metered as before. With the ground
+   * used to sit at code 15-25 with the sun 5 degrees up) while a daylight sky, 1-2 EV over the grass, is metered as before; a bright noon sky,
+   * 2-2.5 EV over the ground of a sky-heavy FPV frame, counts at most 2 EV over it, as a ground-weighted FPV camera meters. With the ground
    * under skyGroundLo of the weight (the camera looks up) the cap is off and the sky is metered, as a real camera does; it fades in by skyGroundHi.
    */
-  skyCapEv: 2.5,
+  skyCapEv: 2,
   skyGroundLo: 0.03,
   skyGroundHi: 0.12,
   /**
@@ -94,13 +130,17 @@ export const EXPOSURE_TUNING = {
   maxDt: 0.25,
   /** Luminance of a 0.18 grey card at noon: the CPU pre-exposure there is 1 / (4 * dayReferenceNits). */
   dayReferenceNits: 5000,
-  /** Hard limits of the sensor gain (total exposure over the daylight reference, EV). A Starvis-class starlight camera runs ~+22.8 EV (optics, long integration and frame averaging past its ISO limit); the key law keeps a moonless sky near black. */
-  maxGainEv: 22.8,
+  /**
+   * Hard limits of the sensor gain (total exposure over the daylight reference, EV). A Starvis-class low-light FPV camera reaches about +24.5 EV
+   * (fast optics, the sensor's top analog and digital gain and frame integration): enough for a moonless ground to read, through its noise.
+   */
+  maxGainEv: 24.5,
   /**
    * Gain (EV over daylight) up to which the whole frame gains with the exposure. A camera past it (moonless night) lifts the ground by the extra EV while its
-   * highlight compensation holds the sky where the gain at this level had it, so the ground reads and the sky stays near black (see nightSkyScale).
+   * highlight compensation holds the sky where the gain at this level had it, so the ground reads and the moonless sky stays a dark blue-grey,
+   * still brighter than the ground under it (airglow is about 3e-4 nits, several times a dark meadow), with its stars (see nightSkyScale).
    */
-  skyHoldGainEv: 20.3,
+  skyHoldGainEv: 22.0,
   minGainEv: -6,
   /** Numeric guard only: a starlit pre-exposure is +10 EV and a bright day -14 EV, so the ratio legitimately spans 2^-24..2^+6. */
   maxRatioEv: 26,
@@ -232,7 +272,8 @@ export function meterFrame(ground: ArrayLike<number>, sky: ArrayLike<number>, pr
   const folded = new Float64Array(T.bins);
   foldSky(ground, sky, skyCapLevelEv(ground, sky, preExposure), folded);
   const meanEv = meteredMeanEv(folded, preExposure);
-  const highEv = topQuantileEv(folded);
+  const broad = topQuantileEv(folded), sparse = topQuantileEv(folded, T.sparseClipFrac);
+  const highEv = broad === null || sparse === null ? null : Math.max(broad, sparse - T.sparseClipExtraEv);
   return meanEv === null || highEv === null ? null : { meanEv, highEv };
 }
 
@@ -274,7 +315,7 @@ export function nightWeight(preEv: number): number {
  * In the dark the metered mean gives way to the value the CPU's scene estimate implies (see nightWeight), except that a frame far brighter
  * than that estimate (a floodlit scene) still lowers the exposure; the highlight protection is off.
  */
-export function targetTotalEv(meanEv: number, preExposure: number, highEv: number = -Infinity): number {
+export function targetTotalEv(meanEv: number, preExposure: number, highEv: number = -Infinity, lampEv: number = -Infinity): number {
   const preEv = Math.log2(Math.max(preExposure, 1e-12));
   const night = nightWeight(preEv);
   const used = meanEv + night * (EXPECTED_MEAN_EV - meanEv);
@@ -282,7 +323,10 @@ export function targetTotalEv(meanEv: number, preExposure: number, highEv: numbe
   const shift = keyEv - used;
   const protectedShift = shift + (1 - night) * (Math.max(Math.min(shift, LOG2_KEY + T.clipEv - highEv), shift - T.protectMaxEv) - shift);
   const floodlit = night * Math.max(meanEv - EXPECTED_MEAN_EV - T.nightMarginEv, 0);
-  const gain = Math.max(Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV, T.minGainEv), T.maxGainEv) - floodlit, T.minGainEv);
+  const lift = night * Math.min(Math.max(EXPECTED_MEAN_EV - meanEv - T.nightLiftFromEv, 0) * T.nightLiftRate, T.nightLiftMaxEv);
+  const free = Math.max(Math.min(Math.max(preEv + protectedShift - DAY_TOTAL_EV + lift, T.minGainEv), T.maxGainEv) - floodlit, T.minGainEv);
+  const lampGain = preEv + LOG2_KEY + T.clipEv + T.nightLampEv - lampEv - DAY_TOTAL_EV;
+  const gain = Math.max(free + night * (Math.min(free, lampGain) - free), T.minGainEv);
   return preEv + Math.min(Math.max(DAY_TOTAL_EV + gain - preEv, -T.maxRatioEv), T.maxRatioEv);
 }
 
@@ -316,8 +360,8 @@ export function luminanceOf(r: number, g: number, b: number): number {
 
 export function exposureDefines(): Record<string, number> {
   return {
-    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, NIGHT_KNEE_EV, NIGHT_SLOPE: T.keyNightSlope, NIGHT_BLEND_HI_EV, NIGHT_BLEND_LO_EV, NIGHT_MARGIN_EV: T.nightMarginEv, EXPECTED_MEAN_EV, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
-    CENTER_BIAS: T.centerBias, VERT_BIAS: T.vertBias, CLIP_FRAC: T.clipFrac, CLIP_EV: T.clipEv, PROTECT_MAX_EV: T.protectMaxEv,
+    EV_MIN: T.evMin, EV_MAX: T.evMax, KEY: T.key, KEY_KNEE_EV, KEY_SLOPE: T.keySlope, NIGHT_KNEE_EV, NIGHT_SLOPE: T.keyNightSlope, NIGHT_BLEND_HI_EV, NIGHT_BLEND_LO_EV, NIGHT_MARGIN_EV: T.nightMarginEv, NIGHT_LAMP_EV: T.nightLampEv, NIGHT_LIFT_FROM_EV: T.nightLiftFromEv, NIGHT_LIFT_RATE: T.nightLiftRate, NIGHT_LIFT_MAX_EV: T.nightLiftMaxEv, EXPECTED_MEAN_EV, KNEE: T.knee, KNEE_WIDTH: T.kneeWidth,
+    CENTER_BIAS: T.centerBias, VERT_BIAS: T.vertBias, CLIP_FRAC: T.clipFrac, CLIP_EV: T.clipEv, SPARSE_CLIP_FRAC: T.sparseClipFrac, SPARSE_CLIP_EXTRA_EV: T.sparseClipExtraEv, PROTECT_MAX_EV: T.protectMaxEv,
     STRIDE: T.stride, WEIGHT_SCALE: T.weightScale, TRIM_LOW: T.trimLow, TRIM_LOW_NIGHT: T.trimLowNight, TRIM_BLEND_LO_EV, TRIM_BLEND_HI_EV, TRIM_HIGH: T.trimHigh, SKY_CAP_EV: T.skyCapEv, HL_KNEE_EV: T.hlKneeEv, HL_TAU: T.hlTau, HL_GAP_LO: T.hlGapLo, HL_GAP_HI: T.hlGapHi, SKY_GROUND_LO: T.skyGroundLo, SKY_GROUND_HI: T.skyGroundHi, SKY_UNCAPPED_EV, TAU_BRIGHTEN: T.tauBrighten,
     TAU_DARKEN: T.tauDarken, DEADBAND: T.deadbandEv, MAX_DT: T.maxDt, DAY_TOTAL_EV, MAX_GAIN_EV: T.maxGainEv,
     MIN_GAIN_EV: T.minGainEv, MAX_RATIO_EV: T.maxRatioEv,

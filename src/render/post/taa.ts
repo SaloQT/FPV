@@ -4,13 +4,15 @@ import type { OutSize, PostFlags, PostParams, TaaStage } from './types';
 
 /**
  * TAAU knobs (also injected into the shader as defines, so this is the single source of truth).
- * kernelK: weight = exp(-K d^2), d in render pixels (gaussian fit of Blackman-Harris; radius 1.5 px is the 3x3 gather).
+ * kernelK: weight = exp(-K d^2), d in render pixels. 4 (sigma 0.35 px) is a little narrower than the Blackman-Harris fit (2.29): with the
+ *   wider kernel, every frame's own sample was already blurred over its neighbours and still leaf edges lost half their contrast to the resolve
+ *   (measured with TAA on and off on an oak crown at 3 m); the narrower one keeps about 10% more edge contrast for about 6% more shimmer.
  * feedback: history share when static / at motionPx or more output px per frame of motion.
  * varianceGamma: history is clipped to mean +- gamma * sigma of the 3x3 neighbourhood (and its min/max).
  * disoccLo/Hi: relative depth excess of the history over the reprojected surface that ramps the history weight to zero.
  */
 export const TAA_TUNING = {
-  kernelK: 2.29,
+  kernelK: 4,
   varianceGamma: 1.25,
   feedback: 0.9,
   feedbackMotion: 0.7,

@@ -70,7 +70,7 @@ const TERRAIN_STEP = 1000003;
  * terrain seeds are tried. Throws after WORLD_TERRAIN_ATTEMPTS terrains. Track-file worlds are never moved to another terrain.
  */
 export function buildMixWorld(spec: WorldSpec): TrainWorld {
-  if (spec.track) return buildTrainWorld(spec);
+  if (spec.track || spec.park) return buildTrainWorld(spec);
   let last: unknown;
   for (let i = 0; i < WORLD_TERRAIN_ATTEMPTS; i++) {
     try {
@@ -95,6 +95,6 @@ export function describeWorld(w: TrainWorld, k: number): string {
   const t = w.track;
   const feats = new Set(t.gates.map((g) => g.feature).filter(Boolean));
   const kinds = new Set(t.gates.map((g) => g.kind));
-  return `world ${k}: ${w.source === 'file' ? 'file ' : ''}${w.style}${w.source === 'recipe' ? ' recipe' : ''}, seed ${w.seed}, ${t.gates.length} gates (${[...kinds].join(' ')})`
+  return `world ${k}: ${w.source === 'file' ? 'file ' : w.source === 'park' ? `${w.park} park ${typeof w.parkRoute === 'number' ? `coaster ${w.parkRoute}` : w.parkRoute ?? 'race'} ` : ''}${w.style}${w.source === 'recipe' ? ' recipe' : ''}, seed ${w.seed}, ${t.gates.length} gates (${[...kinds].join(' ')})`
     + `${feats.size ? `, features ${[...feats].join(' ')}` : ''}, ${t.closed ? `circuit x${t.laps}` : 'open'}, ${t.path.length} path points, ${w.colliders.length} colliders`;
 }

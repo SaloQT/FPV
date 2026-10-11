@@ -54,3 +54,14 @@ export function respawnPlacement(track: TrackData | null, lastGate: number, grou
   const gate = track !== null && lastGate >= 0 ? track.gates[lastGate] : undefined;
   return gate === undefined ? padPlacement(track, out) : gatePlacement(gate, groundAt, out);
 }
+
+/**
+ * The checkpoint (respawnPlacement), or with `ahead` 1.5 m before the gate due next instead: where brains trained before their
+ * file recorded their spawns started their episodes. Before the first gate both go back to the pad.
+ */
+export function checkpointPlacement(
+  track: TrackData | null, lastGate: number, nextGate: number, ahead: boolean, groundAt: GroundHeightFn | undefined, out: Placement,
+): Placement {
+  const gate = ahead && track !== null && lastGate >= 0 ? track.gates[nextGate] : undefined;
+  return gate === undefined ? respawnPlacement(track, lastGate, groundAt, out) : gatePlacement(gate, groundAt, out);
+}

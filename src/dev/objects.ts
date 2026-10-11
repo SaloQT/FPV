@@ -42,7 +42,7 @@ function readParams() {
   return {
     view,
     time: isTimeOfDay(t) ? t : 'noon',
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high' as Settings['quality'],
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high' as Settings['quality'],
     track: (track === 'gen' || track === 'none' ? track : 'row') as TrackKind,
     seed: num('seed', 1),
     amp: num('amp', 1.5),

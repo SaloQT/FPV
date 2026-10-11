@@ -1,4 +1,6 @@
 import type { RenderContext } from './contracts';
+import type { ParkData } from '../world/park/types';
+import { ParkLights } from './park/lights';
 
 const TILE = 8;
 
@@ -9,16 +11,21 @@ export class DeferredLighting {
   private group: GPUBindGroup | null = null;
   private width = 0;
   private height = 0;
+  private generation = -1;
+  private readonly empty: GPUBuffer;
 
   /** `fallbackSky` paints the skyView LUT into empty pixels; enable it only when no module draws the sky. */
   constructor(private readonly rc: RenderContext, fallbackSky: boolean) {
     const C = GPUShaderStage.COMPUTE;
+    rc.parkLights ??= new ParkLights(rc.device);
+    this.empty = rc.device.createBuffer({ label: 'empty lighting geometry', size: 64, usage: GPUBufferUsage.STORAGE });
     const tex = (binding: number, sampleType: GPUTextureSampleType): GPUBindGroupLayoutEntry => ({ binding, visibility: C, texture: { sampleType } });
     this.layout = rc.device.createBindGroupLayout({
       label: 'lighting',
       entries: [
         tex(0, 'float'), tex(1, 'float'), tex(2, 'float'), tex(3, 'depth'), tex(4, 'unfilterable-float'), tex(5, 'float'), tex(6, 'float'),
         { binding: 7, visibility: C, storageTexture: { access: 'write-only', format: 'rgba16float' } },
+        ...[8, 9, 10].map(binding => ({ binding, visibility: C, buffer: { type: 'read-only-storage' as const } })),
       ],
     });
     this.pipeline = rc.device.createComputePipeline({
@@ -38,13 +45,20 @@ export class DeferredLighting {
       entries: [
         { binding: 0, resource: v.albedo }, { binding: 1, resource: v.normal }, { binding: 2, resource: v.misc }, { binding: 3, resource: v.depth },
         { binding: 4, resource: v.sunShadow }, { binding: 5, resource: v.giDiffuse }, { binding: 6, resource: v.giSpecular }, { binding: 7, resource: v.hdr },
+        { binding: 8, resource: { buffer: this.rc.parkLights!.buffer } },
+        { binding: 9, resource: { buffer: this.rc.rtBuffers?.nodes ?? this.empty } }, { binding: 10, resource: { buffer: this.rc.rtBuffers?.prims ?? this.empty } },
       ],
     });
     this.width = g.width;
     this.height = g.height;
+    this.generation = this.rc.rtBuffers?.generation ?? -1;
   }
 
+  setScene(park?: ParkData): void { this.rc.parkLights!.setScene(park); }
+  destroy(): void { this.empty.destroy(); this.rc.parkLights?.destroy(); }
+
   encode(enc: GPUCommandEncoder): void {
+    if (this.generation !== (this.rc.rtBuffers?.generation ?? -1)) this.rebuild();
     const pass = enc.beginComputePass({ label: 'deferred lighting' });
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.rc.frame.group);

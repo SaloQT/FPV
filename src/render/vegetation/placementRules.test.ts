@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerrainData } from '../../contracts';
-import { MAX_SLOPE_DEG, MAX_TREE_SCALE, MIN_SOIL, MIN_TREE_SCALE, PlacementRules, type Canopy, type Pick } from './placementRules';
+import { MAX_CROWN_SPREAD, MAX_SLOPE_DEG, MAX_TREE_SCALE, MIN_SOIL, MIN_TREE_SCALE, PlacementRules, type Canopy, type Pick } from './placementRules';
 import { TerrainFields } from './terrainFields';
 import { VARIANT_DEFS, VARIANTS_OF } from './variants';
 
@@ -55,7 +55,8 @@ function plantCounts(g: Partial<Ground>, order: 1 | -1 = 1): Counts & { hits: st
       out.hits.push(`${cx},${cz},${pick.variant},${pick.scale.toFixed(4)}`);
       if (kind === 1) {
         out.trees++;
-        if (pick.variant === VARIANTS_OF.spruce[0] || pick.variant === VARIANTS_OF.spruce[1] || pick.variant === VARIANTS_OF.pine[0]) out.conifers++;
+        // Every growth form of spruce and pine, and the dead conifers standing among them, count as conifers.
+        if ([...VARIANTS_OF.spruce, ...VARIANTS_OF.pine, VARIANTS_OF.snag[0]].includes(pick.variant as never)) out.conifers++;
       } else out.bushes++;
     }
   }
@@ -151,7 +152,10 @@ describe('PlacementRules.plant', () => {
         expect(pick.scale).toBeLessThanOrEqual(kind === 1 ? MAX_TREE_SCALE : 1.65);
         expect(pick.yaw).toBeGreaterThanOrEqual(0);
         expect(pick.yaw).toBeLessThan(2 * Math.PI + 1e-9);
-        expect(pick.tint >>> 24).toBe(128);
+        // The alpha byte is the crown spread (1 for conifers and bushes, up to MAX_CROWN_SPREAD for broadleaves in closed stands).
+        expect(pick.tint >>> 24).toBeGreaterThanOrEqual(128);
+        expect(pick.tint >>> 24).toBeLessThanOrEqual(Math.round(MAX_CROWN_SPREAD * 127.5));
+        if (VARIANT_DEFS[pick.variant].group !== 'tree') expect(pick.tint >>> 24).toBe(128);
       }
     }
     expect(checked).toBeGreaterThan(500);

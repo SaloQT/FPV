@@ -5,6 +5,7 @@
 import { fmt, niceTicks } from './series.js';
 import { BIT_CRASH, dronePos, dronesInWorld } from './trace.js';
 import { droneColor } from './topdown.js';
+import { FONT, INK } from './theme.js';
 
 const M = { l: 44, r: 10, t: 22, b: 18 };
 
@@ -141,12 +142,12 @@ export class Profile {
     if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
     const g = this.ctx;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = '#1a1a19';
+    g.fillStyle = INK.surface;
     g.fillRect(0, 0, W, H);
-    g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    g.font = FONT;
     const w = this.app.selectedWorld();
     if (!w) {
-      g.fillStyle = '#898781';
+      g.fillStyle = INK.muted;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText('Pick a world to see its elevation profile', W / 2, H / 2);
@@ -177,9 +178,9 @@ export class Profile {
     const X = (x) => M.l + ((x - x0) / (x1 - x0)) * pw;
     const Y = (y) => M.t + ph - ((y - lo) / (hi - lo)) * ph;
     // Grid and axes
-    g.strokeStyle = '#2c2c2a';
+    g.strokeStyle = INK.grid;
     g.lineWidth = 1;
-    g.fillStyle = '#898781';
+    g.fillStyle = INK.muted;
     g.textAlign = 'right';
     g.textBaseline = 'middle';
     for (const t of niceTicks(lo, hi, Math.max(2, Math.floor(ph / 30)))) {
@@ -211,7 +212,7 @@ export class Profile {
       const a = X(b.x0) - 6, z = X(b.x1) + 6;
       g.fillStyle = 'rgba(144,133,233,0.14)';
       g.fillRect(a, M.t, z - a, ph);
-      g.fillStyle = '#c3c2b7';
+      g.fillStyle = INK.text;
       g.textAlign = 'center';
       g.fillText(b.feature, (a + z) / 2, 4);
     }
@@ -231,13 +232,13 @@ export class Profile {
     }
     for (const d of drones) {
       const x = X(d.x), y = Y(d.y);
-      g.fillStyle = '#0d0d0d';
+      g.fillStyle = INK.page;
       g.beginPath(); g.arc(x, y, 5.5, 0, 2 * Math.PI); g.fill();
       g.fillStyle = d.crashed ? '#d03b3b' : d.color;
       g.beginPath(); g.arc(x, y, 4, 0, 2 * Math.PI); g.fill();
     }
     g.restore();
-    g.fillStyle = '#898781';
+    g.fillStyle = INK.muted;
     g.textAlign = 'left';
     g.textBaseline = 'top';
     g.fillText(p.mode === 'side' ? 'side view along the long axis' : 'distance along the course', M.l + 4, M.t + 2);

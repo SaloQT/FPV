@@ -1,6 +1,9 @@
-import type { TrackRecipe, TrackStyle } from '../contracts';
+import { gameplayQuality, type TrackRecipe, type TrackStyle } from '../contracts';
 import { recipeKey, sanitizeRecipe } from '../world/track/recipe';
 import type { AppSettings } from './settingsSchema';
+import { sanitizeParkRecipe, parkRecipeKey } from '../world/park/recipe';
+import { parkRecipeFromSettings, type ParkSettings } from '../world/park/settings';
+import type { ParkRecipe } from '../world/park/types';
 
 export const MAX_SEED = 4294967295;
 /** Random seeds stay short enough to read out loud and type in. */
@@ -52,20 +55,22 @@ export interface ShareWorld {
   quality: AppSettings['quality'];
   /** A track-builder track: the recipe it was built from (the link then carries only the terrain and `trk`). */
   recipe?: TrackRecipe;
+  parkRecipe?: ParkRecipe;
 }
 
-type ShareSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'>;
+type ShareSettings = Pick<AppSettings, 'seed' | 'trackStyle' | 'gateCount' | 'laps' | 'difficulty' | 'quality'> & ParkSettings;
 
 /** The world a link describes: the one on screen while it is the one the settings ask for, else what the settings would build. */
 export function shareWorld(s: ShareSettings, w: ShareWorld | null): ShareWorld {
   if (w !== null) return w;
-  return { terrainSeed: s.seed, trackSeed: s.seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: s.difficulty, quality: s.quality };
+  return { terrainSeed: s.seed, trackSeed: s.seed, style: s.trackStyle, gateCount: s.gateCount, laps: s.laps, difficulty: s.difficulty, quality: s.quality,
+    ...(s.worldKind === 'theme-park' ? { parkRecipe: parkRecipeFromSettings(s) } : {}) };
 }
 
 /**
  * The share URL for a world: the page's own address with the world as query parameters. `seed` is the terrain, `tseed` the track
  * (only when it differs: the N key and the generator's retries move it), `style` and `gates` are what the track was built with.
- * The terrain grid depends on the quality tier, so `quality` rides along.
+ * The terrain grid depends on the quality tier, so `quality` rides along (extreme as ultra: same world, and the link opens on any GPU).
  */
 export function shareUrl(base: string, w: ShareWorld, extra: Readonly<Record<string, string>> = {}): string {
   const u = new URL(base);
@@ -73,9 +78,10 @@ export function shareUrl(base: string, w: ShareWorld, extra: Readonly<Record<str
   u.hash = '';
   u.searchParams.set('seed', String(w.terrainSeed));
   for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
+  if (w.parkRecipe) { u.searchParams.set('park', toBase64Url(parkRecipeKey(w.parkRecipe))); u.searchParams.set('quality', gameplayQuality(w.quality)); return u.toString(); }
   if (w.recipe !== undefined) {
     // The recipe holds the track's seed, gates, laps and difficulty; the terrain grid still depends on the quality tier.
-    u.searchParams.set('quality', w.quality);
+    u.searchParams.set('quality', gameplayQuality(w.quality));
     u.searchParams.set('trk', encodeRecipe(w.recipe));
     return u.toString();
   }
@@ -84,7 +90,7 @@ export function shareUrl(base: string, w: ShareWorld, extra: Readonly<Record<str
   u.searchParams.set('gates', String(w.gateCount));
   u.searchParams.set('laps', String(w.laps));
   u.searchParams.set('diff', String(Math.round(w.difficulty * 100)));
-  u.searchParams.set('quality', w.quality);
+  u.searchParams.set('quality', gameplayQuality(w.quality));
   return u.toString();
 }
 
@@ -108,7 +114,7 @@ export function menuShareUrl(base: string, s: ShareSettings, w: SharedWorld): st
     u.search = '';
     u.hash = '';
     u.searchParams.set('seed', String(w.terrainSeed));
-    u.searchParams.set('quality', w.quality);
+    u.searchParams.set('quality', gameplayQuality(w.quality));
     u.searchParams.set('mode', 'builder');
     return u.toString();
   }
@@ -151,4 +157,10 @@ export function decodeRecipe(code: string): TrackRecipe | null {
   } catch {
     return null;
   }
+}
+
+export function decodeParkRecipe(code: string): ParkRecipe | null {
+  if (code.length > 4096) return null;
+  const decoded = fromBase64Url(code);
+  try { const raw: unknown = decoded === null ? null : JSON.parse(decoded); return raw && typeof raw === 'object' && !Array.isArray(raw) ? sanitizeParkRecipe(raw) : null; } catch { return null; }
 }

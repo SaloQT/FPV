@@ -28,8 +28,11 @@ import type { WorldPreview } from './preview';
 import type { AppUi } from './ui';
 import type { WindModel } from './wind';
 import type { World } from './world';
+import type { ParkRuntime } from '../world/park/runtime';
+import type { ParkModule } from '../render/park';
 
 export interface AppMods {
+  park: ParkModule;
   atmosphere: AtmosphereModule;
   objects: ObjectsModule;
   vegetation: VegetationModule;
@@ -59,10 +62,16 @@ export interface AppCtx {
 
   /** The world on screen; replaced by `scene.ts` when a new track or terrain is built. */
   world: World;
+  park?: ParkRuntime;
   /** The start screen's live preview (set by wireSettings); the builder hands it the worlds it puts on screen. */
   preview: WorldPreview | null;
   /** What the quad can hit (track boxes, trees, rocks); `refreshColliders` replaces it. */
   colliders: ObstacleCollider[];
+  /**
+   * What the AI pilots sense: `colliders`, plus box stand-ins for the park round a park race course. Those take a few seconds to
+   * build, so the first call builds them, when a brain first flies.
+   */
+  senseColliders: () => readonly ObstacleCollider[];
   /** A rebuild is running: the frame loop idles until it is done. */
   busy: boolean;
   /** The tab is hidden: the loop idles. */

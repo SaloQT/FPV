@@ -205,6 +205,9 @@ export interface TrackData {
   laps: number;
   /** The recipe a custom track was built from (style 'custom'). */
   recipe?: TrackRecipe;
+  /** Park course identity; park recipes, rather than the ordinary gate generator, reproduce these courses. */
+  parkCourse?: string;
+  parkMap?: { guests: number; layout: string; rides: { name: string; pos: Vec3; coaster: boolean }[]; paths: Vec3[][]; rails: Vec3[][]; radius: number };
 }
 
 export interface TrackParams {
@@ -311,7 +314,10 @@ export interface Physics {
   readonly state: QuadState;
   /** Advance by exactly `dt` seconds (the caller runs a fixed-step accumulator; ~4000 Hz). */
   step(dt: number, input: StickInput): void;
-  reset(pos: Vec3, yawRad: number): void;
+  /** At rest, disarmed, on a fresh battery, or with `pack` 'kept' on the charge it has left (a respawn after a crash). */
+  reset(pos: Vec3, yawRad: number, pack?: 'fresh' | 'kept'): void;
+  /** The battery is too low to fly on: a respawn swaps it for a fresh one on the pad. */
+  packFlat(): boolean;
   setColliders(colliders: ObstacleCollider[]): void;
 }
 
@@ -327,7 +333,21 @@ export interface CameraState {
   far: number;
 }
 
-export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra';
+/**
+ * Graphics tier. `extreme` sits above `ultra` and has no frame-time budget: it is for screenshots, videos and powerful GPUs. Every
+ * module treats it as ultra until it opts in (render/contracts.ts: `isExtreme`, `tierTable`, `EXTREME_PROFILE`).
+ */
+export type RenderQuality = 'low' | 'medium' | 'high' | 'ultra' | 'extreme';
+/** The tiers that keep a frame-time budget: every tier but extreme. */
+export type BudgetedQuality = Exclude<RenderQuality, 'extreme'>;
+
+/**
+ * The tier that decides terrain heights, track generation, vegetation placement and colliders. Extreme only changes the pictures, so it
+ * builds the same world as ultra, and trained brains, saved tracks and leaderboards see one world for both.
+ */
+export function gameplayQuality(q: RenderQuality): TerrainQuality {
+  return q === 'extreme' ? 'ultra' : q;
+}
 
 export interface Settings {
   quality: RenderQuality;

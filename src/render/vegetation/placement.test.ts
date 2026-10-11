@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackData, TrackGate, TrackObstacle, Vec3 } from '../../contracts';
 import { PATH_CLEARANCE, REGION_RADIUS, TIER_LIMITS, placeVegetation, type InstanceSet } from './placement';
-import { MAX_SLOPE_DEG, MIN_SOIL } from './placementRules';
+import { TREE_COLLIDER_RANGE } from './colliders';
+import { KIND } from './meshBuilder';
+import { EMERGENT_MAX, MAX_SLOPE_DEG, MIN_SOIL } from './placementRules';
 import { rockAssets } from './rockGen';
 import { TerrainFields } from './terrainFields';
 import { blockerDiscs, eachPair, pathDistance, testScene } from './testScene';
@@ -192,9 +194,11 @@ describe('placeVegetation on a generated terrain and race track', () => {
 
   it('applies Poisson-disc spacing between plants: 1x the species spacing within a group, 0.6x across trees and bushes', () => {
     let pairs = 0, worst = Infinity;
+    // A conifer beyond the collider range may rise up to EMERGENT_MAX above the size it took its room at.
+    const room = (i: number): number => plants.scale[i] / (plants.pathDist[i] > TREE_COLLIDER_RANGE && variantPlan(plants.variant[i])?.foliage === KIND.needle && isTree(plants.variant[i]) ? EMERGENT_MAX : 1);
     eachPair(plants, 30, (i, j, d) => {
       const a = plants.variant[i], b = plants.variant[j];
-      const need = 0.5 * (VARIANT_DEFS[a].spacing * plants.scale[i] + VARIANT_DEFS[b].spacing * plants.scale[j]) * (isTree(a) === isTree(b) ? 1 : 0.6);
+      const need = 0.5 * (VARIANT_DEFS[a].spacing * room(i) + VARIANT_DEFS[b].spacing * room(j)) * (isTree(a) === isTree(b) ? 1 : 0.6);
       worst = Math.min(worst, d - need);
       pairs++;
     });

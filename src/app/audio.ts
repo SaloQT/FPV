@@ -5,6 +5,9 @@
 import type { QuadState } from '../contracts';
 import { AudioEngine, type AudioUpdateContext } from '../audio';
 import type { AppSettings } from '../ui/settingsSchema';
+import type { CameraState } from '../contracts';
+import type { ParkRuntime } from '../world/park/runtime';
+import { ParkAudio } from '../audio/park';
 
 export class AppAudio {
   private engine: AudioEngine | null = null;
@@ -12,6 +15,7 @@ export class AppAudio {
   private motors: number;
   private wind: number;
   private muted = true;
+  private parkAudio: ParkAudio | null = null;
 
   constructor(s: Pick<AppSettings, 'masterVolume' | 'motorVolume' | 'windVolume'>) {
     this.master = s.masterVolume;
@@ -52,6 +56,10 @@ export class AppAudio {
   update(state: QuadState, c: AudioUpdateContext): void {
     if (this.engine && !this.muted) this.engine.update(state, c);
   }
+  updatePark(runtime: ParkRuntime | undefined, camera: CameraState): void {
+    if (!this.parkAudio && runtime && this.engine?.context) this.parkAudio = new ParkAudio(this.engine.context);
+    this.parkAudio?.update(runtime, camera, this.muted ? 0 : this.master);
+  }
 
   /** The quad was put somewhere else: drop the motor/wind smoothing so nothing sweeps across the jump. */
   reset(): void {
@@ -66,7 +74,9 @@ export class AppAudio {
     if (!this.muted) this.engine?.beeper.lap();
   }
 
+  /** The race was finished: the fanfare, and no lost-model beacon for the landing after it. */
   finished(): void {
+    this.engine?.flightCompleted();
     if (!this.muted) this.engine?.beeper.finished();
   }
 
@@ -76,6 +86,7 @@ export class AppAudio {
   }
 
   dispose(): void {
+    this.parkAudio?.dispose(); this.parkAudio = null;
     this.engine?.dispose();
     this.engine = null;
   }

@@ -34,6 +34,8 @@ export interface GroupSources {
   probeSampler: GPUSampler;
   /** Top-down cloud shadow map (r = sun, g = moon transmittance). */
   cloud: GPUTextureView;
+  /** Canopy shadow map of every placed tree (see src/render/terrain/canopyShadow.ts), read by the sun shadow only. */
+  canopy: GPUTextureView;
 }
 
 const buf = (binding: number, buffer: GPUBuffer): GPUBindGroupEntry => ({ binding, resource: { buffer } });
@@ -63,7 +65,7 @@ export function buildGroups(s: GroupSources): RtGroups {
         buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
         view(3, read.r.view), view(4, read.g.view), view(5, read.b.view),
         view(6, write.r.view), view(7, write.g.view), view(8, write.b.view),
-        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud),
+        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(16, rc.parkLights!.buffer),
       ],
     });
   });
@@ -84,7 +86,7 @@ export function buildGroups(s: GroupSources): RtGroups {
       entries: [buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
         view(3, read.r.view), view(4, read.g.view), view(5, read.b.view),
         view(6, write.r.view), view(7, write.g.view), view(8, write.b.view),
-        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(12, probes.work!.ids)],
+        buf(9, s.prevPre), { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(12, probes.work!.ids), buf(16, rc.parkLights!.buffer)],
     });
   }) : null;
 
@@ -94,7 +96,7 @@ export function buildGroups(s: GroupSources): RtGroups {
       buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims), view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
       view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view),
       view(8, shade ? tex.raw0.view : hits[0].view), view(9, shade ? tex.raw1.view : hits[1].view),
-      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), ...(shade ? [view(12, hits[0].view), view(13, hits[1].view),
+      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(16, rc.parkLights!.buffer), ...(shade ? [view(12, hits[0].view), view(13, hits[1].view),
         ...(tex.giVisibility ? [view(14, tex.giVisibility[0].view), view(15, tex.giVisibility[1].view)] : [])] : []),
     ] });
   };
@@ -105,7 +107,7 @@ export function buildGroups(s: GroupSources): RtGroups {
     return d.createBindGroup({ label: 'rt gi visibility '+p, layout: L.giVisibility!, entries: [
       buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims), view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
       view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view), view(8, visibility[0].view), view(9, visibility[1].view),
-      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), view(12, hits[0].view), view(13, hits[1].view),
+      { binding: 10, resource: s.probeSampler }, view(11, s.cloud), view(12, hits[0].view), view(13, hits[1].view), buf(16, rc.parkLights!.buffer),
     ] });
   }) : null;
   const groups: RtGroups = { aux, probe, probePlan, probeCompact, latch, giHits, giShade, giVisibility, trace: {}, temporal: {}, atrous: {} };
@@ -116,12 +118,13 @@ export function buildGroups(s: GroupSources): RtGroups {
     groups.trace[sig] = both((p) => {
       const lit = probes.sets[p ^ 1];
       return d.createBindGroup({
-        label: `rt ${sig} trace ${p}`, layout: L.trace,
+        label: `rt ${sig} trace ${p}`, layout: sig === 'shadow' ? L.shadowTrace : L.trace,
         entries: [
           buf(0, s.params), buf(1, buffers.nodes), buf(2, buffers.prims),
           view(3, lit.r.view), view(4, lit.g.view), view(5, lit.b.view),
           view(6, tex.auxDepth[p].view), view(7, tex.auxNormal[p].view),
-          view(8, tex.raw0.view), view(9, out1), { binding: 10, resource: s.probeSampler }, view(11, s.cloud),
+          view(8, tex.raw0.view), view(9, out1), { binding: 10, resource: s.probeSampler }, view(11, s.cloud), buf(16, rc.parkLights!.buffer),
+          ...(sig === 'shadow' ? [view(17, s.canopy)] : []),
         ],
       });
     });

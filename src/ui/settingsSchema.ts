@@ -2,9 +2,17 @@ import { DEFAULT_SETTINGS, GENERATED_STYLES, type FlightMode, type GeneratedStyl
 import { defaultGamepadConfig, type GamepadConfig } from '../input/gamepadMap';
 import { sanitizeGamepadConfig } from '../input/gamepadConfig';
 import { defaultRateSettings, sanitizeRateSettings, type RateSettings } from '../sim/fc/ratePresets';
+import { PARK_SIZES, PARK_LAYOUTS, PARK_THEMES, type ParkRecipe } from '../world/park/types';
 
 /** Settings the pilot controls that the shared `Settings` contract has no room for. */
 export interface UiSettings {
+  worldKind: 'track' | 'theme-park';
+  parkSize: ParkRecipe['size'];
+  parkTheme: ParkRecipe['theme'];
+  parkLayout: ParkRecipe['layout'];
+  parkGuests: number;
+  parkRoute: ParkRecipe['route'];
+  parkCoaster: number;
   /** 0..1 strength of the mouse stick's spring back to centre; 0 holds the stick where the mouse left it. */
   mouseCentering: number;
   /** 0..1 stick response curve: 0 is linear, 1 is soft around the centre. */
@@ -50,6 +58,7 @@ export const TRANSIENT_KEYS: ReadonlySet<keyof AppSettings> = new Set<keyof AppS
 export function defaultAppSettings(): AppSettings {
   return {
     ...DEFAULT_SETTINGS,
+    worldKind: 'track', parkSize: 'destination', parkTheme: 'mixed', parkLayout: 'random', parkGuests: 3000, parkRoute: 'free', parkCoaster: 0,
     observer: { ...DEFAULT_SETTINGS.observer },
     mouseCentering: 0.6,
     mouseExpo: 0,
@@ -115,7 +124,7 @@ function name(v: unknown, fb: string): string {
   return typeof v === 'string' && v.length > 0 && v.length <= 64 ? v : fb;
 }
 
-export const QUALITY_TIERS: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
+export const QUALITY_TIERS: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra', 'extreme'];
 export const FLIGHT_MODES: readonly FlightMode[] = ['acro', 'angle', 'horizon'];
 export const TRACK_STYLES: readonly GeneratedStyle[] = GENERATED_STYLES;
 export const TIME_SCALES: readonly number[] = [0, 1, 10, 60, 600];
@@ -123,6 +132,8 @@ export const TIME_SCALES: readonly number[] = [0, 1, 10, 60, 600];
 const MAX_TIME_MS = 8.64e15;
 
 const RULES: Rules = {
+  worldKind: oneOf(['track', 'theme-park']), parkSize: oneOf(PARK_SIZES), parkTheme: oneOf(['mixed', ...PARK_THEMES]),
+  parkLayout: oneOf(['random', ...PARK_LAYOUTS]), parkGuests: num(0, 10000, true), parkRoute: oneOf(['free', 'tour', 'coaster', 'race']), parkCoaster: num(0, 9, true),
   quality: oneOf(QUALITY_TIERS),
   targetFps: zeroOr(30, 1000),
   frameCap: zeroOr(15, 1000),

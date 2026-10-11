@@ -11,6 +11,7 @@ import { describeStyle, effectiveGates, effectiveLaps, gateRange, lapsApply } fr
 import { TrackPreview } from './trackPreview';
 import type { PreviewState } from './trackPreviewModel';
 import './flow.css';
+import { WORLD_KIND, PARK_SETUP } from './menuPark';
 
 /** Same text field the world seed has always been, but it takes words too, and sits next to the buttons that pick or share one. */
 function seedRow(host: ControlHost): BuiltControl {
@@ -123,10 +124,13 @@ export class WorldCard {
   readonly root: HTMLElement;
   private readonly preview = new TrackPreview();
   private readonly group = new ControlGroup();
+  private readonly trackControls: HTMLElement;
+  private readonly parkControls: HTMLElement;
 
   constructor(host: ControlHost) {
     const controls = el('div', 'fpv-world-controls');
     const seed = this.group.add(seedRow(host)).root;
+    const environment = this.group.add(buildControl(WORLD_KIND, host)).root;
     const [style, difficulty] = setup();
     controls.append(this.group.add(buildControl(style, host)).root);
     controls.append(this.group.add(styleCaption()).root);
@@ -134,11 +138,15 @@ export class WorldCard {
     controls.append(this.group.add(styledSlider(host, 'Laps', 'laps', 'One run: only the Race style is a circuit.')).root);
     controls.append(this.group.add(buildControl(difficulty, host)).root);
     controls.append(this.group.add(buildOptionToggle('raceStart', 'Race start', 'A 3-2-1-GO keeps the quad disarmed until GO. Off is free flight.', host)).root);
-    this.root = el('section', 'fpv-card fpv-world', el('h3', 'fpv-section-title', 'World'), seed, el('div', 'fpv-world-grid', this.preview.root, controls));
+    this.trackControls = controls;
+    this.parkControls = el('div', 'fpv-world-controls', ...PARK_SETUP.map(c => this.group.add(buildControl(c, host)).root));
+    this.root = el('section', 'fpv-card fpv-world', el('h3', 'fpv-section-title', 'World'), seed, el('div', 'fpv-world-grid', this.preview.root, el('div', '', environment, controls, this.parkControls)));
   }
 
   sync(settings: AppSettings): void {
     this.group.sync(settings);
+    this.trackControls.hidden = settings.worldKind === 'theme-park';
+    this.parkControls.hidden = settings.worldKind !== 'theme-park';
   }
 
   setPreview(state: PreviewState): void {
