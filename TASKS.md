@@ -31,9 +31,9 @@ Rules for every render change: A/B with clouds off, interleaved rounds, and a re
 ## Foliage
 
 - [ ] Leaf spec and back-face ambient lift the crown shadows; partly done (leaves). Check: `tools/audit/termsplit.py` on views edge, interior, lone and oak-lone at 07:00, 12:00 and 18:48, ultra, clouds off: darkest 5 % at least 4 stops under the frame median on every view (now oak-lone 3.8-4.6, edge 2.6-4.8, interior 2.4-3.0, lone 1.9-3.6).
-- [ ] Photo-referenced spruce crown; partly done (leaves). Check: `.bench/leaves/skyfrac.py` on the spruce-10m view: sky inside the crown silhouette 4-9 % (photos spruce-tree/3.jpg and 7.jpg; 7.jpg is only in `.bench/audit/refs`). Was 37 %, about 13 % on the CPU probe, render pending.
-- [ ] Scots pine crown density, waiting on the trees' pinePlan secondary branches (leaves). Check: the same skyfrac check on pine-10m, 7-13 % (photos pine-crown/9.jpg and 4.jpg); now about 40 %.
-- [ ] Photo-referenced broadleaf crowns (leaves). Check: skyfrac on oak-20m and birch-20m within 5 points of the oak-crown photos.
+- [ ] Photo-referenced spruce crown; partly done (leaves). Check: `tools/audit/skyfrac.py` on the spruce-10m view: sky inside the crown silhouette 4-9 % (photos spruce-tree/3.jpg and 7.jpg; 7.jpg is only in `.bench/audit/refs`). Was 37 %, about 13 % on the CPU probe, render pending.
+- [ ] Scots pine crown density, waiting on the trees' pinePlan secondary branches (leaves). Check: `tools/audit/skyfrac.py` on pine-10m, 7-13 % (photos pine-crown/9.jpg and 4.jpg); now about 40 %.
+- [ ] Photo-referenced broadleaf crowns (leaves). Check: `tools/audit/skyfrac.py` on oak-20m and birch-20m within 5 points of the oak-crown photos.
 - [ ] Backlit leaf transmission (leaves). Check: the oak-lone view against the sun shows yellow-green transmitted leaves, with only deep layered regions dark; beside oak-crown/0.jpg and 3.jpg, outer backlit leaf hue 70-90 degrees and luma above the crown median.
 - [ ] Foliage reads as flat stamped cards with hard edges at 10-20 m (leaves). Check: `tools/audit/metrics.py` forest local contrast at least 0.8 (photos 0.84-1.38, now 0.45-0.64), and a fly-through mp4 with no stair-stepped card outlines.
 - [ ] Leaf self-shadow (leaves, with trees for crown structure). Check: metrics.py local contrast on oak about 1.08 (now 0.45-0.51) and on conifers about 1.38 (now about 0.6).
@@ -58,9 +58,7 @@ Rules for every render change: A/B with clouds off, interleaved rounds, and a re
 
 ## Build and render speed
 
-- [ ] Async pipeline creation, kept only if faster (speedup). Check: cold start time against the synchronous build.
-- [ ] Dawn `use_dxc`, kept only if faster and pixel-identical (speedup). Check: shot timing and a raw frame diff.
-- [ ] Persistent pipeline cache: feasibility report only (speedup). Check: a written finding.
+- [ ] Async pipeline creation with ready() for terrain and vegetation; in, pixel check running (speedup). Check: `.bench/speedup/out/s5-*-diff.png` max difference at most 1 for the edge and lone views at ultra, and `tools/audit/modcost.mjs` renderer create time before and after.
 - [ ] Theme park is CPU-bound (ultra 37-49 fps, high 19.6 fps, ready 34-42 s); deferred by Nick on 2026-10-11 (Nick). Check: a decision to start.
 
 ## Theme park

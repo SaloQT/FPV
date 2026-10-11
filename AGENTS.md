@@ -114,6 +114,7 @@ Each file's header has its usage. Outputs go under `.bench/`.
 - `tools/audit/metrics.py`: renders beside reference photos (`tools/audit/refs/`, credits in
   [refs/CREDITS.md](tools/audit/refs/CREDITS.md)) with luma p5/p50/p95, saturation, colourfulness and local contrast; writes the audit sheet.
 - `tools/audit/meterscore.py`, `termsplit.py`, `pstats.py`, `darkmask.py`: exposure scores, dark-pixel lighting terms, run statistics.
+- `tools/audit/skyfrac.py`: sky fraction inside a crown's silhouette, the same way for a photo and a render (crown-density checks).
 - `tools/audit/modcost.mjs`: start-up time and GPU ms of each render module (one module switched off at a time).
 - `tools/audit/perf-ab.mjs` then `perf-summary.py`: HEAD worktree against the working tree in the browser.
 - `tools/audit/fetchrefs.py`, `findref.py`, `contact.py`: find, fetch and review reference photos (licence kept in `sources.json`).

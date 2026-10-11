@@ -82,5 +82,7 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
 - Speed-up plan (`.bench/buildresearch/report.md`): the tree cache key hashed every vegetation file, so any edit rebuilt every tree
   (about 122 s). Landed: a cache key from the import graph (`sourceClosure.ts`), a long-lived render server and client, a persistent
   out-of-process bundler and WGSL hot-swap of the affected pipelines. A shot after a shader edit takes about 1 s instead of 15-40 s
-  (`tools/RENDER_SERVER.md`).
+  (`tools/RENDER_SERVER.md`). Dawn already compiles with DXC by default, so `use_dxc` changes nothing; a pipeline cache that lasts
+  across processes would need a rebuilt dawn.node, so it is out of scope.
+- The extreme leaf atlas cache went from 224 MB to 25.5 MB, stored deflated (covered by `treeCache.test.ts`).
 - Bench tools promoted from `.bench/` into `tools/audit/`, `tools/compare/`, `tools/lightcast/` and `tools/views/` so a fresh clone has them.
