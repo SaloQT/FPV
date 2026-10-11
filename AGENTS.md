@@ -1,7 +1,7 @@
 # FPV Sim: start here
 
 This file is the entry point for any agent session (Claude Code, Codex or another harness). Read it first, then the design note for the
-area you work in. Facts here come from package.json, the tools, README.md, src/render/README.md and the logs of the 2026-10-11 session;
+area you work in. Facts here come from package.json, the tools, docs/reference.md, src/render/README.md and the logs of the 2026-10-11 session;
 anything not confirmed is marked **unconfirmed**.
 
 ## Resume here
@@ -32,7 +32,7 @@ A WebGPU FPV quadcopter simulator in the browser (TypeScript, Vite): a rigid-bod
 procedurally eroded terrain with grass and trees, generated race tracks, a seeded operating theme park, a physically based sky, and a
 hybrid renderer (rasterised G-buffer plus compute ray tracing for shadows, GI and reflections). AI pilots ("brains") are trained with PPO
 on the GPU, headless, and fly the game's own TypeScript flight model. The same renderer runs offline in Node through Dawn (npm `webgpu`)
-for screenshots, videos and benchmarks. The full feature description is [README.md](README.md).
+for screenshots, videos and benchmarks. The full feature description is [docs/reference.md](docs/reference.md).
 
 ## Layout
 
@@ -160,7 +160,7 @@ Each file's header has its usage. Outputs go under `.bench/`.
 ## Quality tiers
 
 `low`, `medium`, `high`, `ultra`, `extreme`, plus the **Performance 240** preset (High with the costliest budgets cut). The table of what
-each tier sets is in [README.md, Quality tiers](README.md#quality-tiers); profiles live in `src/render/qualityPresets.ts`.
+each tier sets is in [docs/reference.md, Quality tiers](docs/reference.md#quality-tiers); profiles live in `src/render/qualityPresets.ts`.
 
 **Extreme** is the best picture the renderer can make, for stills and videos: no frame-rate target, dynamic resolution off, no budget
 test. It builds exactly Ultra's world (terrain, track, where every plant stands, every collider), so brains, saved tracks, leaderboards
