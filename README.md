@@ -19,6 +19,16 @@ npm run dev          # Vite dev server on port 5173
 
 Open **http://localhost:5173** in a WebGPU browser and click "Click to fly".
 
+Choose **Environment → Theme park** on the start screen for a seeded operating park: eight themes, four layout families,
+seven coaster families including the enclosed **Stellar Mountain**, eleven flat-ride families and up to 10,000 guests.
+Free exploration is the default; park-tour, coaster-following and race-course routes are available. Rides and crowds keep
+running while you fly between them. The **Race course** route (or `?world=theme-park&route=race`) builds a two-lap gated
+course through the park, along the walkways and between the rides. The AI pilots fly and race the tour, every coaster and the
+race course from the AI pilots tab (try `?world=theme-park&seed=7&size=compact&route=race&race=ace,ultimate1,a`). **P** pauses the park, **R** respawns only the drone, and **N** generates another park.
+See [theme park controls, simulation and verification](src/world/park/README.md).
+
+Example: `http://localhost:5173/?world=theme-park&seed=1337&size=destination&theme=mixed&quality=high&perf240=1&dyn=1&target=60`.
+
 - **Browser**: Chrome or Edge 113 or newer (Windows, macOS, ChromeOS; Linux may need `chrome://flags/#enable-unsafe-webgpu` and
   `#enable-vulkan`). Safari 26 and recent Firefox builds ship WebGPU on some platforms but are not tested here.
 - **Hardware acceleration must be on**, and `chrome://gpu` should list WebGPU as "Hardware accelerated". Software adapters work but
@@ -78,14 +88,14 @@ Handy for sharing a world and for the test tooling (`src/app/params.ts`, `src/ap
 | `seed=<n>` `style=race\|freestyle\|mountain\|sprint\|technical\|acro\|industrial` `gates=<n>` `laps=<n>` `diff=<0-100>` | World and track (difficulty in percent) |
 | `tseed=<n>` | The track's own seed when it is not the terrain seed (the N key and the generator's retries move it). Honoured by the first build too, also with `autostart=1`; `window.__fpv.stats.request` shows the track request that was built |
 | `t=<0-24>` | Local solar hour at the flying site |
-| `quality=low\|medium\|high\|ultra` `perf240=1` `scale=<0.25-1>` `dyn=0\|1` | Rendering |
+| `quality=low\|medium\|high\|ultra\|extreme` `perf240=1` `scale=<0.25-1>` `dyn=0\|1` | Rendering |
 | `target=<fps>` `cap=<fps>` `refresh=<hz>` | Dynamic-resolution target (0 = display), frame cap (0 = none), assumed display refresh |
 | `cam=fpv\|chase\|free` `autostart=1` `scenario=hover\|fly\|crash\|gate` | Skip the menu, scripted autopilot (`agl=<m>` hover height) |
 | `countdown=0\|1` `hold=1` `advance=<frames>` `fixeddt=<s>` | Force the 3-2-1-GO on or off (off for `autostart` runs), do not start the real-time loop once the app is ready, run this many deterministic frames before ready, and use a fixed frame step (test tooling) |
 | `wind=<m/s>` `winddir=<deg>` | Wind |
 | `bench=1` `benchSeconds=<s>` `benchWarmup=<s>` | Benchmark (below) |
 | `gpuProfile=1` | Explicit diagnostic timestamp breakdown; off by default, with RT pass segmentation overhead |
-| `brain=<name>` `race=<a,b,c>` | A trained brain from `public/brains` flies your quad, or a spectator race between those brains starts (AI pilots below) |
+| `brain=<name>` `race=<a,b,c>` `race=<a*15,b*10,c*5>` | A trained brain from `public/brains` flies your quad, or a spectator race between those brains starts; `*n` gives a brain n quads, up to 32 in all (AI pilots below) |
 | `mode=builder` `trk=<code>` | Open the track builder instead of the start screen; `trk` is a builder recipe (builder share links carry it), built on the terrain of `seed` and `quality` |
 
 Parameters change the running session only; they never overwrite the pilot's saved settings. **Share links** (the world card's Copy link) carry
@@ -106,10 +116,24 @@ names the tier its terrain was built on.
 - **Terrain** (`src/world/terrain`, built in a Web Worker): a domain-warped ridged macro shape with a valley corridor, stream-power valley
   incision, grid refinement, Beyer droplet hydraulic erosion, thermal talus and soil creep, then material maps (flow, soil depth,
   sediment, wetness) and optional lakes. Map size 2 to 4 km by tier (512 x 512 at 4 m on Low up to 2048 x 2048 at 2 m on High), 220 m of
-  relief. Rendered as a geometry clipmap with procedural micro-relief and ground materials driven by the maps.
+  relief. Rendered as a geometry clipmap with procedural micro-relief and fourteen ground materials driven by the maps (turf, hay, soil,
+  gravel, outcrop rock, sand, snow, loam, moss, leaf litter, needle duff, mud, cracked clay and scree): litter and needles lie under the
+  closed crowns of the placed trees, streams are gravel beds (braided channels across wide floodplains), the park's lawns are mown turf,
+  and past the map edge the clipmap carries low far hills with stands of forest out to the haze. All of it is shading; the surface the
+  drone collides with is the height field alone.
 - **Vegetation**: GPU-driven grass blades with three LODs, wind and prop-wash, with meadow flowers (round heads in four colours, white ox-eye
   daisy, buttercup yellow, violet and pink clover, on a small share of the blades, in drifts); procedurally grown trees and bushes with LODs and
-  wind; boulders. Placement follows slope, soil depth and wetness (nothing grows in rivers).
+  wind; boulders. Placement follows slope, soil depth and wetness (nothing grows in rivers). Trees come as spruce, Scots pine, oak, birch, beech
+  and standing dead snags, each species in growth forms: open-grown (low limbs, broad crown), forest-grown (long bare bole, high narrow crown,
+  dead lower twigs on spruce) and a character form (old drooping spruce, crooked pine, stag-headed veteran oak, weeping birch; birch also grows
+  in clumps of stems). Closed stands get mostly forest-grown trees, open ground mostly open-grown ones. Trunks spread into a root flare and short
+  buttress roots, the foot of every tree is sheared onto the slope it stands on, and bark is shaded per species in real metres on the limb's
+  own cylinder (braided oak furrows, pine plates and orange upper bark, spruce scales, white birch with lenticels and a black fissured foot,
+  smooth grey beech, weathered dead wood) with moss on the north side and at the foot, lichen and damp darkening near the ground. Trunk
+  colliders follow leaning and multi-stemmed trunks with up to four stacked boxes per stem. At the extreme tier trees keep their full mesh
+  three times as far, never drop to flat crown billboards, broadleaf crowns are denser, and the far canopy cards get whorled or clumped
+  outlines with gaps and trunks.
+  `node tools/tree-shots.mjs` renders close-ups and forest views offline with per-pass GPU times (`--artifact` for a before/after build).
 - **Track generator**: seven styles with gate spacing, turn-radius, slope and clearance validation; gates with LEDs, flags, cones and
   obstacles; gate timing, laps and splits. race, freestyle, mountain and sprint are the original four (their tracks are unchanged, so old
   share links still work). **technical**, **acro** and **industrial** are built from manoeuvres: split-S, power loop, corkscrew, ladder,
@@ -128,7 +152,8 @@ names the tier its terrain was built on.
   colouring, scale bar and a progress bar while the next course is generated), the time-of-day control and a controls reminder. A race starts with a
   **3-2-1-GO** countdown on the pad (the quad stays disarmed until GO; switch it off in Settings, Simulation for free flight). After the last gate a
   **result card** shows the total time, the best lap, every lap against the best, the best lap's gate-to-gate bars and the buttons Restart (**R**), New track
-  (**N**) and Menu. A **stick indicator** on the OSD (two boxes with roll, pitch, yaw and throttle; Settings, Camera, On-screen display) shows what you send.
+  (**N**) and Menu. Behind it the quad levels out, slows down, lands and disarms; a brain flies on along the course for 4 s and its quad
+then waits on the pad, disarmed. A **stick indicator** on the OSD (two boxes with roll, pitch, yaw and throttle; Settings, Camera, On-screen display) shows what you send.
 - **Sky and time**: Hillaire-style atmosphere (transmittance, multiple-scattering, sky-view and aerial-perspective tables), ray-marched clouds
   with temporal accumulation (default cover 0.40 cumulus and 0.30 cirrus, no menu field; through twilight the cumulus falls to 35 % of that), the Sun
   (Meeus), the Moon (full ELP truncation, phase and light) and Mercury to Saturn (JPL elements). **Stars are real**: 41,487 stars to magnitude 8 from the
@@ -142,24 +167,47 @@ names the tier its terrain was built on.
   exposure (see [Rendering pipeline](#rendering-pipeline)).
 - **FPV camera**: tilt, field of view, lens distortion, chromatic aberration, vignette, rolling-shutter lean, motor vibration ("jello"), physical
   motion blur (1/400 s exposure), sensor shot noise and an analogue/digital video-noise look, plus an OSD (battery, speed, altitude, timer, gate).
-- **Audio**: motor tones from the rotor speeds, wind, prop-wash, impacts and beeps, synthesised with Web Audio.
+- **Audio**: motor tones from the rotor speeds, wind, prop-wash, impacts and beeps, synthesised with Web Audio. The buzzer beeps on arm and
+  disarm, twice every 3 s while armed below 3.5 V a cell (low battery), and three long beeps every 4 s once a quad has lain disarmed on
+  the ground for 20 s after a crash (the lost-model beacon; a finished race never sets it off).
 
 ## AI pilots (PPO drone brains)
 
-A brain is a small neural network (40 inputs, two tanh layers of 128, 4 outputs) trained with PPO to fly this game's quad. It sees
+A brain is a small neural network (99 inputs, two tanh layers of 128, 4 outputs) trained with PPO to fly this game's quad. It sees
 what a pilot would know (body-frame velocity and rates, which way is up, height above the ground, the next two gates in body
 axes, its last sticks, motor speeds, battery) and moves the acro sticks 50 times a second. The real flight controller, motors and
 airframe in `src/sim` do the rest, so a brain flies exactly the quad you fly.
 
-**Watch one fly:** Esc, **AI pilots** tab, pick a brain, **Fly**. It arms on the pad, flies the track and respawns at the last gate
-after a crash. **Stop** gives the sticks back (a quad in the air keeps hover throttle). **Load a brain file** adds any brain JSON
-the trainer wrote. `?brain=ace` does the same from the URL.
+It also senses obstacles (`src/ai/sense.ts`): 35 range rays, 7 across and 5 up, 20° apart over the FPV camera's view (30° up
+from the nose), each giving how near the first ground or collider surface is within 30 m; and, for each side of the quad (right,
+left, up, down, back, front), the nearest collider surface within 8 m, as a direction and how near. Colliders are everything the
+quad can hit: gate frames, track obstacles, trees and rocks. Brain files from before obstacle sensing (40 inputs) still fly and
+read only their 40; training from one gives it zero weights on the new inputs, so it starts out flying as it did.
 
-**Spectator race:** tick two or more brains under **Spectator race** and **Start race** (or `?race=ace,dash,steady,rookie`). The
-first brain flies your quad; the others fly their own copies of the physics in lockstep with it, on the same ground, obstacles
-and wind, after the same 3-2-1-GO. They are ghosts: drones do not collide with each other. Each racer's rear LEDs carry its
-colour on the leaderboard (top right). **Camera follows** picks whose quad the camera rides with; C still switches first person,
-chase and free. Restart run (Backspace) restarts the race.
+**Watch one fly:** Esc, **AI pilots** tab, pick a brain, **Fly**. It arms on the pad and flies the track. **Stop** gives the
+sticks back (a quad in the air keeps hover throttle). **Load a brain file** adds any brain JSON the trainer wrote. `?brain=ace`
+does the same from the URL.
+
+A brain is put back where its training would have ended the episode, so it never flies what it never learned: at a crash it
+lets go of the sticks and its quad respawns 1.2 s later; with no gate for its training's stall time (8 s by default), or once it
+leaves the world training flew in (off the terrain, 120 m over its highest point), it respawns at once. It respawns where its
+training started episodes: the game's checkpoint, 1.5 m before the last cleared gate. Brain files from before this was recorded
+started 1.5 m before the gate due next, so those respawn there.
+
+**Spectator race:** tick brains under **Spectator race**, set how many quads each flies, and **Start race** (or
+`?race=ace,dash,steady,rookie`, or `?race=ultimate*15,ace*10,steady*5` for 30 quads). A race holds 2 to 32 quads. The first
+brain ticked (the first in `race=`) flies your quad; the others fly their own copies of the physics in lockstep with it, on the same ground,
+obstacles and wind, after the same 3-2-1-GO. They are ghosts: drones do not collide with each other. Each quad steps on the main
+thread at about 150 times real time, so 30 quads take about a fifth of a core.
+
+Race pilots draw their sticks from the brain's own action spread, as in training, capped at 0.15 and seeded per quad from the
+world seed, so copies of one brain fly their own lines and the same race replays the same way. A brain flying alone (**Fly**)
+uses its mean action. On a clean track copies stay in a close pack; harder tracks spread them out.
+
+The leaderboard sits under the race readout on the right. Each brain's quads share its LED colour and are labelled
+`ultimate #3`; when a brain flies several, a line per brain gives its best place and how many have finished. The board lists
+the top 10 and the followed quad, and counts the rest. **Camera follows** picks whose quad the camera rides with; C still
+switches first person, chase and free. Restart run (Backspace) restarts the race.
 
 **Training** runs headless on the GPU in Node (Dawn through the `webgpu` package; D3D12 on Windows):
 
@@ -178,13 +226,75 @@ physics steps at 4 kHz) per second on the original four styles once the policy s
 million); the default mix with the new styles is heavier, about 1.0 to 1.1 million.
 
 The reward follows progress along the track's racing line, plus each gate passed. On a point-to-point track the line starts at
-the pad, so the take-off leg to the first gate pays too. Options: `--envs`, `--steps`, `--worlds [48]` (few worlds overfit),
+the pad, so the take-off leg to the first gate pays too. Progress pays only up to 3 m past the gate due next: a drone that
+misses a gate earns nothing for flying on, only for going back through it (before, flying on paid as well as racing, and brains
+learned to fly off after a miss). An episode starts on the pad or at one of the game's checkpoints (1.5 m before a gate, the gate
+after it due next), at rest; it ends at a crash, out of the world, on an empty battery, after the stall time without a gate, or
+at 60 s. The brain file records the stall time, the ceiling and the checkpoint start, and the game respawns brains by them. Options: `--envs`, `--steps`, `--worlds [48]` (few worlds overfit),
 `--styles` (default every generated style in turn), `--recipes [worlds / 6]` random track-builder recipes among the worlds, `--track
-a.json,b.json` builder exports or track files flown as extra worlds, `--seed`, `--lr`, `--lrEnd`, `--every` (checkpoint minutes),
+a.json,b.json` builder exports or track files flown as extra worlds, `--parks seed[:compact|destination|mega][:race|tour|coasterN]`
+theme parks flown as extra worlds along their race course (the default), the park tour or coaster N's line (counted from 0, with
+a hoop every 30 m), such as `--parks 1337,7:compact:coaster1,31415:mega:tour` (up to 8; the Theme park racing template uses
+`1337,7:compact,31415:mega`), `--seed`, `--lr`, `--lrEnd`, `--every` (checkpoint minutes),
 `--out`, `--env crashPenalty=30,ratePenalty=4e-4` (reward settings in `src/ai/gpu/envKernel.ts`). `--styles
 race,freestyle,mountain,sprint --recipes 0` gives the 48 worlds the trainer used before the new styles.
 
-**Live dashboard:** while it trains, `train.mjs` serves a dashboard on http://127.0.0.1:8787 (`--dash <port>`, `--dash 0` turns it
+**Training dashboard:** run `npm run train` and open http://localhost:8787. Opening the dashboard does not start training.
+`brain:train` and `brain:dash` also open this dashboard; use `npm run brain:train-cli -- --name ace --minutes 30` for direct CLI
+training. The home page sets up a run in four steps, with the previous runs beside it:
+
+1. **Template**: what the brain should get better at. Filter by goal; each card says whether it suits a new brain or one that
+   already finishes laps.
+2. **Brain and duration**: **New brain** (fresh weights) or a saved brain to continue, the minutes, and an optional run name.
+3. **Worlds**: tiles for the track styles the generated worlds use (**Select all**, **Clear**), and a theme park picker: a
+   seed (the dice picks one at random), the size, and the route (race course, park tour, or a coaster by its World menu name),
+   then **Add park**. Each park shows as a card with a remove button.
+4. **Review settings**: what the template changes from the defaults, and why. **All settings** holds every PPO, reward,
+   environment and run setting in groups, each with its help text. A dot marks a value changed from the template;
+   **Reset to template** puts them back.
+
+**Start training** checks every setting and opens the first invalid one. Each run gets a new name, and continuing a saved brain
+writes a new file and keeps the original. Rewards and most learning settings are compiled into GPU kernels, so they are fixed for
+the run: stop and save, then continue the saved brain in a new run to change them. Continued brains keep their network
+architecture and learned initial action spread.
+
+| Template | Goal | Start from | What it changes |
+|---|---|---|---|
+| Balanced | Getting started | Either | Nothing: the trainer defaults. |
+| First laps | Getting started | New brain | Bigger gate reward, more pad starts, calmer air, 10 s stall limit, classic tracks, 20 min. |
+| Quick check | Getting started | Either | 4096 drones on 12 worlds for 3 min, to test settings or the GPU. |
+| Marathon | Getting started | New brain | 2 h on 96 worlds (16 random recipes), learning rate 3e-4 falling to 3e-5. |
+| Lap time attack | Faster laps | Brain that finishes laps | Progress reward 1.6, low rate and smoothness penalties, crash penalty 25, 5 s stall limit. |
+| Race pace | Faster laps | Brain that finishes laps | Progress reward 1.3 with higher rate and smoothness penalties, crash penalty 20, 6 s stall limit. |
+| Technical precision | Faster laps | Either | Technical, acro, industrial and race worlds plus 12 recipes; gate reward 8, crash penalty 25. |
+| Smooth lines | Smoother flight | Brain that finishes laps | Triple rate penalty, four times the stick change penalty, no exploration bonus. |
+| Cinematic cruise | Smoother flight | Brain that finishes laps | Very high smoothness penalties, progress reward 0.8, calm air, classic tracks. |
+| Final polish | Smoother flight | Brain that finishes laps | Learning rate 5e-5 falling to 1e-5, PPO clip 0.1, capped action spread. |
+| Safe finisher | Fewer crashes | Brain that finishes laps | Crash penalty 40, higher stall penalty, gate reward 6. |
+| All-weather | Fewer crashes | Either | Wind on 9 in 10 episodes up to 12 m/s, sites up to 2500 m, -5 to 40 °C, 64 worlds. |
+
+`train.mjs --template <id>` (`first-laps`, `lap-attack`, `smooth-lines`, ...; the ids are in
+`tools/brain/dashboard/js/templates.js`) starts from the same settings on the command line; flags you pass still win.
+
+A run's page shows its iteration, elapsed time against the duration, decisions per second, mean return, crash rate and best lap,
+each with its change over the last tenth of the run. Three tabs follow: **Training** (the worlds with the traced drones, an
+elevation profile, and the key or all metric charts), **Settings** (every setting of the run, with the template's changes
+marked) and **Compare brains**. **Save checkpoint** writes the brain after the current iteration; **Stop and save** asks first,
+then finishes the iteration, saves and ends the run. The server stays open so you can start another. A red alert appears when the
+GPU rejects training commands (the iterations carry on with empty metrics), and an amber one when no episode has ended for 20
+iterations. Previous runs list their best lap, crash rate, template and GPU errors: **View** opens the replay paused,
+**Continue training** picks its brain, **Watch** opens it in the game, and **Use settings** copies its settings into the form
+without starting.
+
+**Watch in game** (top right, or **Watch** on a run) opens the game in a new tab with saved brains flying. Set how many drones
+each brain flies with its stepper: one drone flies your quad, two or more race (up to 32). The first brain you pick flies your
+quad and the camera rides it. The track is one of the run's training worlds, rebuilt exactly from its share link at low
+graphics (the tier the trainer builds terrain at; a park world opens that park and route), a generated track with any style,
+seed, gates, laps, difficulty and graphics, or a theme park of any seed and size, flown along its race course, the park tour
+or any of its coasters. The dashboard starts the game's Vite dev server on port 5173 the first time (the next free port if 5173 is taken),
+uses a dev server already serving this checkout instead, and stops the one it started when the dashboard closes.
+
+**Direct CLI training:** while it trains, `train.mjs` serves a dashboard on http://127.0.0.1:8787 (`--dash <port>`, `--dash 0` turns it
 off). It shows 15 interactive charts (return, crash rate, gates per minute, laps, best lap, KL, losses, action spread, throughput and more), a top-down
 view and a side profile of the training worlds with the traced drones (`--trace [256]`) flying them, and a timeline you can scrub back
 through or keep on Live. On a chart, Ctrl or Shift + wheel zooms, drag pans, click scrubs and double-click resets. Save writes a
@@ -196,7 +306,8 @@ Checks that the GPU copy is the game's flight model:
 
 - `node tools/brain/parity.mjs`: five scripted flights (pad take-off, windy gate run, flips, a drop into the ground, a flight
   into an obstacle) on the GPU and in `QuadPhysics`; positions agree to a few millimetres over 2 s.
-- `node tools/brain/obscheck.mjs`: the GPU observation against `src/ai/observe.ts`, slot by slot.
+- `node tools/brain/obscheck.mjs`: the GPU observation against `src/ai/observe.ts`, slot by slot, and the obstacle slots value
+  by value (`--styles technical,industrial` picks the worlds).
 - `node tools/brain/gradcheck.mjs`: GPU PPO gradients against a float64 CPU reference.
 
 `npm run brain:check` runs all three. `node tools/brain/publish.mjs <brain.json>...` copies brains into `public/brains` and
@@ -204,6 +315,14 @@ rebuilds its `index.json`. `npm run test:dash` runs the dashboard's tests (`npm 
 
 Code: `src/ai` (spec, observation, brain file and policy, BrainPilot, BrainRacer), `src/ai/gpu` (WGSL kernels),
 `src/ai/train` (worlds, trainer, checks, evaluation), `src/app/brains.ts` (the hub behind the AI pilots tab and the race).
+
+## Propeller lab
+
+A parametric prop (diameter, pitch, blades, chord and twist, airfoil) with mass and inertia derived from it, and thrust, torque and power from a blade element model with tip loss (`src/prop/`). The stock prop reproduces the sim's old numbers, and is within a few percent of the published HQ 5x4.3x3 stand data, so existing brains still fly.
+
+- Open `http://localhost:5173/?mode=proplab` (no GPU needed): edit a prop, see the blade, compare thrust, power and g/W curves, run the optimiser, and press Fly this prop in the game (stored in localStorage key `fpv.prop`; Back to stock clears it).
+- `npm run prop:optimize` runs the surrogate-guided search (`-- --brain public/brains/ace.json` adds lap time; `--publish` copies the best prop to `public/props/`). Runs are saved under `.bench/prop-lab/runs/`.
+- `npm run prop:flight -- public/brains/ace.json --props public/props/<id>-best.json` flies brains on tracks per prop and reports lap time, crashes and battery.
 
 ## Architecture
 
@@ -283,6 +402,13 @@ profile asks for (`qualityCostIndex`, which takes the same probe limits the ray-
 preset or the tier live changes the ray, probe, cloud and grass budgets at once. Performance 240 keeps the tier, so only the grass is rebuilt (thinner and
 nearer); a tier change also rebuilds the trees and the far-forest cards, while the terrain keeps the grid it was built with until the next world build (the start screen
 builds one in the background when the tier changes; in flight it is the next **N**).
+
+**Extreme** is the best picture the renderer can make, for screenshots, videos and powerful GPUs. It has no frame-rate target and no
+performance budget: dynamic resolution is off and the budget tests check Low to Ultra only. Pick it under Settings > Quality > Extreme, with
+`?quality=extreme`, or `--quality extreme` in the offline tools. It builds exactly Ultra's world (terrain, track, where trees, bushes, rocks and
+grass stand, and every collider), so trained pilots, saved tracks, leaderboards and share links treat the two alike. It starts as Ultra; a module
+raises its own detail for Extreme only through `src/render/contracts.ts`: `EXTREME_PROFILE` for profile fields, `tierTable(...)` for a per-tier
+table and `isExtreme(q)` for an extreme-only path.
 
 ## How 240 fps is pursued
 
@@ -397,3 +523,36 @@ Cloud-native Dawn/SwiftShader validation can check descriptors, readbacks, dispa
 - The map is a bounded 2 to 4 km square; there is no mobile or touch control scheme and no VR.
 - Everything was verified in headless Chromium on SwiftShader (software WebGPU, about 1 fps) and in unit tests. The exposure, colour, noise and shadow tuning
   was judged on those software frames; no real GPU, no real display and no other browser has been exercised.
+
+The training dashboard also has a **Compare brains** tab beside the training views. Generate a test course with style, seed,
+gate count, difficulty and laps; preview or export it, select saved brains and compare their completed-lap averages, best laps,
+completion rate, crashes and stalls. Evaluation runs in a separate CPU process using the game simulation, with matched wind
+seeds across brains. Save a checkpoint and refresh the brain list before evaluating current training progress. Still-air repeats
+are deterministic. **Copy run report** includes course settings and geometry, brain training statistics, lap times, gate events,
+segment timing comparisons and timeout locations. Observations identify measured symptoms; they do not infer training causes.
+Existing trainer processes must be stopped/saved and restarted to load new dashboard server code.
+
+**Stop and save** saves after the current iteration and keeps the dashboard and comparison tab available. Ctrl+C in the trainer terminal stops training and closes the dashboard.
+
+### Profile training GPU kernels
+
+```powershell
+node tools/brain/profile.mjs --resume public/brains/ultimate.json --worlds 96 --seed 7 --warmup 5 --iters 20 --out .bench/brain/gpu-profile.json
+```
+
+This requests `timestamp-query` on the training GPU and times each compute dispatch. The terminal prints category and kernel
+breakdowns; the JSON report includes per-iteration samples, adapter/backend, configuration, average/min/max kernel costs,
+dispatch counts, invalid samples and quantised zero intervals. It identifies environment physics/rewards, rollout and update
+inference (actor/critic by layer), action sampling, GAE, PPO loss, gradient calculations/reductions, clipping and Adam.
+`dW` kernels calculate weight-gradient partials, `reduce` combines them, and `dX` propagates activation gradients.
+
+The command resumes the saved weights, performs warmup and measured updates in memory, and writes only the diagnostic report.
+It does not save a brain or start a dashboard. Optional `--envs`, `--steps`, `--styles`, `--recipes`, `--track` and `--lr` control
+the diagnostic workload. Keep worlds, seeds, drone count, rollout length and GPU backend fixed when comparing changes.
+Warmup defaults to 5 iterations; measurement defaults to 20. Unsupported timestamp queries produce an explicit unsupported
+report and a nonzero exit code.
+
+Profiling splits the normal single compute pass into a pass per dispatch, so it adds overhead. Kernel sums exclude inter-pass
+gaps, buffer copies, queue waits and CPU/readback work; compute span includes the gaps between the first and last dispatch.
+Some backends quantise short intervals to zero; check the sample counts before treating a small kernel as free. Measure normal
+training throughput separately with profiling off.
