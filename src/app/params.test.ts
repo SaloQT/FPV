@@ -177,4 +177,10 @@ describe('world share links', () => {
     // The recipe and the mode are for this visit only: the saved settings keep their own track.
     expect(settingsPatch(p, defaultAppSettings())).toEqual({ seed: 1337, quality: 'medium' });
   });
+
+  it("builds the theme park the dashboard's Watch dialog asks for: size, race course, tour or coaster", () => {
+    expect(parseParams('?world=theme-park&seed=7&size=mega&route=coaster&coaster=9&brain=ace').parkRecipe).toMatchObject({ seed: 7, size: 'mega', route: 'coaster', coaster: 9 });
+    expect(parseParams('?world=theme-park&seed=1337&size=compact&route=tour&quality=low').parkRecipe).toMatchObject({ seed: 1337, size: 'compact', route: 'tour' });
+    expect(parseParams('?world=theme-park&seed=0&size=destination&route=race').parkRecipe).toMatchObject({ seed: 0, size: 'destination', route: 'race' });
+  });
 });

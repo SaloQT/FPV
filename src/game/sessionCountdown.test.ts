@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { COUNTDOWN_FROM, COUNTDOWN_GO_HOLD_S, COUNTDOWN_LEAD_S, COUNTDOWN_STEP_S } from './countdown';
-import { createSessionSnapshot, HOVER_THROTTLE } from './sessionTypes';
+import { AUTO_DISARM_S, BRAIN_COOLDOWN_S, createSessionSnapshot, HOVER_THROTTLE } from './sessionTypes';
 import { makeSessionRig, makeTrack, type SessionRig } from './testKit';
 
 const GO_AT = COUNTDOWN_LEAD_S + COUNTDOWN_FROM * COUNTDOWN_STEP_S;
@@ -135,7 +135,7 @@ describe('stick snapshot and the finish', () => {
     expect(snap.stick).toEqual({ roll: 0.3, pitch: -0.6, yaw: 0.9 });
   });
 
-  it('releases the input after the finish, hovers in angle mode, and gives the sticks back on restart', () => {
+  it('releases the input after the finish, rests level in angle mode and disarms quietly, and gives the sticks back on restart', () => {
     const rig = makeSessionRig({ track: makeTrack(2) });
     rig.physics.onStep = (s): void => void (s.onGround = true);
     rig.input.armed = true;
@@ -149,10 +149,83 @@ describe('stick snapshot and the finish', () => {
     rig.input.stick.roll = 1;
     rig.run(0.05);
     const last = rig.physics.inputs.at(-1)!;
-    expect(last).toMatchObject({ roll: 0, pitch: 0, yaw: 0, mode: 'angle', throttle: HOVER_THROTTLE });
+    expect(last).toMatchObject({ roll: 0, pitch: 0, yaw: 0, mode: 'angle', throttle: 0 });
+    expect(rig.input.armed).toBe(true);
+    rig.run(AUTO_DISARM_S + 0.1);
+    expect(rig.input.armed).toBe(false);
+    expect(rig.session.snapshot().message).toBe('');
     rig.session.resetTrack();
     expect(rig.session.state).toBe('ready');
     expect(rig.input.enabled).toBe(true);
+  });
+
+  it('after the finish a quad in the air holds its height while fast, then comes down and disarms on the ground', () => {
+    const rig = makeSessionRig({ track: makeTrack(2) });
+    let ground = false;
+    rig.physics.onStep = (s): void => void (s.onGround = ground);
+    rig.input.armed = true;
+    rig.input.stick.throttle = 0.5;
+    rig.run(0.02);
+    rig.physics.state.vel[2] = -20;
+    rig.run(1.1);
+    expect(rig.session.state).toBe('finished');
+    const throttle = (): number => rig.physics.inputs.at(-1)!.throttle;
+    rig.run(0.05);
+    expect(throttle()).toBeCloseTo(HOVER_THROTTLE);
+    rig.physics.state.vel[2] = 0;
+    rig.run(0.05);
+    expect(throttle()).toBeLessThan(HOVER_THROTTLE);
+    rig.physics.state.vel[1] = -3;
+    rig.run(0.05);
+    expect(throttle()).toBeGreaterThan(HOVER_THROTTLE);
+    rig.physics.state.vel[1] = 0;
+    ground = true;
+    rig.run(0.05);
+    expect(throttle()).toBe(0);
+    rig.run(AUTO_DISARM_S + 0.1);
+    expect(rig.input.armed).toBe(false);
+  });
+
+  it('a brain flies on for its cool-down after the finish, then its quad is parked on the pad, disarmed, with the result kept', () => {
+    const rig = makeSessionRig({ track: makeTrack(2) });
+    rig.physics.onStep = (s): void => void (s.onGround = false);
+    let resets = 0;
+    rig.session.pilot = {
+      control: (_s, cmd): void => { cmd.roll = 0.2; cmd.pitch = cmd.yaw = 0; cmd.throttle = 0.6; cmd.mode = 'acro'; cmd.turtle = false; },
+      reset: (): void => void resets++,
+    };
+    rig.run(0.05);
+    expect(rig.input.armed).toBe(true);
+    rig.physics.state.vel[2] = -20;
+    rig.run(1.1);
+    expect(rig.session.state).toBe('finished');
+    const pads = rig.physics.resets.length;
+    rig.run(BRAIN_COOLDOWN_S - 0.5);
+    expect(rig.physics.inputs.at(-1)).toMatchObject({ roll: 0.2, throttle: 0.6, mode: 'acro', armed: true });
+    expect(rig.physics.resets.length).toBe(pads);
+    rig.run(1);
+    expect(rig.physics.resets.length).toBe(pads + 1);
+    expect(rig.physics.resets.at(-1)!.pos).toEqual(rig.physics.resets[0].pos);
+    expect(rig.input.armed).toBe(false);
+    expect(rig.session.state).toBe('finished');
+    expect(resets).toBeGreaterThan(0);
+    rig.run(3);
+    expect(rig.input.armed).toBe(false);
+    expect(rig.physics.resets.length).toBe(pads + 1);
+    expect(rig.physics.inputs.at(-1)).toMatchObject({ throttle: 0, armed: false });
+  });
+
+  it('after the finish a quad that keeps its speed still comes down a few seconds later', () => {
+    const rig = makeSessionRig({ track: makeTrack(2) });
+    rig.physics.onStep = (s): void => void (s.onGround = false);
+    rig.input.armed = true;
+    rig.input.stick.throttle = 0.5;
+    rig.run(0.02);
+    rig.physics.state.vel[2] = -20;
+    rig.run(1.1);
+    expect(rig.session.state).toBe('finished');
+    rig.run(4.1);
+    expect(rig.physics.inputs.at(-1)!.throttle).toBeLessThan(HOVER_THROTTLE);
   });
 });
 

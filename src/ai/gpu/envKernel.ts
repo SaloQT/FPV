@@ -5,10 +5,11 @@
 import type { QuadConfig } from '../../sim/presets';
 import type { RateProfile } from '../../sim/fc/rates';
 import {
-  ACT_SIZE, AGL_MAX, AGL_SCALE, BRAIN_PHYSICS_HZ, CELL_VOLT_CENTRE, DIST_MAX, DIST_SCALE, MOTOR_SCALE, OBS_SIZE, PHYSICS_PER_ACTION,
-  POLICY_HZ, RATE_SCALE, VEL_SCALE,
+  ACT_SIZE, AGL_MAX, AGL_SCALE, BRAIN_PHYSICS_HZ, CELL_VOLT_CENTRE, DIST_MAX, DIST_SCALE, FLOOR_MARGIN_M,
+  MOTOR_SCALE, NEAR_RANGE, NEAR_SIDES, OBS, OBS_SIZE, PHYSICS_PER_ACTION, POLICY_HZ, RATE_SCALE, SENSE_RANGE, SENSE_RAYS, VEL_SCALE,
 } from '../spec';
-import { PATH_AHEAD, PATH_BACK, PATH_MAX_STEP } from '../train/pathProgress';
+import { NEAR_TIE_PER_M, SENSE_MARCH, SENSE_PARALLEL, SENSE_REFINE, senseDirs } from '../sense';
+import { PATH_AHEAD, PATH_BACK, PATH_GATE_SLACK, PATH_MAX_STEP } from '../train/pathProgress';
 import { ENV_LAYOUT } from './envState';
 import { QUAD_LAYOUT } from './quadState';
 import { f32, quadConstsWgsl, worldConstsWgsl } from './quadConsts';
@@ -16,6 +17,7 @@ import { layoutWgsl } from './stateLayout';
 import worldWgsl from './world.wgsl?raw';
 import quadWgsl from './quad.wgsl?raw';
 import envWgsl from './env.wgsl?raw';
+import senseWgsl from './sense.wgsl?raw';
 
 /** How training episodes start, what they reward and when they end. */
 export interface EnvConfig {
@@ -114,9 +116,20 @@ function envConstsWgsl(o: EnvShaderOptions): string {
     f('PROGRESS_REWARD', c.progressReward), f('GATE_REWARD', c.gateReward), f('CRASH_PENALTY', c.crashPenalty),
     f('STALL_PENALTY', c.stallPenalty), u('STALL_STEPS', c.stallSeconds * POLICY_HZ), f('RATE_PENALTY', c.ratePenalty),
     f('SMOOTH_PENALTY', c.smoothPenalty), u('EPISODE_STEPS', c.episodeSeconds * POLICY_HZ), f('CEILING_M', c.ceiling),
-    f('BATTERY_EMPTY_V', c.batteryEmptyV),
-    u('PATH_BACK', PATH_BACK), u('PATH_AHEAD', PATH_AHEAD), f('PATH_MAX_STEP', PATH_MAX_STEP), u('TRACE_K', o.traceEnvs ?? 0),
+    f('FLOOR_M', FLOOR_MARGIN_M), f('BATTERY_EMPTY_V', c.batteryEmptyV),
+    u('PATH_BACK', PATH_BACK), u('PATH_AHEAD', PATH_AHEAD), f('PATH_MAX_STEP', PATH_MAX_STEP), f('PATH_GATE_SLACK', PATH_GATE_SLACK),
+    u('TRACE_K', o.traceEnvs ?? 0),
+    u('OBS_RAYS', OBS.rays), u('OBS_NEAR', OBS.near), u('SENSE_RAYS', SENSE_RAYS), u('NEAR_SIDES', NEAR_SIDES),
+    f('SENSE_RANGE', SENSE_RANGE), f('NEAR_RANGE', NEAR_RANGE), u('SENSE_MARCH', SENSE_MARCH), u('SENSE_REFINE', SENSE_REFINE),
+    f('SENSE_PARALLEL', SENSE_PARALLEL), f('NEAR_TIE_PER_M', NEAR_TIE_PER_M), senseDirsWgsl(),
   ].join('\n');
+}
+
+/** The range rays' body-frame directions (sense.ts senseDirs) as a WGSL constant array. */
+function senseDirsWgsl(): string {
+  const d = senseDirs(), v: string[] = [];
+  for (let k = 0; k < d.length; k += 3) v.push(`vec3f(${f32(d[k])}, ${f32(d[k + 1])}, ${f32(d[k + 2])})`);
+  return `const SENSE_DIRS = array<vec3f, ${SENSE_RAYS}>(${v.join(', ')});`;
 }
 
 /** The full environment shader: entry points `initEnvs` and `stepEnvs`. */
@@ -129,6 +142,7 @@ export function envShader(o: EnvShaderOptions): string {
     layoutWgsl('Quad', QUAD_LAYOUT, 'S', 'NENV', 'q'),
     layoutWgsl('Env', ENV_LAYOUT, 'E', 'NENV', 'ev'),
     worldWgsl,
+    senseWgsl,
     quadWgsl,
     traceWgsl(o.traceEnvs ?? 0),
     envWgsl,

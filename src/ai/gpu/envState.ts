@@ -12,8 +12,9 @@ export const ENV_FIELDS: Field[] = [
   F('lapStart', 'u32'),
   F('prevDist'), F('prevAct', 'vec4f'), F('epRet'),
   F('rngEnv', 'u32'), F('rngPol', 'u32'), F('rngPolSpare'), F('rngPolHas', 'u32'),
-  // Path progress (pathProgress.ts): the path sample nearest the drone at the last decision, and its arc length there
-  F('pathIdx', 'u32'), F('pathS'),
+  // Path progress (pathProgress.ts): the path sample nearest the drone at the last decision, its arc length there, and the arc
+  // left to the gate due next (negative past it)
+  F('pathIdx', 'u32'), F('pathS'), F('gateLeft'),
   // Iteration statistics (cleared by the stats kernel): finished episodes, crashes, gates, finishes, laps, return and
   // length sums, best lap (s)
   F('sEpisodes'), F('sCrashes'), F('sGates'), F('sFinishes'), F('sLaps'), F('sRet'), F('sLen'), F('sBestLap'),

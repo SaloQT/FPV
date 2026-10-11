@@ -1,5 +1,6 @@
 /**
- * The brain's observation vector, built from the true quad state and the track (layout in spec.ts). env.wgsl builds the same
+ * The brain's observation vector, built from the true quad state, the track and, for the obstacle slots, the ground and
+ * colliders around the quad (sense.ts; layout in spec.ts). env.wgsl builds the same
  * vector on the GPU during training; observe.test.ts pins the slots and gpu parity checks the two agree.
  */
 import type { QuadState, TrackGate, Vec3 } from '../contracts';
@@ -7,6 +8,7 @@ import { trackGateFrame, type GateFrame } from '../world/track/gate';
 import {
   AGL_MAX, AGL_SCALE, CELL_VOLT_CENTRE, DIST_MAX, DIST_SCALE, MOTOR_SCALE, OBS, OBS_SIZE, RATE_SCALE, VEL_SCALE, gateShape,
 } from './spec';
+import { sense, type SenseWorld } from './sense';
 
 /** A gate with its frame precomputed (the frame only depends on the gate's angles). */
 export interface ObsGate {
@@ -30,7 +32,11 @@ export interface ObsContext {
   groundY: number;
   prevAction: ArrayLike<number>;
   cells: number;
+  /** The ground and colliders for the obstacle slots; without it they stay zero (brains trained before obstacle sensing). */
+  sense?: SenseWorld | null;
 }
+
+const rot = new Float64Array(9);
 
 /** Index of the gate after `next`, or -1 on an open track's last gate. */
 export function gateAfter(next: number, count: number, closed: boolean): number {
@@ -94,4 +100,8 @@ export function observe(s: QuadState, c: ObsContext, out: Float32Array | Float64
     out[OBS.motor + i] = s.motorOmega[i] * MOTOR_SCALE;
   }
   out[OBS.battery] = s.batteryVoltage / c.cells - CELL_VOLT_CENTRE;
+  if (c.sense) {
+    rot[0] = r0; rot[1] = r1; rot[2] = r2; rot[3] = r3; rot[4] = r4; rot[5] = r5; rot[6] = r6; rot[7] = r7; rot[8] = r8;
+    sense(c.sense, s.pos, rot, out);
+  }
 }

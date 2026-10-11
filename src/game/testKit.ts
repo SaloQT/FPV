@@ -29,7 +29,9 @@ export function makeStick(over: Partial<StickInput> = {}): StickInput {
 export class FakePhysics implements Physics {
   readonly state: QuadState = makeQuadState();
   steps = 0;
-  resets: { pos: [number, number, number]; yaw: number }[] = [];
+  resets: { pos: [number, number, number]; yaw: number; pack: 'fresh' | 'kept' }[] = [];
+  /** What packFlat answers. */
+  flat = false;
   inputs: StickInput[] = [];
   crashOnStep = -1;
   onStep: ((s: QuadState, dt: number) => void) | null = null;
@@ -47,8 +49,12 @@ export class FakePhysics implements Physics {
     this.onStep?.(s, dt);
   }
 
-  reset(pos: [number, number, number], yawRad: number): void {
-    this.resets.push({ pos: [pos[0], pos[1], pos[2]], yaw: yawRad });
+  packFlat(): boolean {
+    return this.flat;
+  }
+
+  reset(pos: [number, number, number], yawRad: number, pack: 'fresh' | 'kept' = 'fresh'): void {
+    this.resets.push({ pos: [pos[0], pos[1], pos[2]], yaw: yawRad, pack });
     const s = this.state;
     s.pos[0] = pos[0];
     s.pos[1] = pos[1];

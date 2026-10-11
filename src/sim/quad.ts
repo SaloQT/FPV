@@ -15,6 +15,8 @@ const WIND_DIVIDER = 8;
 const NEWTON_ITERATIONS = 3;
 const GROUND_EFFECT_REACH = 0.5;
 const FAR_CLEARANCE = 2;
+/** State of charge at which a pack counts as flat (about 3.4 V a cell at rest): a respawn then swaps it on the pad. */
+export const PACK_FLAT_SOC = 0.05;
 const WIND_RAMP_HEIGHT = 8;
 const WIND_GROUND_FACTOR = 0.4;
 const PACK_WARMTH_C = 10;
@@ -109,8 +111,11 @@ export class QuadPhysics implements Physics {
     this.reset([0, 0, 0], 0);
   }
 
-  /** Put the quad at rest, disarmed, on a fresh battery, at `pos` facing `yawRad` (0 faces -Z, positive turns left). */
-  reset(pos: Vec3, yawRad: number): void {
+  /**
+   * Put the quad at rest, disarmed, at `pos` facing `yawRad` (0 faces -Z, positive turns left), on a fresh battery, or with
+   * `pack` 'kept' on the charge it has left (a respawn after a crash).
+   */
+  reset(pos: Vec3, yawRad: number, pack: 'fresh' | 'kept' = 'fresh'): void {
     const s = this.state;
     s.pos[0] = pos[0];
     s.pos[1] = pos[1];
@@ -133,7 +138,8 @@ export class QuadPhysics implements Physics {
       this.motors[i].reset();
       this.props[i].reset();
     }
-    this.battery.reset();
+    if (pack === 'fresh') this.battery.reset();
+    else this.battery.rest();
     this.wind.reset();
     this.imu.reset();
     this.imu.prime(this.zero, this.restAccel);
@@ -145,13 +151,18 @@ export class QuadPhysics implements Physics {
     this.vBus = this.battery.emf();
     s.batteryVoltage = this.vBus;
     s.batteryCurrent = 0;
-    s.batteryMah = 0;
+    s.batteryMah = this.battery.mah;
     this.tick = 0;
     this.crashTimer = 0;
     this.groundH = this.collision.groundHeight(pos[0], pos[2]);
     this.clearance = pos[1] - this.groundH;
     this.refreshDensity();
     this.windVel.fill(0);
+  }
+
+  /** The pack is down to PACK_FLAT_SOC: a respawn swaps it for a fresh one on the pad. */
+  packFlat(): boolean {
+    return this.battery.soc() <= PACK_FLAT_SOC;
   }
 
   setColliders(colliders: ObstacleCollider[]): void {

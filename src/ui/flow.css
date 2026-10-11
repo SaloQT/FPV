@@ -88,6 +88,7 @@
 
 /* World card on the start screen: the map of the track and the controls that shape it. */
 .fpv-world-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 10px; }
+.fpv-world-controls[hidden], .fpv-row[hidden] { display: none !important; }
 .fpv-map-frame { position: relative; overflow: hidden; background: linear-gradient(160deg, #0b1018, #111b2a); border: 1px solid var(--fpv-line); border-radius: 10px; }
 .fpv-map-canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
 .fpv-map-canvas--busy { opacity: 0.42; transition: opacity 0.15s; }

@@ -2,18 +2,20 @@
 // PHYSICS_PER_ACTION physics steps of the game's flight model (quad.wgsl), the way BrainPilot flies it in the game, then scores
 // the step, ends and restarts the episode when it is over and writes the next observation.
 //
-// Episodes start like the game's own spawns: on the start pad (padPlacement) or 1.5 m before a gate facing through it
-// (gatePlacement), at rest, armed, throttle held at zero until the flight controller accepts the arm (GameSession.airArm).
+// Episodes start like the game's own spawns: on the start pad (padPlacement), or at a checkpoint the way the game respawns a
+// quad after a crash or a stall (respawnPlacement): 1.5 m before a cleared gate facing through it, with the gate after it due
+// next. Both at rest, armed, throttle held at zero until the flight controller accepts the arm (GameSession.airArm).
 // Gates count like GateTimer: only the gate due next, through its opening, travelling forwards; a circuit loops, an open
 // track finishes at its last gate.
 //
 // Progress is rewarded along the track's centreline (src/ai/train/pathProgress.ts has the TypeScript copy of pathSearch and
 // pathArc): every decision finds the nearest path sample in a window around the last one and rewards the change in arc length,
-// so a split-S or a loop that flies away from the next gate still earns its way round. A track without a path falls back to
-// the straight-line distance to the gate due next.
+// so a split-S or a loop that flies away from the next gate still earns its way round. Progress past the gate due next does not
+// pay (pathPaid), so a drone that misses a gate earns only by going back for it. A track without a path falls back to the
+// straight-line distance to the gate due next.
 //
-// Needs: quadConsts, worldConsts, envConsts, the Quad and Env layouts bound to `q` and `ev`, world.wgsl, quad.wgsl, and
-// `traceWrite` (envKernel.ts: the dashboard trace, or an empty function).
+// Needs: quadConsts, worldConsts, envConsts, the Quad and Env layouts bound to `q` and `ev`, world.wgsl, sense.wgsl, quad.wgsl,
+// and `traceWrite` (envKernel.ts: the dashboard trace, or an empty function).
 
 @group(0) @binding(0) var<storage, read_write> S : array<f32>;
 @group(0) @binding(1) var<storage, read_write> E : array<f32>;
@@ -28,6 +30,7 @@ struct EnvUniform { seed : u32, mode : u32, u0 : u32, u1 : u32 }
 @group(0) @binding(6) var<uniform> U : EnvUniform;
 
 const NO_LAP : u32 = 0xffffffffu;
+const NO_GATE : u32 = 0xffffffffu;
 const PAD_LIFT_M : f32 = 0.05;
 const RESPAWN_BACK_M : f32 = 1.5;
 const RESPAWN_MIN_AGL : f32 = 1.5;
@@ -54,6 +57,25 @@ fn pathStep(i : u32, d : i32) -> u32 {
   if (T.closed != 0u) { return u32(((j % n) + n) % n); }
   return u32(clamp(j, 0, n - 1));
 }
+
+// An arc-length difference the short way round a circuit's lap.
+fn wrapArc(d : f32) -> f32 {
+  if (T.closed != 0u) {
+    if (d > 0.5 * T.pathLength) { return d - T.pathLength; }
+    if (d < -0.5 * T.pathLength) { return d + T.pathLength; }
+  }
+  return d;
+}
+
+// Arc length from `a` forward to `b`: on a circuit the forward way round, a whole lap when they meet (pathProgress.ts).
+fn arcAhead(a : f32, b : f32) -> f32 {
+  let d = b - a;
+  if (T.closed == 0u) { return d; }
+  let m = d - T.pathLength * floor(d / T.pathLength);
+  return select(m + T.pathLength, m, m > 0.0);
+}
+
+fn gateArc(i : u32) -> f32 { return pathAt(u32(gateAt(i).pathAt)).w; }
 
 // The nearest sample to p from PATH_BACK behind to PATH_AHEAD ahead of i0 (the first one wins a tie).
 fn pathSearch(i0 : u32, p : vec3f) -> u32 {
@@ -112,25 +134,29 @@ fn spawn(e : u32) {
   var pos : vec3f;
   var yaw : f32;
   let pick = rnd();
-  if (T.nGates == 0u || pick < PAD_SPAWN_PROB) {
+  // The game's checkpoints (respawnPlacement): any gate of a circuit, every gate but the last of an open track (its pass ends
+  // the race, so it is never one to go back to).
+  let checkpoints = select(T.nGates - min(T.nGates, 1u), T.nGates, T.closed != 0u);
+  if (checkpoints == 0u || pick < PAD_SPAWN_PROB) {
     pos = vec3f(T.startX, T.startY + PAD_LIFT_M, T.startZ);
     yaw = T.startYaw;
     ev.next = 0u;
     ev.pathIdx = T.pathStart;
   } else {
-    let i = min(u32(rnd() * f32(T.nGates)), T.nGates - 1u);
+    let i = min(u32(rnd() * f32(checkpoints)), checkpoints - 1u);
     let g = gateAt(i);
     let x = g.px - g.fx * RESPAWN_BACK_M;
     let z = g.pz - g.fz * RESPAWN_BACK_M;
     let y = max(g.py - g.fy * RESPAWN_BACK_M, groundHeight(x, z) + RESPAWN_MIN_AGL);
     pos = vec3f(x, y, z);
     yaw = g.yaw;
-    ev.next = i;
+    ev.next = (i + 1u) % T.nGates;
     ev.pathIdx = u32(g.pathAt);
   }
   if (T.pathN > 0u) {
     ev.pathIdx = pathSearch(ev.pathIdx, pos);
     ev.pathS = pathArc(ev.pathIdx, pos);
+    if (T.nGates > 0u) { ev.gateLeft = arcAhead(ev.pathS, gateArc(ev.next)); }
   }
   // Wind as the app sets it: calm air has no turbulence or gusts, any wind has turbulence 1 and 1.5 gusts a minute.
   var speed = 0.0;
@@ -148,7 +174,7 @@ fn spawn(e : u32) {
   ev.lapStart = NO_LAP;
 }
 
-// The observation (src/ai/observe.ts, slot map in src/ai/spec.ts).
+// The observation (src/ai/observe.ts, slot map in src/ai/spec.ts; obstacle slots in sense.wgsl).
 fn writeObs(e : u32) {
   let o = e * OBS_SIZE;
   let R = quatToMat3(q.quat);
@@ -156,7 +182,8 @@ fn writeObs(e : u32) {
   let c0 = vec3f(R.r0.x, R.r1.x, R.r2.x);
   let c1 = vec3f(R.r0.y, R.r1.y, R.r2.y);
   let c2 = vec3f(R.r0.z, R.r1.z, R.r2.z);
-  var x : array<f32, OBS_SIZE>;
+  // The slots before the obstacle sensors; senseObs writes the rest
+  var x : array<f32, OBS_RAYS>;
   let vb = vec3f(dot(c0, q.vel), dot(c1, q.vel), dot(c2, q.vel)) * VEL_SCALE;
   x[0] = vb.x; x[1] = vb.y; x[2] = vb.z;
   x[3] = q.angVel.x * RATE_SCALE; x[4] = q.angVel.y * RATE_SCALE; x[5] = q.angVel.z * RATE_SCALE;
@@ -197,7 +224,8 @@ fn writeObs(e : u32) {
     x[34u + i] = abs(q.mOmega[i]) * MOTOR_SCALE;
   }
   x[38] = batVoltage() / BAT_CELLS - CELL_VOLT_CENTRE;
-  for (var i = 0u; i < OBS_SIZE; i++) { obsOut[o + i] = x[i]; }
+  for (var i = 0u; i < OBS_RAYS; i++) { obsOut[o + i] = x[i]; }
+  senseObs(o, q.pos, R, c0, c1, c2);
 }
 
 fn endEpisode(crashed : bool, finished : bool) {
@@ -238,6 +266,8 @@ fn stepEnvs(@builtin(global_invocation_id) gid : vec3u) {
   var reward = 0.0;
   var crashed = false;
   var finished = false;
+  // The gate passed in this decision, or NO_GATE.
+  var passed = NO_GATE;
   let loopTrack = T.closed != 0u || T.nGates < 2u;
   for (var k = 0u; k < PHYSICS_PER_ACTION; k++) {
     let prev = q.pos;
@@ -253,6 +283,7 @@ fn stepEnvs(@builtin(global_invocation_id) gid : vec3u) {
     let g = gateAt(ev.next);
     if (!gatePassed(g, prev, q.pos)) { continue; }
     reward += GATE_REWARD;
+    passed = ev.next;
     ev.stall = 0u;
     ev.sGates += 1.0;
     let now = ev.epSteps * PHYSICS_PER_ACTION + k + 1u;
@@ -276,16 +307,24 @@ fn stepEnvs(@builtin(global_invocation_id) gid : vec3u) {
   ev.epSteps++;
   ev.stall++;
   // Progress along the centreline (the short way round a circuit's lap), or toward the gate due next on a track without a
-  // path, where a pass restarted the measure from the new gate.
+  // path, where a pass restarted the measure from the new gate. Path progress pays only up to PATH_GATE_SLACK past the gate due
+  // next (pathProgress.ts pathPaid, arcToGate): a drone that misses it earns nothing for flying on along the track. A decision
+  // that passed a gate pays in full and measures the arc left to the new gate from the one passed.
   let dist = length(gatePos(gateAt(ev.next)) - q.pos);
   if (T.pathN > 0u) {
     ev.pathIdx = pathSearch(ev.pathIdx, q.pos);
     let s = pathArc(ev.pathIdx, q.pos);
-    var ds = s - ev.pathS;
-    if (T.closed != 0u) {
-      if (ds > 0.5 * T.pathLength) { ds -= T.pathLength; } else if (ds < -0.5 * T.pathLength) { ds += T.pathLength; }
+    let ds = clamp(wrapArc(s - ev.pathS), -PATH_MAX_STEP, PATH_MAX_STEP);
+    var paid = ds;
+    if (T.nGates > 0u && passed == NO_GATE) {
+      let past = -(ev.gateLeft + PATH_GATE_SLACK);
+      paid = min(past + ds, 0.0) - min(past, 0.0);
+      ev.gateLeft -= ds;
+    } else if (T.nGates > 0u && !finished) {
+      let back = gateArc(passed);
+      ev.gateLeft = arcAhead(back, gateArc(ev.next)) - wrapArc(s - back);
     }
-    if (!finished) { reward += PROGRESS_REWARD * clamp(ds, -PATH_MAX_STEP, PATH_MAX_STEP); }
+    if (!finished) { reward += PROGRESS_REWARD * paid; }
     ev.pathS = s;
   } else if (!finished) {
     reward += PROGRESS_REWARD * (ev.prevDist - dist);
@@ -294,7 +333,7 @@ fn stepEnvs(@builtin(global_invocation_id) gid : vec3u) {
   let da = act - ev.prevAct;
   reward -= RATE_PENALTY * dot(q.angVel, q.angVel) + SMOOTH_PENALTY * dot(da, da);
   let p = q.pos;
-  let outside = p.x < T.x0 || p.x > T.x1 || p.z < T.z0 || p.z > T.z1 || p.y > T.maxY + CEILING_M || p.y < T.minY - 10.0;
+  let outside = p.x < T.x0 || p.x > T.x1 || p.z < T.z0 || p.z > T.z1 || p.y > T.maxY + CEILING_M || p.y < T.minY - FLOOR_M;
   let empty = batVoltage() / BAT_CELLS < BATTERY_EMPTY_V;
   var done = crashed || finished || outside || empty;
   if (crashed || outside) { reward -= CRASH_PENALTY; }

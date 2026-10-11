@@ -17,6 +17,11 @@ export const PATH_BACK = 8;
 export const PATH_AHEAD = 40;
 /** Largest progress rewarded in one decision, metres (either way). */
 export const PATH_MAX_STEP = 10;
+/**
+ * How far past the gate due next progress still pays, metres: a gate's sample sits within half a sample of it, and a drone
+ * crossing the opening off-centre on a bend projects a little past it before it crosses.
+ */
+export const PATH_GATE_SLACK = 3;
 /** Floats per packed sample. */
 export const PATH_WORDS = 4;
 
@@ -169,12 +174,50 @@ export function pathArc(p: PackedPath, i: number, pos: ArrayLike<number>): numbe
   return s;
 }
 
-/** Arc-length change from `s0` to `s1`, the short way round a circuit, clamped to PATH_MAX_STEP (env.wgsl stepEnvs). */
-export function pathDelta(p: PackedPath, s0: number, s1: number): number {
-  let d = s1 - s0;
+/** `d` the short way round a circuit (env.wgsl wrapArc). */
+function wrapArc(p: PackedPath, d: number): number {
   if (p.closed) {
-    if (d > 0.5 * p.length) d -= p.length;
-    else if (d < -0.5 * p.length) d += p.length;
+    if (d > 0.5 * p.length) return d - p.length;
+    if (d < -0.5 * p.length) return d + p.length;
   }
-  return Math.min(Math.max(d, -PATH_MAX_STEP), PATH_MAX_STEP);
+  return d;
+}
+
+/** Arc-length change from `s0` to `s1`, the short way round a circuit, clamped to PATH_MAX_STEP. */
+export function pathDelta(p: PackedPath, s0: number, s1: number): number {
+  return Math.min(Math.max(wrapArc(p, s1 - s0), -PATH_MAX_STEP), PATH_MAX_STEP);
+}
+
+/** Arc length of gate `k`'s sample. */
+export function gateArc(p: PackedPath, k: number): number {
+  return p.points[p.gateSample[k] * PATH_WORDS + 3];
+}
+
+/** Arc length from `from` forward to `to` (env.wgsl arcAhead): on a circuit the forward way round, a whole lap when they meet. */
+export function arcAhead(p: PackedPath, from: number, to: number): number {
+  const d = to - from;
+  if (!p.closed) return d;
+  const m = d - p.length * Math.floor(d / p.length);
+  return m > 0 ? m : m + p.length;
+}
+
+/**
+ * Arc length left to gate `k` (env.wgsl gateLeft), for a drone at arc `s`. Right after passing gate `passed` it is measured from
+ * that gate (so a one-gate circuit's next pass is a lap away, not the metre behind the drone); after a spawn, from the drone.
+ */
+export function arcToGate(p: PackedPath, k: number, s: number, passed?: number): number {
+  if (passed === undefined) return arcAhead(p, s, gateArc(p, k));
+  const from = gateArc(p, passed);
+  return arcAhead(p, from, gateArc(p, k)) - wrapArc(p, s - from);
+}
+
+/**
+ * The progress rewarded for a move of `d` (pathDelta) by a drone `left` metres of arc before the gate due next (env.wgsl
+ * stepEnvs): all of it, less any part more than PATH_GATE_SLACK past that gate. A drone that misses its gate earns nothing
+ * for flying on along the track (that paid as well as racing, so brains learned to fly off after a miss); going back behind the
+ * gate costs what coming through it again pays back. The caller then takes `d` off `left`; a gate pass or spawn resets it.
+ */
+export function pathPaid(left: number, d: number): number {
+  const past = -(left + PATH_GATE_SLACK);
+  return Math.min(past + d, 0) - Math.min(past, 0);
 }

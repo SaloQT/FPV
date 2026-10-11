@@ -1,5 +1,6 @@
 import type { ObstacleCollider, Quat, TerrainSampler, Vec3 } from '../contracts';
 import { G0, quatRotate, quatRotateInv, quatToMat3 } from './math3d';
+import type { EnvironmentCollision, EnvironmentContact } from '../world/park/types';
 
 export interface ProxySphere {
   /** Centre in the body frame (x right, y up, -z forward), m. */
@@ -45,6 +46,8 @@ const UP: Vec3 = [0, 1, 0];
 
 /** Sphere-proxy rigid-body contact solver against a terrain height field and oriented-box obstacles. */
 export class CollisionWorld {
+  /** Optional moving analytic environment; the legacy terrain/box path remains unchanged without it. */
+  environment: EnvironmentCollision | null = null;
   terrain: TerrainSampler | null = null;
   /** Deepest closing speed seen in the last resolve() call, m/s (0 if none). */
   impactSpeed = 0;
@@ -91,6 +94,12 @@ export class CollisionWorld {
   private readonly cBounce = new Float64Array(MAX_CONTACTS);
   private readonly cJn = new Float64Array(MAX_CONTACTS);
   private readonly cJt = new Float64Array(3 * MAX_CONTACTS);
+  private readonly cSurface = new Float64Array(3 * MAX_CONTACTS);
+  private readonly envContact: EnvironmentContact = { normal: [0, 1, 0], penetration: 0, velocity: [0, 0, 0], friction: 0.5, restitution: 0.1 };
+  private readonly sweepFrom: Vec3 = [0, 0, 0];
+  private readonly sweepTo: Vec3 = [0, 0, 0];
+  private stepDt = 0;
+  private stepVelocity: Vec3 = [0, 0, 0];
   private nc = 0;
   private prevContact = false;
 
@@ -165,6 +174,7 @@ export class CollisionWorld {
     this.cJt[o] = 0;
     this.cJt[o + 1] = 0;
     this.cJt[o + 2] = 0;
+    this.cSurface[o] = this.cSurface[o + 1] = this.cSurface[o + 2] = 0;
     this.cSphere[k] = i;
   }
 
@@ -238,7 +248,7 @@ export class CollisionWorld {
     const terrain = this.terrain;
     const nearTerrain = pos[1] - this.groundHeight(pos[0], pos[2]) < TERRAIN_REACH;
     const nNear = this.gatherNearBoxes(pos);
-    if (!nearTerrain && nNear === 0) return;
+    if (!nearTerrain && nNear === 0 && !this.environment) return;
     const n = this.tmpN;
     for (let i = 0; i < this.ns; i++) {
       const cx = this.cx[i], cy = this.cy[i], cz = this.cz[i], r = this.sphereR[i];
@@ -257,6 +267,22 @@ export class CollisionWorld {
       // addContact is a no-op once full; skip only pure obstacle narrowphase.
       // Keep visiting spheres so terrain sampler calls retain their order/count.
       for (let k = 0; k < nNear && this.nc < MAX_CONTACTS; k++) this.sphereBox(i, this.nearBox[k], wx, wy, wz, r, q);
+      if (this.environment && this.nc < MAX_CONTACTS) {
+        const contact = this.envContact;
+        let hit = this.environment.contact(wx, wy, wz, r, contact);
+        if (!hit && this.environment.sweep) {
+          this.sweepTo[0] = wx; this.sweepTo[1] = wy; this.sweepTo[2] = wz;
+          for (let k = 0; k < 3; k++) this.sweepFrom[k] = this.sweepTo[k] - this.stepVelocity[k] * this.stepDt;
+          hit = this.environment.sweep(this.sweepFrom, this.sweepTo, r, contact) < 1;
+        }
+        if (hit) {
+          const index = this.nc;
+          this.addContact(i, contact.normal[0], contact.normal[1], contact.normal[2], contact.penetration, contact.friction, contact.restitution, q);
+          quatRotateInv(q, contact.velocity[0], contact.velocity[1], contact.velocity[2], this.tmpV);
+          const local = this.tmpV;
+          this.cSurface[index * 3] = local[0]; this.cSurface[index * 3 + 1] = local[1]; this.cSurface[index * 3 + 2] = local[2];
+        }
+      }
     }
   }
 
@@ -304,6 +330,7 @@ export class CollisionWorld {
    * inertia diagonal. Position is projected out of penetration; velocities receive normal + Coulomb friction impulses.
    */
   resolve(dt: number, invMass: number, invI: Vec3, pos: Vec3, vel: Vec3, q: Quat, w: Vec3): void {
+    if (this.environment) { this.stepDt = dt; this.stepVelocity = vel; this.environment.setStep?.(dt); }
     this.impactSpeed = 0;
     this.motorLoad[0] = this.motorLoad[1] = this.motorLoad[2] = this.motorLoad[3] = 0;
     this.gather(pos, q);
@@ -328,7 +355,8 @@ export class CollisionWorld {
       const nx = nB[o], ny = nB[o + 1], nz = nB[o + 2];
       const ux = ay * nz - az * ny, uy = az * nx - ax * nz, uz = ax * ny - ay * nx;
       this.cKn[k] = 1 / (invMass + ix * ux * ux + iy * uy * uy + iz * uz * uz);
-      const vcn = (vx + wy * az - wz * ay) * nx + (vy + wz * ax - wx * az) * ny + (vz + wx * ay - wy * ax) * nz;
+      const sx = this.environment ? this.cSurface[o] : 0, sy = this.environment ? this.cSurface[o + 1] : 0, sz = this.environment ? this.cSurface[o + 2] : 0;
+      const vcn = (vx + wy * az - wz * ay - sx) * nx + (vy + wz * ax - wx * az - sy) * ny + (vz + wx * ay - wy * ax - sz) * nz;
       const approach = -vcn;
       if (approach > this.impactSpeed) this.impactSpeed = approach;
       const e = this.cBounce[k];
@@ -341,7 +369,8 @@ export class CollisionWorld {
         const o = 3 * k;
         const ax = arm[o], ay = arm[o + 1], az = arm[o + 2];
         const nx = nB[o], ny = nB[o + 1], nz = nB[o + 2];
-        let cx = vx + wy * az - wz * ay, cy = vy + wz * ax - wx * az, cz = vz + wx * ay - wy * ax;
+        const sx = this.environment ? this.cSurface[o] : 0, sy = this.environment ? this.cSurface[o + 1] : 0, sz = this.environment ? this.cSurface[o + 2] : 0;
+        let cx = vx + wy * az - wz * ay - sx, cy = vy + wz * ax - wx * az - sy, cz = vz + wx * ay - wy * ax - sz;
         const vn = cx * nx + cy * ny + cz * nz;
         let jn = (this.cBounce[k] - vn) * this.cKn[k];
         const acc = this.cJn[k];
@@ -354,9 +383,9 @@ export class CollisionWorld {
         wx += ix * ux * jn;
         wy += iy * uy * jn;
         wz += iz * uz * jn;
-        cx = vx + wy * az - wz * ay;
-        cy = vy + wz * ax - wx * az;
-        cz = vz + wx * ay - wy * ax;
+        cx = vx + wy * az - wz * ay - sx;
+        cy = vy + wz * ax - wx * az - sy;
+        cz = vz + wx * ay - wy * ax - sz;
         const vnn = cx * nx + cy * ny + cz * nz;
         const tx = cx - vnn * nx, ty = cy - vnn * ny, tz = cz - vnn * nz;
         const tm = Math.sqrt(tx * tx + ty * ty + tz * tz);

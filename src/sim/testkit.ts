@@ -18,7 +18,8 @@ export function inp(o: Partial<StickInput> = {}): StickInput {
 
 /** Flat terrain at height `h` with a constant up normal. */
 export function flatTerrain(h = 0): TerrainSampler {
-  const data = { seed: 0, resolution: 2, cellSize: 1e6, origin: [-1e6, -1e6], minHeight: h, maxHeight: h, waterLevel: -Infinity } as unknown as TerrainData;
+  // Two samples a side, 2000 km apart: the grid (what training counts as the world) spans +-1000 km
+  const data = { seed: 0, resolution: 2, cellSize: 2e6, origin: [-1e6, -1e6], minHeight: h, maxHeight: h, waterLevel: -Infinity } as unknown as TerrainData;
   return {
     data,
     heightAt: () => h,

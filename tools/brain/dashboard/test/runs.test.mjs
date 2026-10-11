@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { startRunManager } from '../../runManager.mjs';
+import { startDashboard } from '../../dashServer.mjs';
+
+test('run manager starts only on request, stops into history, and can start another run without changing saved brains', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fpv-run-manager-'));
+  const runsDir = join(root, 'runs'), brainsDir = join(root, 'brains');
+  await mkdir(brainsDir); await writeFile(join(brainsDir, 'existing.json'), '{"keep":"exact"}');
+  const children = [], launches = [];
+  const manager = await startRunManager({ root, runsDir, brainsDir, port: 0, log: null, launch(args) {
+    launches.push(args);
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.connected = true;
+    child.sent = []; child.send = message => child.sent.push(message); children.push(child); return child;
+  }});
+  t.after(async () => { for (const c of children) c.emit('exit', 0); await manager.close(); });
+  const get = async path => (await fetch(new URL(path, manager.url))).json();
+  const post = async (path, body, extra = {}) => fetch(new URL(path, manager.url), { method: 'POST', headers: { 'Content-Type': 'application/json', ...extra }, body: JSON.stringify(body) });
+  assert.equal((await get('/api/meta')).status, 'idle');
+  assert.deepEqual((await get('/api/runs')).previous, []);
+  assert.equal(launches.length, 0);
+  assert.equal((await post('/api/runs/start', { name: 'existing' })).status, 400);
+  assert.equal((await post('/api/runs/start', { name: 'bad', resume: '../existing.json' })).status, 400);
+  assert.equal((await post('/api/runs/start', { name: 'bad-size', envs: 128, steps: 8 })).status, 400);
+  assert.equal((await post('/api/runs/start', { name: 'bad' }, { Origin: 'http://evil.invalid' })).status, 403);
+  assert.equal(launches.length, 0);
+  assert.equal((await post('/api/runs/start', { name: 'first', resume: 'existing.json' })).status, 202);
+  assert.equal(launches.length, 1);
+  assert.ok(launches[0].includes('--managed'));
+  assert.equal(launches[0][launches[0].indexOf('--resume') + 1], join(brainsDir, 'existing.json'));
+  assert.equal((await get('/api/meta')).status, 'starting');
+  assert.equal((await post('/api/runs/start', { name: 'second' })).status, 409);
+  assert.equal((await post('/api/command', { cmd: 'save' })).status, 409);
+  // Stop is available even while the GPU trainer is being prepared.
+  assert.equal((await post('/api/command', { cmd: 'stop' })).status, 200);
+  children[0].emit('message', { kind: 'training-ready' });
+  assert.equal((await get('/api/meta')).status, 'stopping');
+  assert.deepEqual(children[0].sent, [{ cmd: 'stop' }]);
+  children[0].emit('exit', 0);
+  for (let i = 0; i < 30 && (await get('/api/meta')).status !== 'idle'; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal((await get('/api/meta')).status, 'idle');
+  assert.equal((await get('/api/runs')).previous[0].status, 'stopped');
+  assert.equal(launches.length, 1, 'stopping never launches a replay or another trainer');
+  assert.equal(JSON.parse(await readFile(join(runsDir, 'first.run.json'), 'utf8')).status, 'stopped');
+  assert.equal((await post('/api/runs/start', { name: 'first' })).status, 400);
+  const custom = { name:'second', ppo:{epochs:3,gamma:.9,lr:.001,lrEnd:.0001,lrIterations:100,hidden:[64,32],adamBeta1:.8,profile:true}, env:{gateReward:25,crashPenalty:40,windMax:12}, styles:['race','technical'], recipes:0, iters:10,every:2 };
+  assert.equal((await post('/api/runs/start', custom)).status, 202);
+  const forwarded=JSON.parse(launches[1][launches[1].indexOf('--ppo')+1]);
+  for(const [key,value] of Object.entries(custom.ppo)) assert.deepEqual(forwarded[key],value);
+  assert.match(launches[1][launches[1].indexOf('--env')+1], /gateReward=25/);
+  assert.equal(launches[1][launches[1].indexOf('--styles')+1],'race,technical');
+  const remembered=await get('/api/runs/second/settings');
+  assert.equal(remembered.env.crashPenalty,40); assert.equal(remembered.ppo.gamma,.9);
+  const live = await startDashboard({ port: 0, name: 'second', log: null, worlds: [] });
+  t.after(() => live.close());
+  children[1].emit('message', { kind: 'dashboard', url: live.url });
+  children[1].emit('message', { kind: 'training-ready' });
+  assert.equal((await get('/api/meta')).status, 'running');
+  assert.deepEqual(await get('/api/worlds'), []);
+  assert.equal((await post('/api/command', { cmd: 'save' })).status, 200);
+  assert.deepEqual(children[1].sent, [{ cmd: 'save' }]);
+  children[1].stderr.write('Test startup failure'); children[1].emit('exit', 1);
+  for (let i = 0; i < 30 && (await get('/api/meta')).status !== 'idle'; i++) await new Promise(r => setTimeout(r, 5));
+  assert.equal((await get('/api/runs')).previous.find(r => r.id === 'second').status, 'failed');
+  assert.equal((await get('/api/runs/second/settings')).ppo.adamBeta1,.8);
+  assert.equal(await readFile(join(brainsDir, 'existing.json'), 'utf8'), '{"keep":"exact"}');
+});
+
+test('a template fills the settings a start request leaves out, and GPU errors are counted into the run history', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fpv-run-template-'));
+  const runsDir = join(root, 'runs'), brainsDir = join(root, 'brains');
+  const children = [], launches = [];
+  const manager = await startRunManager({ root, runsDir, brainsDir, port: 0, log: null, launch(args) {
+    launches.push(args);
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.connected = true;
+    child.send = () => {}; children.push(child); return child;
+  }});
+  t.after(async () => { for (const c of children) c.emit('exit', 0); await manager.close(); });
+  const get = async path => (await fetch(new URL(path, manager.url))).json();
+  const post = async body => fetch(new URL('/api/runs/start', manager.url), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const arg = (args, flag) => args[args.indexOf(flag) + 1];
+  const response = await post({ name: 'unknown-template', template: 'missing' });
+  assert.equal(response.status, 400); assert.match((await response.json()).error, /existing template/);
+  assert.equal(launches.length, 0);
+  // The request's own values win over the template's.
+  assert.equal((await post({ name: 'attack', template: 'lap-attack', ppo: { lr: 1e-4 }, env: { crashPenalty: 30 } })).status, 202);
+  const args = launches[0];
+  assert.equal(arg(args, '--template'), 'lap-attack'); assert.equal(arg(args, '--minutes'), '30'); assert.equal(arg(args, '--worlds'), '48');
+  const ppo = JSON.parse(arg(args, '--ppo'));
+  assert.equal(ppo.lr, 1e-4); assert.equal(ppo.lrEnd, 5e-5); assert.equal(ppo.entCoef, .0005);
+  assert.match(arg(args, '--env'), /progressReward=1\.6/); assert.match(arg(args, '--env'), /crashPenalty=30/); assert.match(arg(args, '--env'), /stallSeconds=5/);
+  assert.equal((await get('/api/meta')).template, 'lap-attack');
+  children[0].stderr.write('Dawn warning\nGPU error: Invalid dispatch size\nGPU error: Invalid dispatch size\n');
+  for (let i = 0; i < 30 && !(await get('/api/meta')).gpuErrors; i++) await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual((await get('/api/meta')).gpuErrors, { count: 2, last: 'Invalid dispatch size' });
+  children[0].emit('exit', 0);
+  for (let i = 0; i < 30 && (await get('/api/meta')).status !== 'idle'; i++) await new Promise(r => setTimeout(r, 5));
+  const meta = await get('/api/meta');
+  assert.equal(meta.template, null); assert.equal(meta.gpuErrors, null);
+  const row = (await get('/api/runs')).previous.find(r => r.id === 'attack');
+  assert.equal(row.template, 'lap-attack'); assert.equal(row.gpuErrors, 2);
+  // Without a template the run defaults apply and no --template flag is passed.
+  assert.equal((await post({ name: 'plain' })).status, 202);
+  assert.ok(!launches[1].includes('--template')); assert.equal(arg(launches[1], '--minutes'), '10');
+});
+
+test('previous runs are catalogued without replaying; explicit view serves replay data while the manager stays idle', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fpv-run-history-'));
+  const runsDir = join(root, 'runs');
+  const old = await startDashboard({ port: 0, name: 'old', outDir: runsDir, log: null, worlds: [] });
+  old.push({ iteration: 1, elapsed: 2, envSteps: 100, sps: 50, metrics: {} }); await old.close();
+  let launched = 0;
+  const manager = await startRunManager({ root, runsDir, port: 0, log: null, launch() { launched++; throw Error('Unexpected trainer launch'); } });
+  t.after(() => manager.close());
+  const get = async path => (await fetch(new URL(path, manager.url))).json();
+  const rows = await get('/api/runs'); assert.equal(rows.previous[0].id, 'old'); assert.equal(rows.previous[0].iterations, 1);
+  assert.equal(rows.previous[0].canView, true);
+  assert.equal((await get('/api/runs/old/meta')).mode, 'replay');
+  assert.equal((await get('/api/runs/old/history')).length, 1);
+  assert.equal((await get('/api/meta')).status, 'idle'); assert.equal(launched, 0);
+  assert.equal((await fetch(new URL('/api/runs/missing/meta', manager.url))).status, 404);
+});
