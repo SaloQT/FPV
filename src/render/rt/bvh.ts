@@ -71,7 +71,8 @@ export class BvhBuilder {
   }
 
   build(prims: readonly RTPrimitive[], target: BvhTarget, nodeBase: number, primBase: number): BvhResult {
-    const n = Math.min(prims.length, MAX_PRIMS);
+    if (prims.length > MAX_PRIMS) throw new Error(`RT scene exceeds ${MAX_PRIMS} primitives`);
+    const n = prims.length;
     if (n === 0) return { root: NO_ROOT, nodeCount: 0, primCount: 0 };
     this.reserve(n);
     this.target = target;
@@ -113,6 +114,32 @@ export class BvhBuilder {
       return;
     }
     order.subarray(0, n).sort((p, q) => codes[p] - codes[q] || p - q);
+  }
+
+  /** Preserve topology and primitive identities while moving the entire dynamic population. */
+  refit(prims: readonly RTPrimitive[]): BvhResult {
+    const n = prims.length, { nodesF: f, nodesU: u } = this.target, tb = this.tmpBounds;
+    for (let i = 0; i < n; i++) packPrim(this.target.primsF, this.target.primsU, (this.primBase + i) * PRIM_WORDS, prims[this.order[i]]);
+    for (let node = this.nextNode - 1; node >= this.nodeBase; node--) {
+      const o = node * NODE_WORDS, count = u[o + 7], first = u[o + 3];
+      if (count) {
+        // A leaf owns at most two primitives. Accumulate once in scalar registers;
+        // avoid repeatedly clearing, loading and rounding the same six node words.
+        primBounds(prims[this.order[first - this.primBase]], tb);
+        let x0 = tb[0], y0 = tb[1], z0 = tb[2], x1 = tb[3], y1 = tb[4], z1 = tb[5];
+        for (let j = 1; j < count; j++) {
+          primBounds(prims[this.order[first - this.primBase + j]], tb);
+          x0 = Math.min(x0, tb[0]); y0 = Math.min(y0, tb[1]); z0 = Math.min(z0, tb[2]);
+          x1 = Math.max(x1, tb[3]); y1 = Math.max(y1, tb[4]); z1 = Math.max(z1, tb[5]);
+        }
+        f[o] = x0; f[o + 1] = y0; f[o + 2] = z0; f[o + 4] = x1; f[o + 5] = y1; f[o + 6] = z1;
+      } else {
+        const a = first * NODE_WORDS, b = a + NODE_WORDS;
+        f[o] = Math.min(f[a], f[b]); f[o + 1] = Math.min(f[a + 1], f[b + 1]); f[o + 2] = Math.min(f[a + 2], f[b + 2]);
+        f[o + 4] = Math.max(f[a + 4], f[b + 4]); f[o + 5] = Math.max(f[a + 5], f[b + 5]); f[o + 6] = Math.max(f[a + 6], f[b + 6]);
+      }
+    }
+    return { root: n ? this.nodeBase : NO_ROOT, primCount: n, nodeCount: n ? this.nextNode - this.nodeBase : 0 };
   }
 
   private split(lo: number, hi: number, node: number, depth: number): void {

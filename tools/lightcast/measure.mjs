@@ -103,6 +103,8 @@ if (process.argv[2] === '--build') {
 const args = Object.fromEntries(process.argv.slice(2).reduce((out, v, i, all) => v.startsWith('--') ? [...out, [v.slice(2), all[i + 1]?.startsWith('--') === false ? all[i + 1] : '1']] : out, []));
 const width = Number(args.width ?? 960), height = Math.round(width * 9 / 16) & ~1, seed = Number(args.seed ?? 1337);
 const viewNames = (args.views ?? 'bark-spruce,interior').split(','), hours = (args.hours ?? '12,7.5').split(',').map(Number);
+// --date YYYY-MM-DD (UTC; default 2026-06-21, a half moon that sets near 23:00; 2026-06-28 is a full moon up all night).
+const DATE = (args.date ?? '2026-06-21').split('-').map(Number);
 const qualities = (args.quality ?? 'ultra').split(','), terms = (args.terms ?? 'all,sun,gi,spec').split(',');
 const giSplits = args.gi ? args.gi.split(',') : [];
 const source = resolve(args.source ?? ROOT), frames = Number(args.frames ?? 120);
@@ -203,7 +205,7 @@ try {
         if (!args.clouds) modules.find((m) => m.name === 'atmosphere')?.setSettings?.({ cloudsEnabled: false });
         const camera = { pos: [0, 0, 0], quat: [0, 0, 0, 1], fovY: 1.2, aspect: width / height, near: 0.03, far: 20000 };
         for (const hour of hours) {
-          const astro = a.computeAstro(Date.UTC(2026, 5, 21, Math.floor(hour), Math.round((hour % 1) * 60)), settings.observer);
+          const astro = a.computeAstro(Date.UTC(DATE[0], DATE[1] - 1, DATE[2], Math.floor(hour), Math.round((hour % 1) * 60)), settings.observer);
           for (const name of viewNames) {
             const v = views[name];
             camera.pos = [...v.eye]; camera.fovY = v.fov * Math.PI / 180;

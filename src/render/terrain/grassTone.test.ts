@@ -96,7 +96,7 @@ describe('grass_tone.wgsl source', () => {
   it('is the one definition the blades, the terrain and the ground colour module read', () => {
     expect(grass).toContain('#include "terrain/grass_tone.wgsl"');
     expect(groundColor).toContain('#include "terrain/grass_tone.wgsl"');
-    expect(grass).toContain('base *= grassClumpTone(b.pos.xz, 0.0);');
+    expect(grass).toContain('base *= grassClumpTone(b.pos.xz, 1.0 / pxPerM);');
     expect(grass).not.toMatch(/fn grassNoise2/);
     expect(terrain).toContain('grassClumpTone(w.xz, fpXZ)');
     expect(terrain).toContain('grassStreak(w.xz, dx.xz, dy.xz)');

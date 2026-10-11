@@ -1,9 +1,13 @@
 // Ray vs analytic proxy primitives (packed by src/render/rt/prims.ts, 64-byte records read as 4 x vec4u). Keep in sync with
 // src/render/rt/cpuReference.ts, which the dev page compares against. Only ENTRY hits count: a ray starting inside a primitive misses it.
+#ifndef GRP
+@group(2) @binding(9) var<storage, read> bvhNodes : array<vec4u>;
+@group(2) @binding(10) var<storage, read> bvhPrims : array<vec4u>;
+#else
 #include "rt/rt_common.wgsl"
-
 @group(${GRP}) @binding(1) var<storage, read> bvhNodes : array<vec4u>;
 @group(${GRP}) @binding(2) var<storage, read> bvhPrims : array<vec4u>;
+#endif
 
 const NO_HIT : f32 = 1e30;
 const T_EPS : f32 = 1e-4;
@@ -11,6 +15,11 @@ const TORUS_STEPS : u32 = 32u;
 const KIND_OBB : u32 = 0u;
 const KIND_CAPSULE : u32 = 1u;
 const KIND_SPHERE : u32 = 2u;
+const KIND_CYLINDER : u32 = 4u;
+const KIND_ELLIPSOID : u32 = 5u;
+const KIND_CONE : u32 = 6u;
+const KIND_GABLE : u32 = 7u;
+const GABLE_PLANES = array<vec3f, 5>(vec3f(0.0,-1.0,0.0),vec3f(2.0,1.0,0.0),vec3f(-2.0,1.0,0.0),vec3f(0.0,0.0,1.0),vec3f(0.0,0.0,-1.0));
 
 fn qrot(q : vec4f, v : vec3f) -> vec3f {
   let t = 2.0 * cross(q.xyz, v);
@@ -30,31 +39,28 @@ fn hitSphere(c : vec3f, r : f32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
   return select(NO_HIT, t, t > T_EPS && t <= tMax);
 }
 
-// Iñigo Quilez's capsule intersector.
+// Project into the plane perpendicular to the segment before solving the radial entry.
+// The unscaled capsule quadratic subtracts O(distance^4) terms and loses thin distant branches.
 fn hitCapsule(pa : vec3f, pb : vec3f, r : f32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
-  let ba = pb - pa;
-  let oa = o - pa;
-  let baba = dot(ba, ba);
-  let bard = dot(ba, d);
-  let baoa = dot(ba, oa);
-  let rdoa = dot(d, oa);
-  let oaoa = dot(oa, oa);
-  let qa = baba - bard * bard;
-  if (baba < 1e-12 || qa < 1e-9 * baba) { return hitSphere(pa, r, o, d, tMax); }
-  let qb = baba * rdoa - baoa * bard;
-  let qc = baba * oaoa - baoa * baoa - r * r * baba;
-  let h = qb * qb - qa * qc;
-  if (h < 0.0) { return NO_HIT; }
-  let t = (-qb - sqrt(h)) / qa;
-  let y = baoa + t * bard;
-  if (y > 0.0 && y < baba) { return select(NO_HIT, t, t > T_EPS && t <= tMax); }
-  let oc = select(o - pb, oa, y <= 0.0);
-  let b2 = dot(d, oc);
-  let q2 = oc - b2 * d;
-  let h2 = r * r - dot(q2, q2);
-  if (h2 <= 0.0) { return NO_HIT; }
-  let t2 = -b2 - sqrt(h2);
-  return select(NO_HIT, t2, t2 > T_EPS && t2 <= tMax);
+  let ba = pb - pa; let oa = o - pa; let lengthSq = dot(ba, ba);
+  if (lengthSq < 1e-12) { return hitSphere(pa, r, o, d, tMax); }
+  let segmentLength = sqrt(lengthSq); let axis = ba / segmentLength;
+  let axialOrigin = dot(oa, axis); let axialDirection = dot(d, axis);
+  let insideOffset = oa - axis * clamp(axialOrigin, 0.0, segmentLength);
+  if (dot(insideOffset, insideOffset) < r * r) { return NO_HIT; }
+  let radialOrigin = oa - axis * axialOrigin; let radialDirection = d - axis * axialDirection;
+  let qa = dot(radialDirection, radialDirection);
+  if (qa > 0.0) {
+    let closestT = -dot(radialOrigin, radialDirection) / qa;
+    let closest = radialOrigin + closestT * radialDirection;
+    let discriminant = r * r - dot(closest, closest);
+    if (discriminant < 0.0) { return NO_HIT; }
+    let t = closestT - sqrt(discriminant / qa); let y = axialOrigin + t * axialDirection;
+    if (y >= 0.0 && y <= segmentLength) { return select(NO_HIT, t, t > T_EPS && t <= tMax); }
+    return hitSphere(select(pb, pa, y < 0.0), r, o, d, tMax);
+  }
+  // Both caps matter for an axial ray: its approaching end may be either segment endpoint.
+  return min(hitSphere(pa, r, o, d, tMax), hitSphere(pb, r, o, d, tMax));
 }
 
 fn hitObb(c : vec3f, half : vec3f, q : vec4f, o : vec3f, d : vec3f, tMax : f32) -> f32 {
@@ -98,6 +104,46 @@ fn hitTorus(c : vec3f, major : f32, minor : f32, q : vec4f, o : vec3f, d : vec3f
   return NO_HIT;
 }
 
+fn hitCone(c : vec3f, half : vec3f, q : vec4f, o : vec3f, d : vec3f, tMax : f32) -> f32 {
+  let lp = qrotInv(q, o - c); let ld = qrotInv(q, d);
+  let p = vec3f(lp.x / half.x, (half.y - lp.y) / (2.0 * half.y), lp.z / half.z);
+  let v = vec3f(ld.x / half.x, -ld.y / (2.0 * half.y), ld.z / half.z);
+  if (p.y > 0.0 && p.y < 1.0 && dot(p.xz, p.xz) < p.y * p.y) { return NO_HIT; }
+  let a = dot(v.xz, v.xz) - v.y * v.y;
+  let b = dot(p.xz, v.xz) - p.y * v.y;
+  let cc = dot(p.xz, p.xz) - p.y * p.y;
+  var best = NO_HIT; var roots = vec2f(NO_HIT);
+  if (abs(a) < 1e-12) { if (abs(b) > 1e-12) { roots.x = -cc / (2.0 * b); } }
+  else {
+    let disc = b * b - a * cc;
+    if (disc >= 0.0) {
+      let r = -b - select(1.0, -1.0, b < 0.0) * sqrt(disc);
+      roots.x = r / a;
+      if (abs(r) > 1e-20) { roots.y = cc / r; }
+    }
+  }
+  for (var k = 0u; k < 2u; k++) {
+    let t = roots[k]; let y = p.y + t * v.y;
+    if (t > T_EPS && t <= tMax && t < best && y >= 0.0 && y <= 1.0) { best = t; }
+  }
+  if (abs(v.y) > 1e-12) {
+    let t = (1.0 - p.y) / v.y; let at = p.xz + t * v.xz;
+    if (t > T_EPS && t <= tMax && t < best && dot(at, at) <= 1.0) { best = t; }
+  }
+  return best;
+}
+
+fn hitGable(c : vec3f, half : vec3f, q : vec4f, o : vec3f, d : vec3f, tMax : f32) -> f32 {
+  let lo = qrotInv(q, o-c)/half; let ld = qrotInv(q,d)/half;
+  var enter = -NO_HIT; var leave = NO_HIT;
+  for (var k=0u; k<5u; k++) {
+    let n=GABLE_PLANES[k]; let numerator=1.0-dot(n,lo); let denominator=dot(n,ld);
+    if (abs(denominator)<1e-12) { if (numerator<0.0) { return NO_HIT; } }
+    else { let t=numerator/denominator; if (denominator<0.0) { enter=max(enter,t); } else { leave=min(leave,t); } }
+  }
+  return select(NO_HIT,enter,enter<=leave && enter>T_EPS && enter<=tMax);
+}
+
 fn intersectPrim(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
   let head = primWord(i, 0u);
   let a = bitcast<vec4f>(head);
@@ -106,6 +152,27 @@ fn intersectPrim(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
     case KIND_SPHERE: { return hitSphere(a.xyz, b.w, o, d, tMax); }
     case KIND_CAPSULE: { return hitCapsule(a.xyz, b.xyz, b.w, o, d, tMax); }
     case KIND_OBB: { return hitObb(a.xyz, b.xyz, bitcast<vec4f>(primWord(i, 2u)), o, d, tMax); }
+    case KIND_CONE: { return hitCone(a.xyz, b.xyz, bitcast<vec4f>(primWord(i, 2u)), o, d, tMax); }
+    case KIND_GABLE: { return hitGable(a.xyz, b.xyz, bitcast<vec4f>(primWord(i, 2u)), o, d, tMax); }
+    case KIND_CYLINDER, KIND_ELLIPSOID: {
+      let q = bitcast<vec4f>(primWord(i, 2u)); let lo = qrotInv(q, o - a.xyz); let ld = qrotInv(q, d);
+      let mask = select(vec3f(1.0), vec3f(1.0, 0.0, 1.0), head.w == KIND_CYLINDER);
+      let oo = lo / b.xyz; let dd = ld / b.xyz;
+      let qa = dot(dd * mask, dd); let qb = dot(oo * mask, dd); let qc = dot(oo * mask, oo) - 1.0;
+      if (qc < 0.0 && (head.w == KIND_ELLIPSOID || abs(lo.y) < b.y)) { return NO_HIT; }
+      // Closest-point form avoids subtracting two huge, nearly equal squared distances on thin distant rails.
+      var best = NO_HIT; let closestT = -qb / max(qa, 1e-20); let closest = oo + dd * closestT;
+      let disc = 1.0 - dot(closest * mask, closest);
+      if (qa > 1e-14 && disc >= 0.0) { let t = closestT - sqrt(disc / qa);
+        if (t > T_EPS && t <= tMax && (head.w == KIND_ELLIPSOID || abs(lo.y + t * ld.y) <= b.y)) { best = t; }
+      }
+      if (head.w == KIND_CYLINDER && abs(ld.y) > 1e-12) {
+        for (var side = -1.0; side <= 1.0; side += 2.0) { let t = (side * b.y - lo.y) / ld.y; let p = (lo.xz + t * ld.xz) / b.xz;
+          if (t > T_EPS && t <= tMax && t < best && dot(p, p) <= 1.0) { best = t; }
+        }
+      }
+      return best;
+    }
     default: { return hitTorus(a.xyz, b.x, b.w, bitcast<vec4f>(primWord(i, 2u)), o, d, tMax); }
   }
 }
@@ -131,6 +198,25 @@ fn primNormal(i : u32, p : vec3f) -> vec3f {
       else if (al.y >= al.z) { n.y = select(-1.0, 1.0, lp.y >= 0.0); }
       else { n.z = select(-1.0, 1.0, lp.z >= 0.0); }
       return qrot(q, n);
+    }
+    case KIND_GABLE: {
+      let q=bitcast<vec4f>(primWord(i,2u)); let lp=qrotInv(q,p-a); var normal=vec3f(0.0,-1.0,0.0); var nearest=NO_HIT;
+      for (var k=0u; k<5u; k++) { let n=GABLE_PLANES[k]/b.xyz; let len=length(n); let distance=abs(dot(n,lp)-1.0)/len;
+        if (distance<nearest) { nearest=distance; normal=n/len; }
+      }
+      return qrot(q,normal);
+    }
+    case KIND_CONE: {
+      let q = bitcast<vec4f>(primWord(i, 2u)); let lp = qrotInv(q, p - a);
+      if (abs(lp.y + b.y) < 0.0005) { return qrot(q, vec3f(0.0, -1.0, 0.0)); }
+      let n = vec3f(lp.x / (b.x * b.x), (b.y - lp.y) / (4.0 * b.y * b.y), lp.z / (b.z * b.z));
+      if (dot(n, n) < 1e-20) { return qrot(q, vec3f(0.0, 1.0, 0.0)); }
+      return qrot(q, normalize(n));
+    }
+    case KIND_CYLINDER, KIND_ELLIPSOID: {
+      let q = bitcast<vec4f>(primWord(i, 2u)); let lp = qrotInv(q, p - a); var n = lp / (b.xyz * b.xyz);
+      if (head.w == KIND_CYLINDER) { n.y = 0.0; if (abs(abs(lp.y) - b.y) < 0.0005) { n = vec3f(0.0, sign(lp.y), 0.0); } }
+      return qrot(q, normalize(n));
     }
     default: {
       let q = bitcast<vec4f>(primWord(i, 2u));

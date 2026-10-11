@@ -1,4 +1,4 @@
-import type { QualityProfile } from '../contracts';
+import { tierTable, type QualityProfile } from '../contracts';
 import type { RenderQuality, Vec3 } from '../../contracts';
 
 /** Side of a grass patch in metres; blades are hashed per (patch cell, slot), so this fixes the pattern for a given seed. */
@@ -106,30 +106,38 @@ export interface TreeParams {
   maxDistance: number;
   /** Instances whose bounding sphere covers fewer pixels than this are culled. */
   minPixels: number;
+  /** 1 turns on the leaf detail of the extreme tier in tree.wgsl (leaf flicker on every LOD, the stronger leaf forward scatter); 0 below it. */
+  leafDetail: number;
   /** Instance slots (padding included), which is also the stride of each LOD's visible list; 0 disables the tree cull. */
   slots: number;
   draws: number;
 }
 
 /** Tree draw distance and LOD bias per quality tier (instance counts per tier are in placement.ts, TIER_LIMITS). */
-export const TREE_TIER: Readonly<Record<RenderQuality, Pick<TreeParams, 'lodScale' | 'maxDistance' | 'minPixels'>>> = {
-  low: { lodScale: 0.6, maxDistance: 700, minPixels: 1.5 },
-  medium: { lodScale: 0.8, maxDistance: 1100, minPixels: 1.5 },
-  high: { lodScale: 1, maxDistance: 1600, minPixels: 1.5 },
-  ultra: { lodScale: 1.25, maxDistance: 2400, minPixels: 1.5 },
-};
+export const TREE_TIER: Readonly<Record<RenderQuality, Pick<TreeParams, 'lodScale' | 'maxDistance' | 'minPixels' | 'leafDetail'>>> = tierTable({
+  low: { lodScale: 0.6, maxDistance: 700, minPixels: 1.5, leafDetail: 0 },
+  medium: { lodScale: 0.8, maxDistance: 1100, minPixels: 1.5, leafDetail: 0 },
+  high: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, leafDetail: 0 },
+  // Ultra's near LOD reaches as far as high's: its crowns are 2-5 times the triangles they were (sprigs, shoots, roots), and the extra
+  // quarter of range cost about 0.35 ms on the race views (track 210-t2 gate 3) for trees too far to show the difference.
+  ultra: { lodScale: 1, maxDistance: 2400, minPixels: 1.5, leafDetail: 0 },
+// Extreme has no budget: the near LOD builds the outer leaves one by one (treeGen.ts leafShoot), so it reaches a little further than ultra
+// rather than three times as far, the dense LOD1 carries the crowns from there to 4 km, nothing is culled until it is smaller than
+// half a pixel, leaf detail on, and (leafDetail = 1 also tells veg_instance.wgsl) no flat LOD2 billboards at any distance.
+}, { lodScale: 1.5, maxDistance: 4000, minPixels: 0.5, leafDetail: 1 });
 
 /** Canopy cards standing in for trees beyond the real-tree draw distance (treePlanFar.ts): the most cards a tier holds. */
-export const FAR_TIER: Readonly<Record<RenderQuality, { cards: number }>> = {
+export const FAR_TIER: Readonly<Record<RenderQuality, { cards: number }>> = tierTable({
   low: { cards: 14000 },
   medium: { cards: 30000 },
   high: { cards: 50000 },
   ultra: { cards: 70000 },
-};
+}, { cards: 160000 });
 /** Cards for ground with no real trees show from this camera distance (m); a card in front of real trees shows from the tree draw distance. */
 export const FAR_UNCOVERED_NEAR = 150;
 
 export interface VegParamInput {
+  parkRadius?: number;
   windDir: readonly [number, number];
   windSpeed: number;
   quad: { pos: Vec3; vel: Vec3; thrust: number } | null;
@@ -162,7 +170,7 @@ export function packVegParams(v: VegParamViews, p: VegParamInput): void {
   f32[0] = len > 1e-6 ? p.windDir[0] / len : 1;
   f32[1] = len > 1e-6 ? p.windDir[1] / len : 0;
   f32[2] = p.windSpeed;
-  f32[3] = 0;
+  f32[3] = p.parkRadius ?? 0;
   if (p.quad) {
     f32[4] = p.quad.pos[0]; f32[5] = p.quad.pos[1]; f32[6] = p.quad.pos[2]; f32[7] = p.quad.thrust;
     f32[8] = p.quad.vel[0]; f32[9] = p.quad.vel[1]; f32[10] = p.quad.vel[2];
@@ -181,7 +189,7 @@ export function packVegParams(v: VegParamViews, p: VegParamInput): void {
   i32[22] = b.cellsPerSide;
   i32[23] = p.seed | 0;
   u32[24] = b.caps[0]; u32[25] = b.caps[1]; u32[26] = b.caps[2]; u32[27] = b.chunkCap;
-  f32[28] = p.tree.lodScale; f32[29] = p.tree.maxDistance; f32[30] = p.tree.minPixels; f32[31] = 0;
+  f32[28] = p.tree.lodScale; f32[29] = p.tree.maxDistance; f32[30] = p.tree.minPixels; f32[31] = p.tree.leafDetail;
   u32[32] = p.tree.slots; u32[33] = p.tree.draws; u32[34] = 0; u32[35] = 0;
   f32[36] = p.farDistance; f32[37] = 0; f32[38] = 0; f32[39] = 0;
 }

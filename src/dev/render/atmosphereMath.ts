@@ -1,28 +1,30 @@
 import { toHalf } from '../../render/half';
+import {
+  AP_DEPTH_K, AP_MAX_DISTANCE_M, AP_SLICES, ATMOSPHERE_TOP_KM, PLANET_RADIUS_KM, mediumAt, miePhase, rayleighPhase, type Medium,
+} from '../../render/atmosphere/physics';
 
-/** CPU single-scattering atmosphere (Hillaire 2020 coefficients, per km) used only by the dev harness until the real module lands. */
-export const RB = 6360;
-export const RT = 6460;
+/**
+ * CPU single-scattering atmosphere used only by the dev harness. The medium (Rayleigh, Mie, the boundary-layer haze over the land, ozone),
+ * the phase functions and the aerial-perspective layout come from render/atmosphere/physics.ts, so the harness follows the real module.
+ */
+export const RB = PLANET_RADIUS_KM;
+export const RT = ATMOSPHERE_TOP_KM;
 export const H = Math.sqrt(RT * RT - RB * RB);
-export const T_W = 256, T_H = 64, SKY_W = 192, SKY_H = 108, AP_N = 32, AP_MAX_M = 12000, AP_K = 6;
+export const T_W = 256, T_H = 64, SKY_W = 192, SKY_H = 108, AP_N = AP_SLICES, AP_MAX_M = AP_MAX_DISTANCE_M, AP_K = AP_DEPTH_K;
 
-const RAY = [5.802e-3, 13.558e-3, 33.1e-3];
-const MIE_SCATTER = 3.996e-3, MIE_EXT = 8.396e-3;
-const OZONE = [0.65e-3, 1.881e-3, 0.085e-3];
-const MIE_G = 0.8;
 const MULTI_SCATTER = 0.3;
 const GROUND_ALBEDO = 0.15;
 
-const ext = new Float64Array(3), scat = new Float64Array(3), tSun = new Float64Array(3), dens = new Float64Array(3);
+const ext = new Float64Array(3), scat = new Float64Array(3), tSun = new Float64Array(3);
+const med: Medium = { scatterRayleigh: [0, 0, 0], scatterMie: 0, extinction: [0, 0, 0] };
 
-/** Fills `dens` with the Rayleigh, Mie and ozone density profiles at a height in km. */
-function density(hKm: number): void {
-  dens[0] = Math.exp(-hKm / 8); dens[1] = Math.exp(-hKm / 1.2); dens[2] = Math.max(0, 1 - Math.abs(hKm - 25) / 15);
-}
+/** Altitude of the land (km above sea level, the observer's): the boundary-layer haze sits on it. Set before building the LUTs. */
+let hazeDatumKm = 0;
+export function setHazeDatumKm(km: number): void { hazeDatumKm = km; }
 
 function extinction(hKm: number, out: Float64Array): void {
-  density(hKm);
-  for (let c = 0; c < 3; c++) out[c] = RAY[c] * dens[0] + MIE_EXT * dens[1] + OZONE[c] * dens[2];
+  mediumAt(hKm, med, hazeDatumKm);
+  for (let c = 0; c < 3; c++) out[c] = med.extinction[c];
 }
 
 /** Transmittance LUT, texel-centre generation with the parameterisation documented in atmosphere_sample.wgsl. */
@@ -63,11 +65,6 @@ export function sampleTransmittance(lut: Float32Array, r: number, mu: number, ou
 export interface March { L: Float64Array; T: Float64Array }
 export const newMarch = (): March => ({ L: new Float64Array(3), T: new Float64Array(3).fill(1) });
 
-function phaseRayleigh(c: number): number { return (3 / (16 * Math.PI)) * (1 + c * c); }
-function phaseMie(c: number): number {
-  const g2 = MIE_G * MIE_G;
-  return (1 - g2) / (4 * Math.PI * Math.pow(1 + g2 - 2 * MIE_G * c, 1.5));
-}
 
 /** Integrates single scattering (plus a crude isotropic second order) over t0..t1 (km) along a ray, updating `m` in place. */
 export function marchSegment(
@@ -80,10 +77,9 @@ export function marchSegment(
   const lit = sunMu > -Math.sqrt(Math.max(1 - (RB * RB) / (rP * rP), 0));
   if (lit) sampleTransmittance(lut, rP, sunMu, tSun); else tSun.fill(0);
   extinction(hKm, ext);
-  const dr = dens[0], dm = dens[1];
-  const pr = phaseRayleigh(cosTheta), pm = phaseMie(cosTheta);
+  const pr = rayleighPhase(cosTheta), pm = miePhase(cosTheta);
   for (let c = 0; c < 3; c++) {
-    const rs = RAY[c] * dr, ms = MIE_SCATTER * dm;
+    const rs = med.scatterRayleigh[c], ms = med.scatterMie;
     scat[c] = sunLux * tSun[c] * (rs * pr + ms * pm + MULTI_SCATTER * (rs + ms) / (4 * Math.PI));
     const seg = Math.exp(-ext[c] * ds);
     m.L[c] += (m.T[c] * (scat[c] - scat[c] * seg)) / ext[c];

@@ -129,7 +129,8 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var len = 1.0;
   var m1 = l;
   var m2 = l * l;
-  if (wSum > MIN_WEIGHT) {
+  // rp.probePrev.w: the probes start afresh (new scene, or a lighting cut); the accumulated history is of the old light, so it goes too.
+  if (wSum > MIN_WEIGHT && rp.probePrev.w != 1) {
     hist = hist / wSum;
     mom = mom / wSum;
 #ifndef SHADOW

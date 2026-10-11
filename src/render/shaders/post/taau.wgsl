@@ -19,11 +19,17 @@ const FEEDBACK_MOTION : f32 = ${FEEDBACK_MOTION};
 const MOTION_PX : f32 = ${MOTION_PX};
 const DISOCC_LO : f32 = ${DISOCC_LO};
 const DISOCC_HI : f32 = ${DISOCC_HI};
+// Own motion (pixels per frame, beyond what the camera explains) from which a surface counts as moving by itself, its clip-box width
+// and its least current-frame weight (see main()).
+const OWN_MOTION_LO_PX : f32 = 0.25;
+const OWN_MOTION_HI_PX : f32 = 1.25;
+const OWN_MOTION_GAMMA : f32 = 0.75;
+const OWN_MOTION_ALPHA : f32 = 0.6;
 
 struct TaaParams {
   histScale : f32, // preExposure / prevPreExposure
   reset : u32,     // 1 = ignore the history texture
-  skyScale : f32,  // factor on the sky pixels of the resolved image (night highlight compensation, nightSkyScale in exposure.ts); the history keeps them unscaled
+  skyScale : f32,  // factor on sky samples (night highlight compensation, nightSkyScale in exposure.ts), applied per sample before any blending
   pad : u32,
 };
 
@@ -122,12 +128,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   var bMax = vec3f(-1e9);
   var dMax = 0.0;
   var dPix = clamp(base, vec2i(0), rMax);
-  var skyKw = 0.0;
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let p = base + vec2i(i, j);
       let t = clamp(p, vec2i(0), rMax);
-      let s = clamp(dropNan(textureLoad(inputTex, t, 0).rgb), vec3f(0.0), vec3f(HDR_MAX));
+      let z = textureLoad(depthTex, t, 0);
+      // The night sky is held darker than the ground per sample, before it is blended with anything: scaling the resolved pixel by its sky
+      // share instead left the sky part of every leaf-sky edge pixel (and every motion-blurred one) up to 5x brighter than the sky beside it.
+      let s = clamp(dropNan(textureLoad(inputTex, t, 0).rgb), vec3f(0.0), vec3f(HDR_MAX)) * select(1.0, taa.skyScale, z <= 0.0);
       let d = (vec2f(p) + 0.5 - jit - c) / rk;
       let w = exp(-KERNEL_K * dot(d, d));
       let kw = 1.0 / (1.0 + luminance(s));
@@ -139,9 +147,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       m2 += q * q;
       bMin = min(bMin, q);
       bMax = max(bMax, q);
-      let z = textureLoad(depthTex, t, 0);
       if (z > dMax) { dMax = z; dPix = t; }
-      if (z <= 0.0) { skyKw += w; }
     }
   }
   let cur = cSum / max(lSum, 1e-9);
@@ -160,11 +166,27 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let prevUv = uv + mv;
     valid = valid && all(prevUv >= vec2f(0.0)) && all(prevUv <= vec2f(1.0));
     if (valid) {
+      // Geometry that moves by itself (wind-blown grass blades and leaves): its motion vector minus the motion a static point at the same
+      // depth gets from the camera alone. Thin swaying blades move several pixels a frame and their 3x3 neighbourhood spans every blade
+      // colour, so the usual clip box keeps a smeared history; for them the box is tightened and the current frame weighs more, the way a
+      // short real shutter freezes them. Static ground, rocks and buildings have no own motion and keep the full accumulation.
+      var ownPx = 0.0;
+      if (dMax > 0.0) {
+        let wp = worldFromDepth((vec2f(dPix) + 0.5) / rSize, dMax);
+        let pc = frame.prevViewProj * vec4f(wp, 1.0);
+        let cc = frame.viewProjUnjittered * vec4f(wp, 1.0);
+        if (pc.w > 1e-3 && cc.w > 1e-3) {
+          let staticMv = vec2f(pc.x / pc.w - cc.x / cc.w, cc.y / cc.w - pc.y / pc.w) * 0.5;
+          ownPx = length((mv - staticMv) * oSize);
+        }
+      }
+      let own = smoothstep(OWN_MOTION_LO_PX, OWN_MOTION_HI_PX, ownPx);
+      let gamma = mix(VARIANCE_GAMMA, OWN_MOTION_GAMMA, own);
       let hist = clamp(dropNan(historyCatmullRom(prevUv, oSize) * taa.histScale), vec3f(0.0), vec3f(HDR_MAX));
       let mean = m1 / 9.0;
       let sigma = sqrt(max(m2 / 9.0 - mean * mean, vec3f(0.0)));
-      let lo = max(bMin, mean - VARIANCE_GAMMA * sigma);
-      let hi = min(bMax, mean + VARIANCE_GAMMA * sigma);
+      let lo = max(bMin, mean - gamma * sigma);
+      let hi = min(bMax, mean + gamma * sigma);
       let histC = fromYCoCg(clipToBox(lo, hi, toYCoCg(compress(hist))));
 
       let speedPx = length(mv * oSize);
@@ -181,11 +203,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
           alpha = max(alpha, smoothstep(DISOCC_LO, DISOCC_HI, (prevW - hw) / prevW));
         }
       }
+      alpha = max(alpha, OWN_MOTION_ALPHA * own);
       result = mix(histC, curC, alpha);
     }
   }
   let outC = decompress(max(result, vec3f(0.0)));
-  textureStore(outResolved, gid.xy, vec4f(outC * mix(1.0, taa.skyScale, skyKw / max(wSum, 1e-9)), 1.0));
+  textureStore(outResolved, gid.xy, vec4f(outC, 1.0));
   textureStore(outHist, gid.xy, vec4f(outC, storeW));
 }
 

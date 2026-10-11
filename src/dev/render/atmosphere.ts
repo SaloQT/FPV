@@ -2,7 +2,7 @@ import type { FrameInfo, RenderContext, RenderModule } from '../../render/contra
 import { SUN_TOA_LUX, moonIlluminanceLux } from '../../render/exposure';
 import {
   AP_K, AP_MAX_M, AP_N, RB, SKY_H, SKY_W, T_H, T_W,
-  buildTransmittance, groundBounce, marchSegment, newMarch, rayExtent, transmittanceToHalf, writeHalfRgba,
+  buildTransmittance, setHazeDatumKm, groundBounce, marchSegment, newMarch, rayExtent, transmittanceToHalf, writeHalfRgba,
 } from './atmosphereMath';
 
 const SKY_STEPS = 32;
@@ -88,6 +88,7 @@ export function createDevAtmosphere(): RenderModule {
   return {
     name: 'dev-atmosphere',
     init(rc) {
+      setHazeDatumKm(rc.settings.observer.altitudeM / 1000);
       lut = buildTransmittance();
       rc.device.queue.writeTexture({ texture: rc.world.tex.transmittance }, transmittanceToHalf(lut), { bytesPerRow: T_W * 8 }, { width: T_W, height: T_H });
     },

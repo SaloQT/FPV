@@ -21,7 +21,7 @@ struct Surf {
 };
 
 // Total exposure (pre-exposure x exposure ratio) at the camera's full night gain: 2^(maxGainEv + DAY_TOTAL_EV) in post/exposure.ts, kept equal by a test.
-const NIGHT_TOTAL_EXPOSURE : f32 = 365.1;
+const NIGHT_TOTAL_EXPOSURE : f32 = 1186.0;
 
 // Display level (after exposure, 1 = clipping) the core of an LED glow may reach for an emissive strength; mirrored in objects/ledGlow.ts.
 fn ledDisplay(strength : f32) -> f32 {
@@ -33,6 +33,14 @@ fn ledDisplay(strength : f32) -> f32 {
 fn glowShown(strength : f32, energy : f32) -> f32 {
   let pre = frame.params.y;
   return min(strength * EMISSIVE_MAX_NITS * 0.35 * energy * pre, ledDisplay(strength) * max(1.0, pre / NIGHT_TOTAL_EXPOSURE));
+}
+
+// Camera distance (m) over which a gate's glow ribbons fade in, mirrored in objects/ledGlow.ts. A ribbon a metre from the lens would sweep across most
+// of the screen at full strength and white out the frame at night as the drone flies through; the LED strip itself stays lit.
+const GLOW_NEAR_FADE_M : vec2f = vec2f(1.0, 5.0);
+
+fn glowNearFade(dist : f32) -> f32 {
+  return smoothstep(GLOW_NEAR_FADE_M.x, GLOW_NEAR_FADE_M.y, dist);
 }
 
 fn uvOfClip(clip : vec4f) -> vec2f {

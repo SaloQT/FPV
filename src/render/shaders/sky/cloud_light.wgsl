@@ -16,7 +16,12 @@ const MS_ENERGY : f32 = 0.5;
 const MS_EXTINCTION : f32 = 0.5;
 const MS_ANISOTROPY : f32 = 0.5;
 const LIGHT_STEP_KM : f32 = 0.06;
-const AMBIENT_FLOOR : f32 = 0.5;
+const LIGHT_DETAIL_STEPS : i32 = 2;
+const AMBIENT_FLOOR : f32 = 0.75;
+// Share of the sky light falling on a cloud's top that multiple scattering carries down through it to its base. Without it a base is lit
+// only by the ground's bounce, which at night (no direct light, a dark ground) leaves the clouds as black cut-outs against the airglow and
+// starlight; real clouds pass a good part of the light down (a thick cumulus deck still lets through a fifth to a half).
+const DIFFUSE_THROUGH : f32 = 0.6;
 
 struct CloudLight {
   dir : vec3f,
@@ -82,9 +87,26 @@ fn powderTerm(sigmaE : f32, c : f32) -> f32 {
   return mix(1.0, 1.0 - exp(-2.0 * sigmaE * 0.1), 0.5 * (1.0 - c));
 }
 
+// Diffuse transmission of the light through the cloud: light that has scattered many times on its way in arrives from every direction,
+// and a thick cloud passes a good share of it (two-stream, conservative scattering: T = 1 / (1 + 0.75 tau (1 - g)), a fifth through
+// tau 30). It is what makes a cumulus base grey-white instead of sky-blue and its shaded flanks soft grey instead of black, while the
+// single-scattering octaves keep the bright, crisp sunlit billows.
+const DIFFUSE_SHARE : f32 = 0.18;
+const DIFFUSE_G : f32 = 0.85;
+
+// The slab formula holds for a cloud wider than it is deep; a cumulus loses diffuse light out of its sides, so it also fades with the
+// depth to the light (DIFFUSE_LEAK per unit of optical depth), which keeps the far side of a low-sun cloud in shade.
+const DIFFUSE_LEAK : f32 = 0.07;
+
+fn cloudDiffuse(tauLight : f32) -> f32 {
+  return DIFFUSE_SHARE * INV_PI * exp(-DIFFUSE_LEAK * tauLight) / (1.0 + 0.75 * (1.0 - DIFFUSE_G) * tauLight);
+}
+
 // Optical depth from p toward l through the cumulus: `steps` samples at exponentially growing spacing (60 m doubling), ending once
-// the ray has left the layer.
-fn cumulusLightTau(p : vec3f, l : vec3f, steps : i32, datumR : f32) -> f32 {
+// the ray has left the layer. `nearDetail` puts the erosion detail into the first LIGHT_DETAIL_STEPS steps (60 + 120 m), so the small
+// billows shade each other (sunlit cauliflower tops over darker crevices, a mottled base from below); the rest of the path is far
+// enough that the mean erosion stands in for it.
+fn cumulusLightTau(p : vec3f, l : vec3f, steps : i32, datumR : f32, nearDetail : f32) -> f32 {
   var tau = 0.0;
   var t = 0.0;
   var ds = LIGHT_STEP_KM;
@@ -94,7 +116,7 @@ fn cumulusLightTau(p : vec3f, l : vec3f, steps : i32, datumR : f32) -> f32 {
     let h = rq - datumR;
     let rising = dot(q, l) > 0.0;
     if ((h > ap.cloudB.y && rising) || (h < ap.cloudB.x && !rising)) { break; }
-    tau += CUMULUS_SIGMA_KM * ap.cloudA.z * cumulusDensity(layerPlane(q, ap.wind.xy), h, 0.0) * ds;
+    tau += CUMULUS_SIGMA_KM * ap.cloudA.z * cumulusDensity(layerPlane(q, ap.wind.xy), h, select(0.0, nearDetail, i < LIGHT_DETAIL_STEPS)) * ds;
     t += ds;
     ds *= 2.0;
   }
@@ -102,20 +124,42 @@ fn cumulusLightTau(p : vec3f, l : vec3f, steps : i32, datumR : f32) -> f32 {
 }
 
 // Ambient radiance (nits) around the cloud layer: the sky hemisphere from the world sky-view LUT, and the ground's bounce (Lambert
-// albedo GROUND_ALBEDO, lit by the direct light and the sky, dimmed by the cloud cover's own shadow on the ground).
+// albedo LANDSCAPE_ALBEDO, lit by the direct light and the sky, dimmed by the cloud cover's own shadow on the ground).
 fn cloudAmbient(lights : CloudLights, rGround : f32) -> Ambient {
   let s = 0.70710678;
   var res : Ambient;
   res.top = 0.4 * sampleSkyView(vec3f(0.0, 1.0, 0.0))
     + 0.15 * (sampleSkyView(vec3f(s, s, 0.0)) + sampleSkyView(vec3f(-s, s, 0.0)) + sampleSkyView(vec3f(0.0, s, s)) + sampleSkyView(vec3f(0.0, s, -s)));
+  // The sky near the horizon lights a cloud's sides: by day it is about as bright as the zenith, but at night the airglow is several times
+  // brighter there (the slant path through its shell), and it is what keeps distant clouds grey instead of black.
+  let horizon = sampleSkyView(vec3f(0.98, 0.2, 0.0)) + sampleSkyView(vec3f(-0.98, 0.2, 0.0)) + sampleSkyView(vec3f(0.0, 0.2, 0.98)) + sampleSkyView(vec3f(0.0, 0.2, -0.98));
+  res.top = 0.8 * res.top + 0.05 * horizon;
   let p = vec3f(0.0, rGround, 0.0);
   let direct = lights.sun.toa * sampleTransmittance(rGround, lights.sun.dir.y) * (max(lights.sun.dir.y, 0.0) * planetVisibility(p, lights.sun.dir) * lights.sun.w)
     + lights.moon.toa * sampleTransmittance(rGround, lights.moon.dir.y) * (max(lights.moon.dir.y, 0.0) * planetVisibility(p, lights.moon.dir) * lights.moon.w);
-  res.bottom = GROUND_ALBEDO * (direct * INV_PI + res.top) * (1.0 - 0.6 * ap.cloudA.x);
+  // The land under the clouds (meadow, forest, fields) reflects about 0.1, not the grey 0.3 of the atmosphere's multiple-scattering ground:
+  // a sunlit 0.3 lit a cumulus base from below brighter than the sky beside it, so the bases read flat cream instead of grey.
+  res.bottom = LANDSCAPE_ALBEDO * (direct * INV_PI + res.top) * (1.0 - 0.6 * ap.cloudA.x) + DIFFUSE_THROUGH * res.top;
   return res;
 }
 
 // Ambient radiance inside the cumulus at height fraction hf: ground bounce at the base, sky at the top, never fully dark.
 fn ambientAt(a : Ambient, hf : f32) -> vec3f {
   return mix(a.bottom, a.top, smoothstep(0.0, 1.0, hf)) * (AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * smoothstep(0.0, 0.6, hf));
+}
+
+// Share of the light on a cloud's top that diffuses down to a point tauLight (optical depth toward the light) inside it: the slab
+// transmission with side leak of cloudDiffuse, without its share.
+fn cloudThrough(tauLight : f32) -> f32 {
+  return exp(-DIFFUSE_LEAK * tauLight) / (1.0 + 0.75 * (1.0 - DIFFUSE_G) * tauLight);
+}
+
+// ambientAt for a sample whose optical depth toward the key light is tauUp (negative when no light is marched). The sky light passed
+// down through the cloud (DIFFUSE_THROUGH in a.bottom) is scaled by how much cloud stands above the sample, so a base under a deep
+// tower is dark grey and one under a thin cap is pale: the mottled, dark-centred base of a cumulus seen from below, instead of an
+// evenly lit underside.
+fn ambientThroughAt(a : Ambient, hf : f32, tauUp : f32) -> vec3f {
+  if (tauUp < 0.0) { return ambientAt(a, hf); }
+  let lost = DIFFUSE_THROUGH * a.top * (1.0 - cloudThrough(tauUp)) * (1.0 - smoothstep(0.0, 1.0, hf)) * AMBIENT_FLOOR;
+  return max(ambientAt(a, hf) - lost, vec3f(0.0));
 }

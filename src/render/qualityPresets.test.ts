@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { qualityProfile, type QualityProfile } from './contracts';
+import { BUDGETED_TIERS, qualityProfile, type QualityProfile } from './contracts';
 import { performanceProfile, qualityCostIndex, resolveQuality, sameProfile } from './qualityPresets';
 import { probeLimits, probeStride } from './rt/probes';
 
-const TIERS = ['low', 'medium', 'high', 'ultra'] as const;
+const TIERS = BUDGETED_TIERS;
 
 describe('quality tiers really differ in cost', () => {
   it('the cost index rises strictly from low to ultra', () => {

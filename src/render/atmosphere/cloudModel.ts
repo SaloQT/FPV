@@ -10,7 +10,8 @@ export const CLOUD_SHADOW_EXTENT_M = 8000;
 export const CUMULUS_SIGMA_KM = 40;
 export const CIRRUS_SIGMA_KM = 0.9;
 
-const SHAPE_TILE_KM = 7;
+const SHAPE_TILE_KM = 1.6;
+const TOP_LUMPS = 0.6;
 const CIRRUS_STREAK_KM: readonly [number, number, number] = [24, 4, 4];
 const CUMULUS_STEPS = 32;
 const CIRRUS_STEPS = 12;
@@ -149,9 +150,41 @@ function vnoise2(x: number, y: number): number {
   return mix(mix(a, c, ux), mix(d, e, ux), uy);
 }
 
-/** Weather value 0..1 of the cumulus map at a world-plane position (km), including the seed offset. */
-export const cumulusWeather = (x: number, y: number): number =>
-  0.45 * vnoise2(x / 9, y / 9) + 0.35 * vnoise2(x / 4 + 17.3, y / 4 + 9.1) + 0.2 * vnoise2(x / 1.8 + 3.7, y / 1.8 + 41.9);
+/** Cumulus cell size (km): each cell of this grid holds one convective cell (cumulusCells in cloud_density.wgsl). */
+const CELL_KM = 2.6;
+/** Log remap of the raw weather (fitted to its quantiles, see cumulusWeather). */
+export const W_A = 1.156, W_B = 0.583;
+/** Share of the cells that hold no cloud at all, so the clouds stand in an irregular scatter rather than one per grid square. */
+const CELL_EMPTY = 0.5;
+
+/**
+ * Convective cells 0..1: one rounded dome per CELL_KM cell, jittered, of its own radius (0.3-0.65 of a cell) and strength, so the cover
+ * breaks up into separate clouds with blue sky between them, as fair-weather cumulus do, instead of the meandering worms that a
+ * thresholded smooth noise draws. Mirrors cumulusCells in shaders/sky/cloud_density.wgsl.
+ */
+export function cumulusCells(x: number, y: number): number {
+  const gx = x / CELL_KM, gy = y / CELL_KM, bx = Math.floor(gx), by = Math.floor(gy);
+  // Only the cells on the near side of each axis can reach the point (radius at most 0.65, centres 0.15 from the cell edges): 2 x 2.
+  const sx = gx - bx < 0.5 ? -1 : 1, sy = gy - by < 0.5 ? -1 : 1;
+  let best = 0;
+  for (let j = 0; j <= 1; j++) for (let i = 0; i <= 1; i++) {
+    const cx = bx + i * sx, cy = by + j * sy;
+    const px = cx + 0.15 + 0.7 * hash21(cx, cy + 7919), py = cy + 0.15 + 0.7 * hash21(cx + 7919, cy);
+    const r = 0.3 + 0.35 * hash21(cx + 104729, cy), s = hash21(cx, cy + 104729);
+    if (s < CELL_EMPTY) continue;
+    const d = Math.hypot(gx - px, gy - py) / r;
+    if (d < 1) best = Math.max(best, (1 - smoothstep(0, 1, d)) * (0.55 + 0.45 * (s - CELL_EMPTY) / (1 - CELL_EMPTY)));
+  }
+  return best;
+}
+
+/** Weather value 0..1 of the cumulus map at a world-plane position (km), including the seed offset: the cells, with a 1.6 km and a 0.7 km
+ * noise octave that break their outlines into lobes, then remapped (a log curve fitted to the field's quantiles) so the clouds,
+ * whose soft rims reach a little below presence()'s threshold, cover about `coverage` of the plane. */
+export function cumulusWeather(x: number, y: number): number {
+  const raw = 0.45 * cumulusCells(x, y) + 0.35 * vnoise2(x / 1.6 + 17.3, y / 1.6 + 9.1) + 0.2 * vnoise2(x / 0.7 + 3.7, y / 0.7 + 41.9);
+  return saturate(W_A + W_B * Math.log(Math.max(raw, 1e-4)));
+}
 
 export const cirrusWeather = (x: number, y: number): number =>
   0.6 * vnoise2(x / 30 + 5.1, y / 30 + 2.3) + 0.4 * vnoise2(x / 11 + 29.7, y / 11 + 13.9);
@@ -160,6 +193,12 @@ export const cirrusWeather = (x: number, y: number): number =>
 export function presence(n: number, coverage: number): number {
   const t = 0.8 - 0.62 * coverage;
   return smoothstep(t - 0.09, t + 0.09, n);
+}
+
+/** How tall a cumulus grows at weather value n: climbs slowly to the weather maxima so tops are domes (cumulusTallness in cloud_density.wgsl). */
+export function cumulusTallness(n: number, coverage: number): number {
+  const t = 0.8 - 0.62 * coverage;
+  return smoothstep(t - 0.09, t + 0.3, n);
 }
 
 /** Fair-weather cumulus is convective and dissipates after sunset, so a night keeps this fraction of the daytime cover (a mostly clear night is the default). */
@@ -173,17 +212,21 @@ export function nightCumulusScale(sinSunElevation: number): number {
 }
 
 /** Schneider's height gradient: ramps up over the first 10 % and down over the last 38 % of the (per-cloud scaled) layer. */
-export const cumulusGradient = (hs: number): number => smoothstep(0, 0.1, hs) * (1 - smoothstep(0.62, 1, hs));
+export const cumulusGradient = (hs: number): number => smoothstep(0, 0.04, hs) * (1 - smoothstep(0.62, 1, hs));
 
 /** Cumulus density 0..1 at a plane position (km) and height above the datum (km), with the detail volume at its mean erosion. */
 export function cumulusDensity(f: CloudField, x: number, y: number, hKm: number): number {
   const hf = (hKm - f.cumulusBaseKm) / (f.cumulusTopKm - f.cumulusBaseKm);
   if (hf <= 0 || hf >= 1) return 0;
-  const l = presence(cumulusWeather(x, y), f.cumulusCoverage);
+  const n = cumulusWeather(x, y);
+  const l = presence(n, f.cumulusCoverage);
   if (l <= 0) return 0;
-  const grad = cumulusGradient(hf / mix(0.3, 1, l));
-  if (grad <= 0) return 0;
+  const hs = hf / mix(0.25, 1, cumulusTallness(n, f.cumulusCoverage));
+  if (hs >= 1 + 0.5 * TOP_LUMPS) return 0;
   shapeNoise(x / SHAPE_TILE_KM, hKm / SHAPE_TILE_KM, y / SHAPE_TILE_KM);
+  // Cauliflower tops over the low-frequency Worley blobs (as in cloud_density.wgsl).
+  const grad = cumulusGradient(hs - TOP_LUMPS * (SHAPE[1] - 0.5) * smoothstep(0.2, 0.6, hs));
+  if (grad <= 0) return 0;
   const low = SHAPE[1] * 0.625 + SHAPE[2] * 0.25 + SHAPE[3] * 0.125;
   const shape = saturate((SHAPE[0] - low + 1) / (2 - low));
   const d = saturate(shape * grad - 1 + l);

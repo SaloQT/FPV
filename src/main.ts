@@ -33,6 +33,13 @@ async function run(load: () => Promise<unknown>, canvas: HTMLCanvasElement, osd:
 }
 
 async function boot(): Promise<void> {
+  // The propeller lab is a plain 2D page; it needs no WebGPU, so it opens before that check.
+  if (new URLSearchParams(location.search).get('mode') === 'proplab') {
+    const { mountPropLab } = await import('./prop/lab/page');
+    mountPropLab(document.getElementById('ui') ?? document.body);
+    window.__fpv.ready = true;
+    return;
+  }
   if (!('gpu' in navigator) || !navigator.gpu) {
     fail(new Error(`navigator.gpu is ${typeof navigator.gpu}; isSecureContext = ${window.isSecureContext}; ${navigator.userAgent}`), 'no-webgpu');
     return;

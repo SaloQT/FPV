@@ -3,7 +3,9 @@
  * A flight clip through the tree-shots views with a bundle measure.mjs built, for white-balance pumping and GPU cost.
  *   node tools/lightcast/flight.mjs --bundle .bench/lightcast/variants/<tag>-real/bundle/bundle.mjs --out .bench/lightcast/flight-on.mp4
  *     [--hour 12] [--quality ultra] [--seconds 12] [--width 960] [--track tools/views/hard-210-t2.json --speed 20] [--camera game]
- * The bundle comes from a measure.mjs run (any --tag with the real term). Needs ffmpeg on PATH. Clouds are off.
+ * The bundle comes from a measure.mjs run (any --tag with the real term). Needs ffmpeg on PATH. Clouds are off unless --clouds.
+ * [--date 2026-06-28] the UTC date (default 2026-06-21); [--static] holds the camera at the first pose, for flicker: the log then carries
+ * topDiff, the mean absolute change (codes) of the top third (the sky and clouds) from the previous frame.
  * Writes the mp4 and <out>.json: per frame the mean displayed chromaticity (r/g, b/g of the linear frame mean) and the GPU ms per pass.
  */
 import { spawn } from 'node:child_process';
@@ -70,14 +72,16 @@ try {
         // Start-up timing per render module stage (init and setScene), the slow ones first.
         console.error(`[start-up] ${[...renderer.initTimings].sort((x, y) => y.ms - x.ms).filter((t) => t.ms >= 50).map((t) => `${t.stage} ${(t.ms / 1000).toFixed(1)} s`).join(', ')}`);
   for (const m of modules) if (m.name === 'vegetation' || m.name === 'objects') m.setWind?.([0, -1], 0);
-  modules.find((m) => m.name === 'atmosphere')?.setSettings?.({ cloudsEnabled: false });
-  const astro = a.computeAstro(Date.UTC(2026, 5, 21, Math.floor(hour), Math.round((hour % 1) * 60)), settings.observer);
+  if (!args.clouds) modules.find((m) => m.name === 'atmosphere')?.setSettings?.({ cloudsEnabled: false });
+  const [dy, dm, dd] = (args.date ?? '2026-06-21').split('-').map(Number);
+  const astro = a.computeAstro(Date.UTC(dy, dm - 1, dd, Math.floor(hour), Math.round((hour % 1) * 60)), settings.observer);
   const camera = { pos: [0, 0, 0], quat: [0, 0, 0, 1], fovY: 80 * Math.PI / 180, aspect: width / height, near: 0.03, far: 20000 };
   const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-r', String(fps), '-i', '-', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', out], { stdio: ['pipe', 'inherit', 'inherit'] });
   const lin = (u) => { const v = u / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  let prevTop = null;
   // Warm-up at the first pose so exposure and white balance start settled.
   for (let f = -60; f < frames; f++) {
-    const p = pose(Math.max(f, 0) / (frames - 1));
+    const p = pose(args.static ? 0 : Math.max(f, 0) / (frames - 1));
     camera.pos = p.eye;
     a.quatLookAlong(...p.target.map((x, k) => x - p.eye[k]), camera.quat);
     renderer.render({ dt: 1 / fps, time: 10 + (f + 60) / fps, camera, astro, quad: null });
@@ -85,7 +89,11 @@ try {
     const rgba = await surf.read();
     const m = [0, 0, 0];
     for (let i = 0; i < rgba.length; i += 16) { m[0] += lin(rgba[i]); m[1] += lin(rgba[i + 1]); m[2] += lin(rgba[i + 2]); }
-    log.push({ f, rg: +(m[0] / m[1]).toFixed(4), bg: +(m[2] / m[1]).toFixed(4), gpuMs: renderer.stats?.gpuMs ?? null, passMs: [...(renderer.stats?.passMs ?? [])] });
+    const top = Math.floor(height / 3) * width * 4;
+    let topDiff = null;
+    if (prevTop) { let sd = 0; for (let i = 0; i < top; i += 4) sd += Math.abs(rgba[i + 1] - prevTop[i + 1]); topDiff = +(sd / (top / 4)).toFixed(3); }
+    prevTop = rgba.slice(0, top);
+    log.push({ f, topDiff, rg: +(m[0] / m[1]).toFixed(4), bg: +(m[2] / m[1]).toFixed(4), gpuMs: renderer.stats?.gpuMs ?? null, passMs: [...(renderer.stats?.passMs ?? [])] });
     if (!ff.stdin.write(Buffer.from(rgba.buffer))) await new Promise((done) => ff.stdin.once('drain', done));
   }
   ff.stdin.end();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { INSTANCE_BYTES, KIND_BUSH, KIND_ROCK, KIND_TREE, SLOT_ALIGN, VARIANT_BYTES, packInstances, type InstanceRun } from './instanceData';
 import { testScene } from './testScene';
-import { VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets } from './variants';
+import { VARIANT_COUNT, VARIANT_DEFS, buildVariantAssets, variantPlan } from './variants';
 
 const SLOW = 60000;
 
@@ -78,6 +78,8 @@ describe('packInstances', () => {
       expect(vf[o + 8]).toBe(Math.fround(a.height));
       expect([vf[o + 9], vf[o + 10], vf[o + 11]]).toEqual([d.swayHz, d.swayStrength, d.flutter].map(Math.fround));
       expect([vf[o + 12], vf[o + 13], vf[o + 14], vf[o + 15]]).toEqual([...d.tone, d.translucency].map(Math.fround));
+      const plan = variantPlan(v);
+      expect([vf[o + 16], vf[o + 17], vf[o + 18], vf[o + 19]]).toEqual((plan ? [plan.crownC[1], ...plan.crownR] : [0, 0, 0, 0]).map(Math.fround));
     });
   });
 

@@ -172,22 +172,23 @@ describe('targetTotalEv', () => {
     expect(displayed(T.keyKneeNits / 16)).toBeCloseTo(T.key * 16 ** -T.keySlope, 6);
   });
 
-  it('settles at the sensor-gain cap for every scene darker than a moonless-twilight ground, so a moonless night is a dark picture', () => {
-    for (const nits of [6e-5, 4.6e-5, 3e-5, 1e-7]) {
+  it('settles at the sensor-gain cap for every scene darker than a clear moonless ground (a cloudy or shaded moonless night)', () => {
+    for (const nits of [2e-5, 1e-5, 3e-6, 1e-7]) {
       const pre = 0.25 / nits;
       const [ratio, gainEv, , totalEv] = exposureOutput(targetTotalEv(groundEv, pre), pre, groundEv);
       expect(gainEv).toBeCloseTo(T.maxGainEv, 9);
       expect(totalEv).toBeCloseTo(DAY_TOTAL_EV + T.maxGainEv, 9);
-      expect(ratio * pre).toBeCloseTo(2 ** totalEv, 12);
+      expect(Math.log2(ratio * pre)).toBeCloseTo(totalEv, 12);
     }
   });
 
-  it('stays at the cap up to a ground where the flat night key is reached (about 7.6e-5 nits), then lets the exposure fall as the scene brightens', () => {
+  it('stays at the cap up to a ground where the night key is reached (about 2.5e-5 nits), then lets the exposure fall as the scene brightens', () => {
     const gain = (nits: number): number => exposureOutput(targetTotalEv(groundEv, 0.25 / nits), 0.25 / nits, groundEv)[1];
-    const nightKey = T.key * 2 ** (T.keySlope * (Math.log2(T.keyNightKneeNits) - Math.log2(T.keyKneeNits)));
-    const capNits = nightKey / 2 ** (DAY_TOTAL_EV + T.maxGainEv);
-    expect(capNits).toBeGreaterThan(5e-5);
-    expect(capNits).toBeLessThan(1e-4);
+    // The ground at which the night key, key(lum), equals what the full gain makes of it: lum * 2^(DAY_TOTAL_EV + maxGainEv).
+    let capNits = 1e-7;
+    while (2 ** keyEvFor(Math.log2(capNits * 1.01)) > capNits * 1.01 * 2 ** (DAY_TOTAL_EV + T.maxGainEv)) capNits *= 1.01;
+    expect(capNits).toBeGreaterThan(1.5e-5);
+    expect(capNits).toBeLessThan(4e-5);
     expect(gain(capNits * 0.95)).toBeCloseTo(T.maxGainEv, 9);
     expect(gain(capNits * 1.05)).toBeLessThan(T.maxGainEv);
     expect(gain(4e-4)).toBeLessThan(T.maxGainEv - 2);
@@ -195,12 +196,15 @@ describe('targetTotalEv', () => {
     expect(gain(1e-2)).toBeGreaterThan(gain(0.1));
   });
 
-  it('shows a moonless ground dim but readable (code ~6), a moonlit one a little brighter, and a dusk ground below the key but above black', () => {
-    expect(displayed(4.6e-5)).toBeGreaterThan(0.01);
-    expect(displayed(4.6e-5)).toBeLessThan(0.02);
+  it('shows a moonless ground faint but readable (code ~33), a moonlit one a little brighter (~44), and a dusk ground below the key but above black', () => {
+    // Scene-linear 0.041 is about code 33 on the night curve, 0.055 about 44 and 0.07 about 54 (tonemap.wgsl, night toe).
+    expect(displayed(4.6e-5)).toBeGreaterThan(0.035);
+    expect(displayed(4.6e-5)).toBeLessThan(0.047);
     expect(displayed(4.6e-5)).toBeLessThan(displayed(4.3e-4));
-    expect(displayed(4.3e-4)).toBeGreaterThan(0.02);
-    expect(displayed(4.3e-4)).toBeLessThan(0.035);
+    expect(displayed(4.3e-4)).toBeGreaterThan(0.042);
+    expect(displayed(4.3e-4)).toBeLessThan(0.06);
+    expect(displayed(0.5)).toBeGreaterThan(displayed(4.3e-4));
+    expect(displayed(0.5)).toBeLessThan(0.075);
     expect(displayed(5)).toBeGreaterThan(0.02);
     expect(displayed(5)).toBeLessThan(T.key);
   });
@@ -214,8 +218,23 @@ describe('targetTotalEv', () => {
     }
   });
 
+  it('caps a floodlit night (a lamp-lit park) so its lit tenth sits near the clip, and leaves moonlight and small lights alone', () => {
+    const pre = 0.25 / 0.001; // moonlight: the CPU estimate puts a 0.18 card at about 0.001 nits
+    const preEv = Math.log2(pre);
+    const shown = (ev: number, total: number): number => ev - preEv + total;
+    const free = targetTotalEv(EXPECTED_MEAN_EV, pre);
+    // Lamp-lit ground 10 EV over the moonlit scene fills the brightest tenth: without the cap it would show 10 EV over the key.
+    const lampEv = EXPECTED_MEAN_EV + 10;
+    const capped = targetTotalEv(EXPECTED_MEAN_EV + 3, pre, -Infinity, lampEv);
+    expect(shown(lampEv, capped)).toBeCloseTo(KEY_EV + T.clipEv + T.nightLampEv, 6);
+    // A moonlit frame's brightest tenth is near the key: no change.
+    expect(targetTotalEv(EXPECTED_MEAN_EV, pre, -Infinity, EXPECTED_MEAN_EV + 1)).toBeCloseTo(free, 9);
+    // By day the cap plays no part (the day highlight rule already holds the brightest tenth).
+    expect(targetTotalEv(KEY_EV, DAY_PRE, -Infinity, KEY_EV + 20)).toBeCloseTo(targetTotalEv(KEY_EV, DAY_PRE), 9);
+  });
+
   it('leaves the exposure above keyNightKneeNits exactly as the single-slope key law made it', () => {
-    for (const nits of [0.1, 0.5, 5, 50, 100, 5000]) {
+    for (const nits of [5, 20, 50, 100, 5000]) {
       const meanEv = groundEv + 1.3;
       const preEv = Math.log2(0.25 / nits);
       const keyEv = Math.log2(T.key) + T.keySlope * Math.min(meanEv - preEv - Math.log2(T.keyKneeNits), 0);
@@ -238,7 +257,7 @@ describe('targetTotalEv', () => {
     expect(targetTotalEv(KEY_EV, DAY_PRE, KEY_EV + T.clipEv + 10)).toBeCloseTo(noHigh - T.protectMaxEv, 9);
   });
 
-  it('holds the brightest 12% of a day frame at about 0.7 scene-linear whatever the shade around it', () => {
+  it('holds the brightest 12% of a day frame at about 0.85 scene-linear whatever the shade around it', () => {
     const hist = new Float64Array(T.bins);
     for (let i = 0; i < 80; i++) accumulate(hist, 0.02, 0.5, 0.5);
     for (let i = 0; i < 20; i++) accumulate(hist, 0.8, 0.5, 0.5);
@@ -246,8 +265,8 @@ describe('targetTotalEv', () => {
     const high = topQuantileEv(hist) as number;
     const [ratio] = exposureOutput(targetTotalEv(mean, DAY_PRE, high), DAY_PRE, mean);
     const ceiling = T.key * 2 ** T.clipEv;
-    expect(ceiling).toBeGreaterThan(0.65);
-    expect(ceiling).toBeLessThan(0.75);
+    expect(ceiling).toBeGreaterThan(0.8);
+    expect(ceiling).toBeLessThan(0.9);
     expect(2 ** high * ratio).toBeCloseTo(ceiling, 1);
     expect(2 ** mean * ratio).toBeLessThan(T.key);
   });
@@ -279,10 +298,14 @@ describe('night regime', () => {
     expect(EXPECTED_MEAN_EV - preEvFor(0.01)).toBeCloseTo(Math.log2(0.01), 12);
   });
 
-  it('ignores a dark or ordinary metered mean and the highlight protection when it is dark, and obeys them by day', () => {
+  it('ignores the highlight protection and an ordinary metered mean when it is dark, lifts a dark frame by a bounded amount, and obeys the mean by day', () => {
     const night = 0.25 / 4e-4;
     const base = targetTotalEv(EXPECTED_MEAN_EV, night);
-    for (const mean of [-12, -6, -2, EXPECTED_MEAN_EV + T.nightMarginEv]) expect(targetTotalEv(mean, night, mean + 6)).toBeCloseTo(base, 12);
+    for (const mean of [EXPECTED_MEAN_EV - T.nightLiftFromEv, -2, EXPECTED_MEAN_EV + T.nightMarginEv]) expect(targetTotalEv(mean, night, mean + 6)).toBeCloseTo(base, 12);
+    // Forest shade under the moon: 3 EV under the estimate lifts the gain by a half EV per EV beyond the first, 7 EV under by the full nightLiftMaxEv.
+    expect(targetTotalEv(EXPECTED_MEAN_EV - 3, night) - base).toBeCloseTo((3 - T.nightLiftFromEv) * T.nightLiftRate, 9);
+    expect(targetTotalEv(EXPECTED_MEAN_EV - 7, night) - base).toBeCloseTo(T.nightLiftMaxEv, 9);
+    expect(targetTotalEv(-30, 0.25 / 1e-7) - DAY_TOTAL_EV).toBeCloseTo(T.maxGainEv, 9);
     const day = 0.25 / 2000;
     expect(targetTotalEv(EXPECTED_MEAN_EV + 2, day)).toBeLessThan(targetTotalEv(EXPECTED_MEAN_EV, day) - 1);
     expect(targetTotalEv(EXPECTED_MEAN_EV, day, 8)).toBeLessThan(targetTotalEv(EXPECTED_MEAN_EV, day));
@@ -320,7 +343,7 @@ describe('topQuantileEv', () => {
   it('is null for an empty histogram and finds the bin the brightest decile starts in', () => {
     expect(topQuantileEv(new Float64Array(T.bins))).toBeNull();
     const h = histogramOf([{ l: 0.22, count: 850 }, { l: 2, count: 150 }]);
-    expect(Math.abs((topQuantileEv(h) as number) - 1)).toBeLessThan(binWidthEv / 2);
+    expect(Math.abs((topQuantileEv(h) as number) - 1)).toBeLessThan(binWidthEv); // interpolated inside its bin, so within one bin of the true value
   });
 
   it('moves continuously with the share of bright pixels instead of hopping a bin at a time', () => {
@@ -431,8 +454,8 @@ describe('nightSkyScale', () => {
 
   it('falls by one stop per EV of gain above skyHoldGainEv and settles at the gain cap on a moonless night', () => {
     const cap = 2 ** -(T.maxGainEv - T.skyHoldGainEv);
-    for (const nits of [7e-5, 4.6e-5, 3e-5, 1e-7]) expect(nightSkyScale(preFor(nits))).toBeCloseTo(cap, 12);
-    expect(nightSkyScale(preFor(2e-4))).toBeCloseTo(2 ** -(Math.log2(0.0277 / 2e-4) - DAY_TOTAL_EV - T.skyHoldGainEv), 2);
+    for (const nits of [1e-5, 3e-6, 1e-7]) expect(nightSkyScale(preFor(nits))).toBeCloseTo(cap, 12);
+    expect(nightSkyScale(preFor(4.6e-5))).toBeCloseTo(2 ** -(keyEvFor(Math.log2(4.6e-5)) - Math.log2(4.6e-5) - DAY_TOTAL_EV - T.skyHoldGainEv), 6);
     let prev = 1;
     for (const nits of [5e-4, 3e-4, 2e-4, 1.5e-4, 1e-4, 7e-5, 3e-5]) {
       const k = nightSkyScale(preFor(nits));
@@ -442,7 +465,7 @@ describe('nightSkyScale', () => {
   });
 
   it('leaves the sky at the scene-linear level the exposure at skyHoldGainEv gave, so only the ground gains the extra EV', () => {
-    for (const nits of [4.6e-5, 1e-4, 2e-4]) {
+    for (const nits of [4.6e-5, 3e-5, 1e-5]) {
       const pre = preFor(nits);
       const total = targetTotalEv(EXPECTED_MEAN_EV, pre);
       expect(nightSkyScale(pre) * 2 ** total).toBeCloseTo(2 ** (DAY_TOTAL_EV + T.skyHoldGainEv), 9);
@@ -511,10 +534,10 @@ describe('daylight scenes (pre-exposed luminance, grey card = 0.25, grass of alb
     }
   });
 
-  it('opens the camera for a forest that is 60% shade, but not so far that the sunlit grass passes display code ~175', () => {
+  it('opens the camera for a forest that is 60% shade, but not so far that the sunlit grass passes display code ~195', () => {
     const s = scene(denseForest, DAY_PRE);
     expect(s.ratioEv).toBeGreaterThan(scene(sunnyForest, DAY_PRE).ratioEv);
-    expect(s.at(0.1)).toBeLessThan(0.5);
+    expect(s.at(0.1)).toBeLessThan(0.62);
   });
 
   it('keeps the shade readable: a forest shade pixel ends above scene-linear 0.02 (code ~25)', () => {
@@ -721,5 +744,40 @@ describe('exposure shader depth split', () => {
     expect(d.SKY_CAP_EV).toBe(T.skyCapEv);
     expect(d.HL_KNEE_EV).toBe(T.hlKneeEv);
     expect(d.SKY_GROUND_LO).toBe(T.skyGroundLo);
+  });
+});
+
+describe('sparse highlight protection (forest sunflecks)', () => {
+  // A shaded forest floor at -4 EV (pre-exposed) with 4% of the frame in sunflecks 4 EV brighter: too few for the clipFrac quantile.
+  const empty = new Float64Array(T.bins);
+  const forest = histogramOf([{ l: 2 ** -4, count: 960 }, { l: 2 ** 0, count: 40 }]);
+
+  it('lets the brightest sparseClipFrac set the bright tail when it sits far above the clipFrac quantile', () => {
+    const m = meterFrame(forest, empty, DAY_PRE) as { meanEv: number; highEv: number };
+    const broad = topQuantileEv(forest) as number, sparse = topQuantileEv(forest, T.sparseClipFrac) as number;
+    expect(sparse - T.sparseClipExtraEv).toBeGreaterThan(broad);
+    expect(m.highEv).toBeCloseTo(sparse - T.sparseClipExtraEv, 9);
+  });
+
+  it('so a forest interior is opened less than its shade alone asks, and its sunflecks stay below the clip', () => {
+    const m = meterFrame(forest, empty, DAY_PRE) as { meanEv: number; highEv: number };
+    const without = targetTotalEv(m.meanEv, DAY_PRE, topQuantileEv(forest) as number);
+    const withSparse = targetTotalEv(m.meanEv, DAY_PRE, m.highEv);
+    expect(withSparse).toBeLessThan(without - 0.3);
+    const flecks = topQuantileEv(forest, T.sparseClipFrac) as number;
+    expect(flecks + withSparse - Math.log2(DAY_PRE)).toBeLessThanOrEqual(KEY_EV + T.clipEv + T.sparseClipExtraEv + 1e-6);
+  });
+
+  it('changes nothing where the clipFrac quantile already binds (an open, evenly sunlit frame)', () => {
+    const open = histogramOf([{ l: 2 ** -2, count: 700 }, { l: 2 ** -1, count: 300 }]);
+    const m = meterFrame(open, empty, DAY_PRE) as { meanEv: number; highEv: number };
+    expect(m.highEv).toBeCloseTo(topQuantileEv(open) as number, 9);
+  });
+
+  it('is passed to the GPU meter with the same numbers', () => {
+    const d = exposureDefines();
+    expect(d.SPARSE_CLIP_FRAC).toBe(T.sparseClipFrac);
+    expect(d.SPARSE_CLIP_EXTRA_EV).toBe(T.sparseClipExtraEv);
+    expect(resolveShader('post/histogram.wgsl', d)).toContain('topQuantileEv(total, SPARSE_CLIP_FRAC) - SPARSE_CLIP_EXTRA_EV');
   });
 });

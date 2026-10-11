@@ -32,13 +32,13 @@ export interface AtmosphereSettings {
 
 export const DEFAULT_ATMOSPHERE_SETTINGS: Readonly<AtmosphereSettings> = {
   cloudsEnabled: true,
-  cloudCoverage: 0.4,
+  cloudCoverage: 0.3,
   cirrusCoverage: 0.3,
   cloudDensity: 1,
   windSpeed: 6,
   windDirectionDeg: 250,
   cumulusBaseKm: 1.5,
-  cumulusTopKm: 4,
+  cumulusTopKm: 2.8,
   cirrusBaseKm: 8,
   cirrusTopKm: 10,
   starsEnabled: true,

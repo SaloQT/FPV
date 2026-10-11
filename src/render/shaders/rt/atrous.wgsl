@@ -14,6 +14,7 @@
 const ITER : f32 = ${ITER};
 const LUMA_FLOOR : f32 = 0.01;
 const AO_VIEW_NITS : f32 = 4000.0;
+const SHADOW_PENUMBRA_M : f32 = 0.5;
 // ITER is a pipeline-creation constant, so this is evaluated once when the module is built rather than per pixel.
 // The tighter 0.6^ITER schedule is the point of the iteration: the later passes accept less luma difference.
 const SIGMA_ITER : f32 = 4.0 * pow(0.6, ITER);
@@ -119,6 +120,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
 #endif
   let stepPx = i32(stride);
 #ifdef SHADOW
+  // A sun shadow's real penumbra is at most about SHADOW_PENUMBRA_M wide (a 50 m occluder at the sun's 0.5 degrees), but the 5x5 kernel
+  // at stride 4 spans 16 RT texels, which on far ground is tens of metres: a lone tree's crisp shadow came out as a black blob several
+  // times its size. Each tap is also weighted by its distance on the ground, so the blur never grows wider than the penumbra (or than
+  // one texel's footprint, where that is wider and the noise is all sub-pixel).
+  let texelM = z * 2.0 / (frame.proj[1][1] * f32(dims.y));
+  let invSpread2 = 1.0 / sq(max(SHADOW_PENUMBRA_M, 1.5 * texelM));
   // The shadow signal is a single scalar channel: tapLuma() and dstValue() read .x only, so .y/.z/.w of every source tap and of the
   // accumulator are dead. Accumulating the scalar removes 3 of the 4 vector multiply-adds from each of the 25 taps, and lets the
   // shader fetch just the one channel it uses. The other signals keep the full rgba accumulator.
@@ -150,7 +157,11 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       // Both remaining stops only attenuate, so exp(a) * exp(b) is one exp(a + b) rather than two
       // transcendentals per tap. The exponent is a sum of two non-positive terms, so it stays <= 0 and
       // cannot overflow.
+#ifdef SHADOW
+      let w = tapWeight(i) * twj * wz * wn * exp(-abs(lc - tapLuma(s)) / sigmaL - f32(i * i + j * j) * sq(stride * texelM) * invSpread2);
+#else
       let w = tapWeight(i) * twj * wz * wn * exp(-abs(lc - tapLuma(s)) / sigmaL);
+#endif
 #ifdef SHADOW
       sum += s.x * w;
 #else

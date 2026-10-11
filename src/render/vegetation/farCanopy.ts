@@ -5,7 +5,9 @@ import { FAR_CARD_BYTES, farToneDefines, type FarForest } from './treePlanFar';
 /** The shader module, bind-group layout and pipeline of the far canopy: scene independent, so built once and shared by every FarCanopy. */
 export class FarCanopyPipeline {
   readonly layout: GPUBindGroupLayout;
-  readonly pipeline: GPURenderPipeline;
+  pipeline!: GPURenderPipeline;
+  /** Resolves once the pipeline has compiled (in the background, so the compile overlaps the later modules' start-up). */
+  readonly ready: Promise<void>;
 
   constructor(rc: RenderContext) {
     const dev = rc.device;
@@ -17,14 +19,14 @@ export class FarCanopyPipeline {
       ],
     });
     const module = rc.module('vegetation/veg_far.wgsl', farToneDefines());
-    this.pipeline = dev.createRenderPipeline({
+    this.ready = dev.createRenderPipelineAsync({
       label: 'far-canopy',
       layout: dev.createPipelineLayout({ bindGroupLayouts: [rc.frame.layout, rc.world.layout, this.layout] }),
       vertex: { module, entryPoint: 'vs' },
       fragment: { module, entryPoint: 'fs', targets: GBUFFER_TARGETS },
       primitive: { topology: 'triangle-strip', cullMode: 'none' },
       depthStencil: DEPTH_STATE,
-    });
+    }).then((p) => { this.pipeline = p; });
   }
 }
 

@@ -75,6 +75,21 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
   and local contrast; audit 4 found shadows about 2 stops lifted in crowns and forest local contrast about half the photos'.
 - **Real-browser check**: no shader errors in 8 cases (park and track, ultra and extreme, noon and night); night park whiteout fixed.
 - **Extreme start**: warm start 14.6-18 s (target 15).
+- **Trees, second pass**: aerial forest no longer reads as identical broccoli (per-crown tint jitter, storeys, spires and snags off the
+  race line, LOD2 crown clumps); trunks vary in lean and girth, with snags, fallen tops, logs and reshaped surface roots; the baked crown
+  AO that was double counted with RT GI is undone where the RT proxies already shade; RT proxies follow the camera at extreme. Plain-LOD canopy spheres come from the disk cache, so a warm start no longer refits them.
+- **Gameplay change, spruce crowns**: the spruces' crowns widened to the photos' width (reach 0.31 open, 0.22 forest, 0.28 old) and their
+  settled layout crowns with them (`variants.ts LAYOUT_CROWNS`), so placement keeps wider spruces clear of gates and obstacles. On the
+  1337 world (high and extreme) 4 trees moved and the colliders went 1266 to 1265 (4 boxes removed, 3 added); the nearest moved tree is
+  11 m from the racing line. The seed 7 test world is unchanged. Retrain with the other layout changes.
+- **Gates and props**: new materials and weathering; the track ground wear landed in the terrain shader.
+- **Ultra performance against HEAD** measured in the browser; the cuts went to trees (tree draw, RT proxies) and terrain (clouds,
+  terrain draw).
+- **Night clouds** were flat black and smooth. Cutting the cover by threshold left rows of identical domes, so at night the cover now
+  clears region by region and the clouds that remain keep their daytime shapes: grey-blue with moonlit rims under a full moon, dark
+  silhouettes against the airglow without one. Flicker is 1.3 codes per frame at extreme. Details in
+  [lighting-camera.md](../lighting-camera.md#night-clouds).
+- **Moonlit forest at extreme** left as it is: still readable, and a real low-light camera is that dark.
 
 ## Tooling and iteration speed
 

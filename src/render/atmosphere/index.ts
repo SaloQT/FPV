@@ -1,6 +1,6 @@
 import type { StarCatalog, Vec3 } from '../../contracts';
 import { loadStarCatalog } from '../../world/astro/stars';
-import type { FrameInfo, RenderContext, RenderModule } from '../contracts';
+import { tierTable, type FrameInfo, type RenderContext, type RenderModule } from '../contracts';
 import { CloudLayer } from './clouds';
 import {
   CLOUD_SHADOW_EXTENT_M, cloudAmbientScale, cloudField, cloudVisibility, snapShadowCenter, type CloudField,
@@ -53,7 +53,11 @@ export interface AtmosphereModule extends RenderModule {
 const MOON_SCATTER_MIN_ELEVATION = (-7 * Math.PI) / 180;
 const MOON_SCATTER_MIN_FRACTION = 0.002;
 const HISTORY_BLEND = 0.9;
-const LIGHT_STEPS = { low: 4, medium: 5, high: 6, ultra: 6 } as const;
+// Extreme (no budget) marches the light twice as far into the cloud, so thick billows shade themselves.
+const LIGHT_STEPS = tierTable({ low: 4, medium: 5, high: 6, ultra: 6 }, 10);
+// Share of the fine cloud detail (a second, finer erosion octave and the wisp warp, cloud_density.wgsl) by tier. Without it a cumulus
+// a kilometre overhead shows a smooth body and a hard rim; extreme takes it in full.
+const CLOUD_DETAIL = tierTable({ low: 0, medium: 0, high: 0.4, ultra: 0.6 }, 1);
 /** The night dome (zodiacal light, Milky Way, stars) is only integrated for a sun this far below the horizon (radians); in daylight it is 1e-8 of the sky. */
 const NIGHT_DOME_MAX_SUN_ELEVATION = (-3 * Math.PI) / 180;
 
@@ -114,6 +118,9 @@ class Atmosphere implements AtmosphereModule {
 
   getAmbientScale(): number { return cloudAmbientScale(this.settings); }
 
+  /** The clouds' reprojected history is lit by the old sun: start it again, jitter sequence and history parity included (as a new layer). */
+  resetLighting(): void { this.clouds.restart(); }
+
   update(rc: RenderContext, f: FrameInfo): void {
     const a = f.astro, cam = f.camera.pos;
     this.moonActive = a.moonElevation > MOON_SCATTER_MIN_ELEVATION && a.moonIlluminatedFraction > MOON_SCATTER_MIN_FRACTION;
@@ -127,7 +134,7 @@ class Atmosphere implements AtmosphereModule {
       settings: this.settings, moonScattering: this.moonActive, seed, timeSeconds: f.time,
       equatorialToWorld: a.equatorialToWorld, starMagLimit: magLimit, cloudSteps: rc.quality.cloudSteps, jitterIndex: this.clouds.frameIndex,
       shadowCenterX: this.shadow.centerX, shadowCenterZ: this.shadow.centerZ, shadowExtentM: this.shadow.extentM,
-      historyBlend: HISTORY_BLEND, historyValid: this.clouds.historyValid, lightSteps: LIGHT_STEPS[rc.quality.tier], nightDome: this.domeRadiance,
+      historyBlend: HISTORY_BLEND, historyValid: this.clouds.historyValid, lightSteps: LIGHT_STEPS[rc.quality.tier], cloudDetail: CLOUD_DETAIL[rc.quality.tier], nightDome: this.domeRadiance,
     });
     rc.device.queue.writeBuffer(this.luts.params, 0, data as Float32Array<ArrayBuffer>);
     this.sky.update(f, magLimit);

@@ -24,6 +24,8 @@ export interface TrackObjects {
   setGatePassed(i: number): void;
   /** `dirXZ` is the direction the air travels toward (world x, z); `speed` in m/s. */
   setWind(dirXZ: [number, number], speed: number): void;
+  /** Resolves once the pipelines have compiled (they compile in the background; nothing is drawn before). */
+  readonly ready: Promise<void>;
   destroy(rc: RenderContext): void;
 }
 
@@ -64,7 +66,12 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
   const pipelineLayout = d.createPipelineLayout({ bindGroupLayouts: [rc.frame.layout, rc.world.layout, layout] });
   const module = rc.module('objects/track.wgsl', kindDefines());
   const glowModule = rc.module('objects/glow.wgsl');
-  const staticPipeline = d.createRenderPipeline({
+  // The track shader is the largest in the renderer (every prop material and the weathering): compiled synchronously it held the start-up
+  // for about 2 s. The three pipelines compile in the background while the other modules initialise; the module host waits for `ready`.
+  let staticPipeline: GPURenderPipeline | null = null;
+  let clothPipeline: GPURenderPipeline | null = null;
+  let glowPipeline: GPURenderPipeline | null = null;
+  const staticPending = d.createRenderPipelineAsync({
     label: 'track static',
     layout: pipelineLayout,
     vertex: {
@@ -86,7 +93,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
     primitive: { topology: 'triangle-list', cullMode: 'back' },
     depthStencil: DEPTH_STATE,
   });
-  const clothPipeline = d.createRenderPipeline({
+  const clothPending = d.createRenderPipelineAsync({
     label: 'track cloth',
     layout: pipelineLayout,
     vertex: { module, entryPoint: 'vsCloth', buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] },
@@ -94,7 +101,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: DEPTH_STATE,
   });
-  const glowPipeline = d.createRenderPipeline({
+  const glowPending = d.createRenderPipelineAsync({
     label: 'track glow',
     layout: pipelineLayout,
     vertex: {
@@ -120,6 +127,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
     depthStencil: FORWARD_DEPTH_STATE,
   });
 
+  const ready = Promise.all([staticPending, clothPending, glowPending]).then(([s, c, g]) => { staticPipeline = s; clothPipeline = c; glowPipeline = g; });
   const uniform = d.createBuffer({ label: 'track uniform', size: TRACK_UNIFORM_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const uniformData = new Float32Array(TRACK_UNIFORM_FLOATS);
   const grid = clothGrid();
@@ -229,8 +237,9 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
         gatesUploaded = true;
       }
     },
+    ready,
     encodeGBuffer(pass) {
-      if (!group) return;
+      if (!group || !staticPipeline || !clothPipeline) return;
       pass.setBindGroup(2, group);
       if (mesh) {
         pass.setPipeline(staticPipeline);
@@ -246,7 +255,7 @@ export function createTrackObjects(rc: RenderContext): TrackObjects {
       }
     },
     encodeForward(pass) {
-      if (!group || !glow) return;
+      if (!group || !glow || !glowPipeline) return;
       pass.setPipeline(glowPipeline);
       pass.setBindGroup(2, group);
       pass.setVertexBuffer(0, glow.vertex);

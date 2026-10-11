@@ -19,7 +19,10 @@
  */
 
 import type { GpuProfiler } from './gpuTimer';
-import type { AstroState, CameraState, QuadState, Quat, Settings, TerrainData, TerrainSampler, TrackData, Vec3, RenderQuality } from '../contracts';
+import type { ParkRuntime } from '../world/park/runtime';
+import type { SceneBuffers } from './rt/sceneBuffers';
+import type { ParkLights } from './park/lights';
+import type { AstroState, CameraState, QuadState, Quat, Settings, TerrainData, TerrainSampler, TrackData, Vec3, RenderQuality, BudgetedQuality } from '../contracts';
 
 // ───────────────────────────── Formats ─────────────────────────────
 
@@ -71,6 +74,8 @@ export enum MaterialId {
   Water = 8,
   Fabric = 9,
   Ground = 10,
+  /** Turf seen between grass blades: misc.g carries the sun occlusion of the sward above it (deferred.wgsl), not translucency. */
+  SwardFloor = 11,
 }
 export const EMISSIVE_MAX_NITS = 20000;
 
@@ -97,8 +102,44 @@ export interface QualityProfile {
   detailOctaves: number;
 }
 
+/** The tiers frame-time, triangle and memory budget tests check; extreme has no budget. */
+export const BUDGETED_TIERS: readonly BudgetedQuality[] = ['low', 'medium', 'high', 'ultra'];
+
+/**
+ * Extreme has no frame-time budget: it is the ultra profile with these fields replaced. Put a profile field here to raise it for extreme
+ * only, for example `grassDistance: 400`. Fields left out keep ultra's value.
+ */
+export const EXTREME_PROFILE: Readonly<Partial<Omit<QualityProfile, 'tier'>>> = {
+  // Ground (terrain agent): a denser sward drawn out to 600 m, so it never ends in view at FPV heights (about 5.7 M blades, inside the
+  // 192 MB blade buffer; 1600 per m2 at this reach would overflow it), and two more octaves of micro-relief. Grass has no colliders.
+  grassBladesPerM2: 1300,
+  grassDistance: 600,
+  detailOctaves: 7,
+  // Clouds (trees agent): two and a half times ultra's march steps, so the full-resolution extreme march keeps its wispy edges sharp.
+  cloudSteps: 160,
+};
+
+/**
+ * How a module asks "is this extreme?". Use it for extreme-only code paths; anything that decides where things stand or what the quad
+ * can hit (terrain, track, placement, colliders) must not depend on it (see `gameplayQuality` in src/contracts.ts).
+ */
+export function isExtreme(q: RenderQuality | Pick<QualityProfile, 'tier'>): boolean {
+  return (typeof q === 'string' ? q : q.tier) === 'extreme';
+}
+
+/**
+ * A per-tier table with an extreme entry: the given extreme value, or ultra's when there is none. A module keeps its budgeted tiers as
+ * they are and opts a value into extreme by passing it, for example
+ * `export const TREE_TIER = tierTable({ low: ..., medium: ..., high: ..., ultra: { maxDistance: 2400 } }, { maxDistance: 4000 });`
+ */
+export function tierTable<T>(budgeted: Readonly<Record<BudgetedQuality, T>>, extreme: T = budgeted.ultra): Readonly<Record<RenderQuality, T>> {
+  return { ...budgeted, extreme };
+}
+
 export function qualityProfile(tier: RenderQuality): QualityProfile {
   switch (tier) {
+    case 'extreme':
+      return { ...qualityProfile('ultra'), ...EXTREME_PROFILE, tier };
     case 'low':
       return { tier, rtDivisor: 4, giRays: 1, rtMaxSteps: 48, rtSpecular: false, probes: { dim: [16, 8, 16], raysPerProbe: 32, spacing: 8 }, grassBladesPerM2: 60, grassDistance: 35, terrainViewDistance: 1500, cloudSteps: 16, bloom: false, taa: true, detailOctaves: 2 };
     case 'medium':
@@ -183,6 +224,7 @@ export interface RTMaterial {
 
 export type RTPrimitive =
   | { type: 'obb'; center: Vec3; half: Vec3; rot: Quat; material: RTMaterial }
+  | { type: 'cylinder' | 'ellipsoid' | 'cone' | 'gable'; center: Vec3; half: Vec3; rot: Quat; material: RTMaterial }
   | { type: 'capsule'; a: Vec3; b: Vec3; radius: number; material: RTMaterial }
   | { type: 'sphere'; center: Vec3; radius: number; material: RTMaterial }
   | { type: 'torus'; center: Vec3; rot: Quat; major: number; minor: number; material: RTMaterial };
@@ -190,7 +232,7 @@ export type RTPrimitive =
 /**
  * Objects register analytic proxies of their geometry here; the RT module builds/refits its BVH from them.
  * `static` groups (gates, trees, rocks) are rebuilt only when their set changes; `dynamic` groups (the quad)
- * may change every frame and must stay small (<= 64 primitives).
+ * may change every frame and the dynamic hierarchy grows to fit.
  */
 export interface RTSceneRegistry {
   setStatic(groupId: string, prims: RTPrimitive[]): void;
@@ -205,6 +247,8 @@ export interface RTSceneRegistry {
 // ───────────────────────────── Module contract ─────────────────────────────
 
 export interface RenderContext {
+  parkLights?: ParkLights;
+  rtBuffers?: SceneBuffers;
   /** Opt-in diagnostics only; omitted on the production path and unsupported devices. */
   profiler?: GpuProfiler;
   device: GPUDevice;
@@ -236,6 +280,7 @@ export interface FrameInfo {
 }
 
 export interface SceneData {
+  park?: ParkRuntime;
   terrain: TerrainData;
   sampler: TerrainSampler;
   track: TrackData | null;
@@ -253,10 +298,21 @@ export interface RenderModule {
    */
   readonly sharedOverlayPass?: boolean;
   init(rc: RenderContext): void | Promise<void>;
+  /**
+   * Work that init started in the background (pipelines compiling asynchronously). The host awaits every module's ready() after all inits
+   * have run, so the compiles overlap the later modules' init, and the renderer still reports ready only once everything can draw.
+   */
+  ready?(): Promise<void>;
   /** Render resolution changed; G-buffer textures were recreated. Recreate bind groups that reference them. */
   resize?(rc: RenderContext): void;
   /** New terrain/track. The Renderer has already uploaded terrain textures into rc.world. */
   setScene?(rc: RenderContext, scene: SceneData): void;
+  /**
+   * The lighting jumped (lightingCut.ts: time of day scrubbed, a night session after a day one): drop temporal lighting history. Put
+   * frame counters, ping-pong parities and jitter sequences back to a new module's too: the render server (tools/render-server.mjs) calls
+   * it to reuse a module between shots, and each shot must match a fresh renderer's pixels.
+   */
+  resetLighting?(): void;
   update?(rc: RenderContext, f: FrameInfo): void;
   encodePre?(enc: GPUCommandEncoder, rc: RenderContext, f: FrameInfo): void;
   encodeGBuffer?(pass: GPURenderPassEncoder, rc: RenderContext, f: FrameInfo): void;
@@ -277,6 +333,8 @@ export interface PostProcessor {
   init(rc: RenderContext): void | Promise<void>;
   /** Output (canvas) size or render size changed; `rc.gbuf` already holds the new textures. */
   resize(rc: RenderContext, out: { width: number; height: number }): void;
+  /** The next frame starts its histories afresh (TAA, exposure and white-balance adaptation), as after a camera cut. */
+  resetHistory?(): void;
   update?(rc: RenderContext, f: FrameInfo): void;
   encode(
     enc: GPUCommandEncoder,

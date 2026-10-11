@@ -49,7 +49,13 @@ fn dsLayerTile(layer : i32) -> f32 {
     case 4: { return 3.0; }
     case 5: { return 3.0; }
     case 6: { return 4.0; }
-    default: { return 1.6; }
+    case 7: { return 1.6; }
+    case 8: { return 1.1; }
+    case 9: { return 1.5; }
+    case 10: { return 1.1; }
+    case 11: { return 2.6; }
+    case 12: { return 2.2; }
+    default: { return 2.6; }
   }
 }
 
@@ -117,8 +123,13 @@ fn dsPlane(layer : i32, uv : vec2f, gx : vec2f, gy : vec2f, hex : bool) -> DsTex
   if (hex) { f = dsHex(layer, uv, gx, gy); } else { f = dsPlain(layer, uv, gx, gy); }
   let m = dsPlain(layer, uv / DS_MACRO + vec2f(0.37, 0.61), gx / DS_MACRO, gy / DS_MACRO);
   var t : DsTex;
-  t.a = vec4f(f.a.rgb * mix(vec3f(1.0), m.a.rgb / glBaseColor(layer), 0.6), mix(f.a.a, m.a.a, 0.35));
-  t.b = vec4f(f.b.xy + 0.18 * m.b.xy, mix(f.b.z, m.b.z, 0.3), f.b.w * mix(1.0, m.b.w, 0.4));
+  // Layers made of discrete pieces (stones, talus, crust plates, rock fractures) scaled up seven times turn into giant cobbles and a
+  // crazy-paving net of 1 to 10 m cells, so their macro scale stays faint (rock's jointing at that scale comes from rockFace in
+  // terrain.wgsl).
+  let pieces = layer == GL_GRAVEL || layer == GL_ROCK || layer == GL_CRACKED || layer == GL_SCREE;
+  let mk = select(1.0, 0.35, pieces);
+  t.a = vec4f(f.a.rgb * mix(vec3f(1.0), m.a.rgb / glBaseColor(layer), 0.6 * mk), mix(f.a.a, m.a.a, 0.35 * mk));
+  t.b = vec4f(f.b.xy + 0.18 * mk * m.b.xy, mix(f.b.z, m.b.z, 0.3), f.b.w * mix(1.0, m.b.w, 0.4 * mk));
   return t;
 }
 
@@ -141,6 +152,19 @@ fn dsProjectionWeights(c : DsCtx) -> vec3f {
 fn dsLayerDetail(layer : i32, c : DsCtx, w : vec3f) -> DsLayer {
   let inv = 1.0 / dsLayerTile(layer);
   let tpp = c.footprint * inv * DS_SIZE;
+  // Far ground: a pixel spans the whole macro tile (or more), the detail faded out long before and both scales' mip chains have reached
+  // the layer mean, so one lookup of the mean level stands in for the up to 24 filtered taps of the planes.
+  if (tpp > DS_SIZE * DS_MACRO) {
+    let ma = textureSampleLevel(detailA, detailSampler, vec2f(0.5), layer, DS_MEAN_LEVEL);
+    let mb = textureSampleLevel(detailB, detailSampler, vec2f(0.5), layer, DS_MEAN_LEVEL);
+    var far : DsLayer;
+    far.tone = ma.rgb / glBaseColor(layer);
+    far.height = 0.5;
+    far.dn = vec3f(0.0);
+    far.rough = mb.z;
+    far.ao = 1.0;
+    return far;
+  }
   let hex = tpp < DS_HEX_MAX_TPP;
   var acc : DsTex;
   acc.a = vec4f(0.0);

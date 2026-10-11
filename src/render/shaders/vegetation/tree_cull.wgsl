@@ -22,10 +22,15 @@ fn cull(@builtin(global_invocation_id) gid : vec3u) {
   let c = inst.pos + vec3f(0.0, v.bound.x * inst.scale, 0.0);
   let r = v.bound.y * inst.scale;
   let d = distance(c, frame.camPos.xyz);
-  if (d > vp.tree.y) { return; }
+  let farDistance = select(vp.tree.y, PARK_PLANT_DISTANCE, inst.nrm == PARK_PLANT_NORMAL);
+  if (d > farDistance) { return; }
   let pxPerM = frame.screen.y * 0.5 * frame.proj[1][1];
   if (r * pxPerM < vp.tree.z * d) { return; }
-  if (!frustumSphereVisible(c, r * FRUSTUM_SCALE + FRUSTUM_PAD)) { return; }
+  // A spread crown (tree.wgsl crownSpread, tint alpha) reaches further out than the variant's bounding sphere.
+  // The crown spread in the tint alpha, and the per-tree crown size variation and lean (tree.wgsl crownSpread, at most 1.12 x 1.16, and a
+  // top up to 3 % of the height off the axis).
+  let spread = max(unpack4x8unorm(inst.tint).a * 2.0, 1.0) * 1.2;
+  if (!frustumSphereVisible(c, r * spread * FRUSTUM_SCALE + FRUSTUM_PAD)) { return; }
   let e = lodEdges(v, inst);
   let b = select(LOD_FADE_BAND, 0.0, v.range.z == 2u);
   if (d < e.x * (1.0 + b)) { append(0u, inst.variant, v.range.x, i); }

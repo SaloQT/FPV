@@ -19,20 +19,13 @@ Rules for every render change: A/B with clouds off, interleaved rounds, and a re
 
 ## Trees
 
-- [ ] Night clouds flat black and smooth (trees). Check: night render with clouds on shows lit edges and texture.
-- [ ] Forest floor too bright: the canopy barely shades the sun (trees with terrain). Check: `tools/audit/metrics.py` interior view p50 within the photo's range.
-- [ ] Aerial forest reads as identical broccoli (trees, far LOD; terrain for bare beige far hills). Check: audit distant and flyover views beside their photos.
-- [ ] Trunks too pale and uniform, no dead wood (trees). Check: bark close-up sheets against the conifer and forest-interior photos.
-- [ ] Dark crowns: baked crown AO double counted with RT GI; crown interiors about 2 stops bright (trees). Check: audit-4 dark-pixel term split (`tools/audit/termsplit.py`) on the forest views.
-- [ ] Forest local contrast about half the photos' (trees for crown structure, leaves for self-shadow). Check: local contrast within 20 % of the photos on the forest views.
-- [ ] canopyShadowFit plain-LOD cache, for extreme start-up (trees). Check: warm extreme start at or under 15 s.
-- [ ] Camera-following RT proxies at EXTREME (trees). Check: shadows and GI from trees beyond the 300 nearest the start in an extreme render.
+- [ ] Trunks too pale (trees). Check: audit interior and birch views at noon, trunk luma within 15 % of the photo trunks in shade. Bark albedo is already within published values (beech 0.20, oak 0.12).
 
 ## Foliage
 
 - [ ] Leaf spec and back-face ambient lift the crown shadows; partly done (leaves). Check: `tools/audit/termsplit.py` on views edge, interior, lone and oak-lone at 07:00, 12:00 and 18:48, ultra, clouds off: darkest 5 % at least 4 stops under the frame median on every view (now oak-lone 3.8-4.6, edge 2.6-4.8, interior 2.4-3.0, lone 1.9-3.6).
-- [ ] Photo-referenced spruce crown; partly done (leaves). Check: `tools/audit/skyfrac.py` on the spruce-10m view: sky inside the crown silhouette 4-9 % (photos spruce-tree/3.jpg and 7.jpg; 7.jpg is only in `.bench/audit/refs`). Was 37 %, about 13 % on the CPU probe, render pending.
-- [ ] Scots pine crown density, waiting on the trees' pinePlan secondary branches (leaves). Check: `tools/audit/skyfrac.py` on pine-10m, 7-13 % (photos pine-crown/9.jpg and 4.jpg); now about 40 %.
+- [ ] Photo-referenced spruce crown; partly done (leaves, with trees for spruce reach). Check: `tools/audit/skyfrac.py` on the spruce-10m view: sky inside the crown silhouette 4-10 % (photo tools/audit/refs/spruce-tree/3.jpg, box 0.1,0.05,0.85,0.55, reads 9.4 %), and crown width-to-height within 10 % of the photo. Was 37 %, about 13 % on the CPU probe, render pending.
+- [ ] Scots pine crown density, waiting on the trees' pinePlan secondary branches (leaves, with trees). Check: `tools/audit/skyfrac.py` on pine-10m, 7-13 % (photos in tools/audit/refs/pine-crown: 9.jpg box 0.15,0.08,0.95,0.42 reads 12.2 %; 4.jpg box 0.1,0.12,0.9,0.5 reads 13.2 %; 2.jpg box 0.25,0.1,0.95,0.5 reads 6.7 %); now about 40 %.
 - [ ] Photo-referenced broadleaf crowns (leaves). Check: `tools/audit/skyfrac.py` on oak-20m and birch-20m within 5 points of the oak-crown photos.
 - [ ] Backlit leaf transmission (leaves). Check: the oak-lone view against the sun shows yellow-green transmitted leaves, with only deep layered regions dark; beside oak-crown/0.jpg and 3.jpg, outer backlit leaf hue 70-90 degrees and luma above the crown median.
 - [ ] Foliage reads as flat stamped cards with hard edges at 10-20 m (leaves). Check: `tools/audit/metrics.py` forest local contrast at least 0.8 (photos 0.84-1.38, now 0.45-0.64), and a fly-through mp4 with no stair-stepped card outlines.
@@ -40,21 +33,19 @@ Rules for every render change: A/B with clouds off, interleaved rounds, and a re
 
 ## Terrain and sky
 
-- [ ] Forest floor too bright, green and patchy (terrain). Check: forest-interior view beside its photo.
+- [ ] Forest floor too bright, green and patchy; trees supply the crown occlusion (terrain). Check: `tools/audit/termsplit.py` puts the interior view's darkest 5 % at least 4 stops under its median, and the forest-interior view looks right beside its photo.
 - [ ] Clouds flat with worm shapes, flat orange at 18:48 (terrain). Check: noon and 18:48 cloud renders beside the golden-hour photo.
 - [ ] Ultra near-cloud softness in motion (half-res march or history) (terrain). Check: flight clip at ultra with no smeared cloud edges.
 - [ ] Track corridor blue-white speckle at 18:48 (terrain). Check: hard-210-t2 corridor render at 18:48 with no speckle.
-- [ ] 3D understorey in the ground-cover instancing: ferns, bracken, bramble, seedlings, sticks, moss, no colliders (terrain). Check: forest-floor render; colliders unchanged.
+- [ ] Understorey: bramble and moss cushions as geometry; herb leaves are flat diamonds (terrain). Check: forest-floor render beside forest-interior photos.
 - [ ] Backlit cliff mottle, landed but unconfirmed in motion (terrain). Check: flight clip past a backlit cliff.
 - [ ] Rock domes look like putty at 5-20 m (terrain). Check: rock view at 5, 10 and 20 m against the rocks-cliff photos.
 
 ## Lighting and camera
 
-- [ ] Golden hour saturation, after the crown shadow fix (extreme). Check: audit golden-hour saturation within the photo's.
-- [ ] Dark-dominated frames over-exposed (shade trim), after the crown shadow fix (extreme). Check: interior view p50 within the photo's.
-- [ ] Moonlit forest near-black at extreme (extreme). Check: night extreme render with readable trunks and ground.
-- [ ] Gates and props weathered and concrete redone; track ground wear waits on terrain (extreme). Check: gate close-up render beside the race-gate photos.
-- [ ] Ultra performance against HEAD in the browser (extreme). Check: `tools/audit/perf-ab.mjs` then `perf-summary.py`, ultra no slower than HEAD.
+- [ ] Golden hour saturation, after the crown shadow fix from trees and leaves (extreme). Check: `python tools/audit/metrics.py` on a fresh extreme run gives a mean 18:48 saturation of at least 0.45 over the world views, with p50 within 15 codes of the 2026-10-11 run.
+- [ ] Dark-dominated frames over-exposed (shade trim), after the crown shadow fix (extreme). Check: `python tools/audit/meterscore.py <run>` gives a mean |p50 error| under 22 over the 18 pairs, with the interior and oak p50 within 20 codes of their photos.
+- [ ] Ultra GPU time on track 210-t2 back to 7.0 ms or less; the cuts from the browser perf check are routed to trees (tree draw, RT proxies) and terrain (clouds, terrain draw) (trees, terrain, RT). Check: `node tools/audit/modcost.mjs --tag x` reports gpu.full at most 7.0 at ultra.
 
 ## Build and render speed
 

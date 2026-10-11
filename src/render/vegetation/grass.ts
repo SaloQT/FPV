@@ -1,6 +1,7 @@
 import type { RenderContext } from '../contracts';
 import { DEPTH_STATE, GBUFFER_TARGETS } from '../contracts';
 import { BLADE_BYTES, CHUNK_BYTES, grassBudget, type GrassBudget } from './params';
+import { GROUND_COVER_SIZE } from '../terrain/groundCover';
 
 const COUNTER_BYTES = 32;
 const LODS = [
@@ -21,18 +22,25 @@ export class GrassPipelines {
   readonly genLayout: GPUBindGroupLayout;
   readonly finLayout: GPUBindGroupLayout;
   readonly drawLayout: GPUBindGroupLayout;
-  readonly patchesPipe: GPUComputePipeline;
-  readonly bladesPipe: GPUComputePipeline;
-  readonly finDispatchPipe: GPUComputePipeline;
-  readonly finDrawPipe: GPUComputePipeline;
-  readonly drawPipes: GPURenderPipeline[] = [];
+  patchesPipe!: GPUComputePipeline;
+  bladesPipe!: GPUComputePipeline;
+  finDispatchPipe!: GPUComputePipeline;
+  finDrawPipe!: GPUComputePipeline;
+  drawPipes: GPURenderPipeline[] = [];
+  /** Resolves once the pipelines above have compiled (in the background, so the compile overlaps the later modules' start-up). */
+  readonly ready: Promise<void>;
+  /** Forest-floor cover (see terrain/groundCover.ts): blades under closed crowns are shade grass, not meadow. */
+  readonly cover: GPUTexture;
+  private readonly device: GPUDevice;
 
   constructor(rc: RenderContext) {
     const dev = rc.device;
     const C = GPUShaderStage.COMPUTE;
     const storage = (binding: number, type: GPUBufferBindingType = 'storage'): GPUBindGroupLayoutEntry => ({ binding, visibility: C, buffer: { type } });
     const uniform: GPUBindGroupLayoutEntry = { binding: 0, visibility: C, buffer: { type: 'uniform' } };
-    this.genLayout = dev.createBindGroupLayout({ label: 'grass-gen', entries: [uniform, storage(1), storage(2), storage(3)] });
+    this.device = dev;
+    this.cover = dev.createTexture({ label: 'grass-ground-cover', size: [GROUND_COVER_SIZE, GROUND_COVER_SIZE], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.genLayout = dev.createBindGroupLayout({ label: 'grass-gen', entries: [uniform, storage(1), storage(2), storage(3), { binding: 4, visibility: C, texture: { sampleType: 'float' } }] });
     this.finLayout = dev.createBindGroupLayout({ label: 'grass-fin', entries: [uniform, storage(1), storage(2), storage(3)] });
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
     this.drawLayout = dev.createBindGroupLayout({
@@ -43,23 +51,31 @@ export class GrassPipelines {
     const genPipeLayout = layouts(this.genLayout), finPipeLayout = layouts(this.finLayout), drawPipeLayout = layouts(this.drawLayout);
     const cull = rc.module('vegetation/grass_cull.wgsl');
     const fin = rc.module('vegetation/grass_finalize.wgsl');
-    const compute = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string): GPUComputePipeline =>
-      dev.createComputePipeline({ label, layout, compute: { module, entryPoint } });
-    this.patchesPipe = compute('grass-patches', genPipeLayout, cull, 'patches');
-    this.bladesPipe = compute('grass-blades', genPipeLayout, cull, 'blades_main');
-    this.finDispatchPipe = compute('grass-fin-dispatch', finPipeLayout, fin, 'fin_dispatch');
-    this.finDrawPipe = compute('grass-fin-draw', finPipeLayout, fin, 'fin_draw');
-    for (let i = 0; i < 3; i++) {
+    const compute = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string): Promise<GPUComputePipeline> =>
+      dev.createComputePipelineAsync({ label, layout, compute: { module, entryPoint } });
+    const draws = [0, 1, 2].map((i) => {
       const module = rc.module('vegetation/grass.wgsl', { NSEG: LODS[i].nseg, HAS_TIP: LODS[i].tip });
-      this.drawPipes.push(dev.createRenderPipeline({
+      return dev.createRenderPipelineAsync({
         label: `grass-lod${i}`,
         layout: drawPipeLayout,
         vertex: { module, entryPoint: 'vs' },
         fragment: { module, entryPoint: 'fs', targets: GBUFFER_TARGETS },
         primitive: { topology: 'triangle-strip', cullMode: 'none' },
         depthStencil: DEPTH_STATE,
-      }));
-    }
+      });
+    });
+    this.ready = Promise.all([
+      compute('grass-patches', genPipeLayout, cull, 'patches'), compute('grass-blades', genPipeLayout, cull, 'blades_main'),
+      compute('grass-fin-dispatch', finPipeLayout, fin, 'fin_dispatch'), compute('grass-fin-draw', finPipeLayout, fin, 'fin_draw'), Promise.all(draws),
+    ]).then(([patches, blades, finDispatch, finDraw, drawPipes]) => {
+      this.patchesPipe = patches; this.bladesPipe = blades; this.finDispatchPipe = finDispatch; this.finDrawPipe = finDraw; this.drawPipes = drawPipes;
+    });
+  }
+
+  /** Uploads the scene's forest-floor cover; none (no trees) clears it. */
+  setCover(data: Uint8Array | undefined): void {
+    const bytes = data ?? new Uint8Array(GROUND_COVER_SIZE * GROUND_COVER_SIZE * 4);
+    this.device.queue.writeTexture({ texture: this.cover }, bytes as Uint8Array<ArrayBuffer>, { bytesPerRow: GROUND_COVER_SIZE * 4 }, [GROUND_COVER_SIZE, GROUND_COVER_SIZE]);
   }
 }
 
@@ -103,7 +119,8 @@ export class GrassSystem {
     this.genGroup = dev.createBindGroup({
       label: 'grass-gen',
       layout: pipes.genLayout,
-      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.chunks } }, { binding: 3, resource: { buffer: this.blades } }],
+      entries: [{ binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: this.counters } }, { binding: 2, resource: { buffer: this.chunks } }, { binding: 3, resource: { buffer: this.blades } },
+        { binding: 4, resource: pipes.cover.createView() }],
     });
     this.finGroup = dev.createBindGroup({
       label: 'grass-fin',

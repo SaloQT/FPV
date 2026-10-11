@@ -1,3 +1,4 @@
+import { SceneRegistry } from '../rtRegistry';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTerrainSampler } from '../../world/terrain';
 import type { RenderContext, SceneData } from '../contracts';
@@ -15,6 +16,8 @@ function countingContext(): { rc: RenderContext; made: Record<string, number> } 
     get(target, key: string) {
       if (key in target) return (target as Record<string, unknown>)[key];
       if (key === 'createRenderBundleEncoder') return () => { note(key); return { setBindGroup() {}, setPipeline() {}, setVertexBuffer() {}, setIndexBuffer() {}, draw() {}, drawIndirect() {}, drawIndexedIndirect() {}, finish: () => ({}) }; };
+      // Async creators count as their sync names: the module may compile in the background (ready()).
+      if (key.endsWith('Async')) return async () => { note(key.slice(0, -5)); return object(); };
       if (key.startsWith('create')) return () => { note(key); return object(); };
       return undefined;
     },
@@ -25,7 +28,7 @@ function countingContext(): { rc: RenderContext; made: Record<string, number> } 
     settings: DEFAULT_SETTINGS,
     frame: { layout: {}, group: {} },
     world: { layout: {}, group: {} },
-    rt: { setStatic: () => undefined },
+    rt: new SceneRegistry(),
     module: () => { note('module'); return {}; },
   } as unknown as RenderContext;
   return { rc, made };
@@ -43,6 +46,7 @@ describe('vegetation GPU objects across scenes', () => {
     const { rc, made } = countingContext();
     const mod = createVegetationModule();
     await mod.init(rc);
+    await mod.ready?.();
     const afterInit = { pipelines: (made.createRenderPipeline ?? 0) + (made.createComputePipeline ?? 0), layouts: made.createBindGroupLayout, modules: made.module };
     expect(afterInit.pipelines).toBeGreaterThan(8);
     const { terrain, track } = testScene();

@@ -13,7 +13,7 @@ struct RtParams {
   probePrev : vec4i,  // xyz = same for the previous frame's window, w = 1 -> every probe is new
   probeDim : vec4u,   // xyz = probe grid dimensions
   f : vec4f,          // x = sun cone scale, y = probe spacing (m), z = probe hysteresis, w = GI/specular ray range (m)
-  cloud : vec4f,      // x,y = cloud shadow map centre (world xz), z = its side length (m)
+  cloud : vec4f,      // x,y = cloud shadow map centre (world xz), z = its side length (m), w = cloud sky-light gain (>= 1)
 };
 
 @group(${GRP}) @binding(0) var<uniform> rp : RtParams;

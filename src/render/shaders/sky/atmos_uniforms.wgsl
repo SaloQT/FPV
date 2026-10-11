@@ -18,6 +18,15 @@ const SKY_SUN_SCALE_MIN_MU : f32 = -0.1;
 
 fn skySunStoreScale() -> f32 { return select(1.0, SKY_SUN_STORE_SCALE, frame.sunDir.y > SKY_SUN_SCALE_MIN_MU); }
 
+// The cloud target's store scale: CLOUD_STORE_SCALE by day; at night a cloud's radiance (around 1e-4 nits) divided by it would fall below
+// fp16's normal range and flush to zero, leaving black cut-outs, so the scale slides smoothly down to CLOUD_NIGHT_STORE_SCALE as the sun
+// sets (smoothly, so the temporal history stored at last frame's scale stays within a fraction of a percent).
+const CLOUD_NIGHT_STORE_SCALE : f32 = 1.0 / 1024.0;
+
+fn cloudStoreScale() -> f32 {
+  return exp2(mix(log2(CLOUD_NIGHT_STORE_SCALE), log2(CLOUD_STORE_SCALE), smoothstep(-0.2, 0.05, frame.sunDir.y)));
+}
+
 struct AtmosParams {
   flags : vec4f,     // x = moonlight scattering active (0/1), y = night-sky scale, z = star brightness, w = twinkle amount 0..1
   sky2 : vec4f,      // x = Milky Way brightness, y = stars enabled, z = clouds enabled, w = star magnitude limit
@@ -30,5 +39,6 @@ struct AtmosParams {
   gal0 : vec4f,      // xyz = J2000 equatorial coordinates of the galactic axis l=0 b=0 (galactic centre), w = night-dome radiance red (nits)
   gal1 : vec4f,      // ... l=90 b=0, w = night-dome green
   gal2 : vec4f,      // ... north galactic pole, w = night-dome blue
+  cloudE : vec4f,    // x = cloud edge detail 0..1 (1 at the extreme tier: a second, finer erosion octave and wisps), y,z,w unused
   maria : array<vec4f, ${MARIA_ROWS}>, // row 2k: lon, lat, radius lon, radius lat (rad); row 2k+1: darkness, edge softness, rotation, 0
 };

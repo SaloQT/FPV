@@ -1,18 +1,32 @@
 import { Rng } from '../../world/track/rng';
-import { birchPainter, blobPainter, newSample, sat, shrubPainter, sprigPainter, type Painter } from './treeLeafShapes';
+import {
+  beechPainter, birchPainter, blobPainter, hawthornPainter, newSample, sat, sheetPainter, shrubPainter, sprigPainter, type LaidOutPainter, type Painter, type ShootLayout,
+} from './treeLeafShapes';
 import { runSliced, runSync, type Steps } from './slices';
-import { conifer, sprayPainter } from './treeNeedleShapes';
+import { brushPainter, conifer, pinePainter, sprayPainter, type SprayLayout } from './treeNeedleShapes';
 
 export const TILE_SIZE = 512;
-export const TILES_X = 3;
-export const TILES_Y = 2;
+export const TILES_X = 4;
+export const TILES_Y = 5;
 export const ATLAS_W = TILE_SIZE * TILES_X;
 export const ATLAS_H = TILE_SIZE * TILES_Y;
 /** Mips are kept down to 4 x 4 texels per tile so bilinear taps never reach a neighbouring tile's shape. */
 export const ATLAS_MIPS = 8;
-/** Tile indices: 3 x 2 tiles, tile = column + 3 * row from the top-left. */
-export const TILE = { sprig: 0, needles: 1, blob: 2, conifer: 3, birch: 4, shrub: 5 } as const;
-export const TILE_COUNT = 6;
+/** Tile size of the extreme tier's atlas: twice the texels each way, so a leaf a metre from the camera stays sharp. */
+export const EXTREME_TILE_SIZE = 1024;
+
+/** Mip levels of an atlas with `tileSize` texels per tile side (down to 4 x 4 per tile). */
+export const atlasMips = (tileSize: number): number => Math.round(Math.log2(tileSize / 4)) + 1;
+/**
+ * Tile indices: 4 x 5 tiles, tile = column + 4 * row from the top-left. Oak, birch and beech have two shoots each (`sprig` and `oak2`,
+ * `birch` and `birch2`, `beech` and `beech2`) so neighbouring cards of one crown differ, and bushes mix hazel (`shrub`) and `hawthorn`;
+ * `pine` is a Scots pine branch end of three or four needle brushes and `pine2` a single one (the near LOD's pine shoots), `needles` and `needles2` flat spruce sprays, and `brush` and `brush2` the hanging
+ * bottle-brush branchlets of a spruce. The last row holds single-leaf sheets of oak, birch, beech and hazel, which the extreme tier cuts its
+ * per-leaf geometry from (treeLeafShapes.ts sheetPainter).
+ */
+export const TILE = { sprig: 0, needles: 1, blob: 2, conifer: 3, birch: 4, shrub: 5, oak2: 6, birch2: 7, pine: 8, beech: 9, beech2: 10, hawthorn: 11,
+  brush: 12, brush2: 13, pine2: 14, needles2: 15, oakSheet: 16, birchSheet: 17, beechSheet: 18, hazelSheet: 19 } as const;
+export const TILE_COUNT = 20;
 /** The colour texture stores the leaf colour multiplier divided by this; the tree shader multiplies it back. */
 export const COLOUR_RANGE = 3;
 
@@ -49,8 +63,9 @@ interface Level {
   data: Uint8Array;
 }
 
-/** The procedural leaf atlas: two RGBA8 pyramids of ATLAS_MIPS levels (level l is (ATLAS_W >> l) x (ATLAS_H >> l) texels). */
+/** The procedural leaf atlas: two RGBA8 pyramids of atlasMips(tileSize) levels (level l is (tileSize * TILES_X >> l) x (tileSize * TILES_Y >> l) texels). */
 export interface LeafAtlas {
+  tileSize: number;
   colour: Uint8Array[];
   data: Uint8Array[];
 }
@@ -62,7 +77,8 @@ const STRIDE = CHANNELS + 1;
 const ROWS_PER_STEP = 3;
 const byte = (x: number): number => Math.round(sat(x) * 255);
 
-function* rasterise(paint: Painter, tile: number, out: Level): Steps<void> {
+function* rasterise(paint: Painter, tile: number, out: Level, TILE_SIZE: number): Steps<void> {
+  const ATLAS_W = TILE_SIZE * TILES_X;
   const ox = (tile % TILES_X) * TILE_SIZE, oy = Math.floor(tile / TILES_X) * TILE_SIZE;
   const s = newSample(), c: [number, number, number] = [0, 0, 0];
   const sum = new Float64Array(CHANNELS), mean = new Float64Array(CHANNELS);
@@ -153,31 +169,103 @@ function* downsample(src: Level, w: number, h: number, target: readonly number[]
 }
 
 /** The painters in tile order; each tile gets its own sub-stream so changing one leaf shape leaves the others untouched. */
-function painters(): Painter[] {
-  const rng = (k: number): Rng => new Rng(0x1eaf + k * 7919);
-  return [sprigPainter(rng(0)), sprayPainter(rng(1)), blobPainter(rng(2)), conifer(23), birchPainter(rng(4)), shrubPainter(rng(5))];
+function painters(tileSize: number): Painter[] {
+  return Array.from({ length: TILE_COUNT }, (_, tile) => painterFor(tile, tileSize));
 }
 
-function* atlasSteps(): Steps<LeafAtlas> {
-  const base: Level = { colour: new Uint8Array(ATLAS_W * ATLAS_H * 4), data: new Uint8Array(ATLAS_W * ATLAS_H * 4) };
-  const paint = painters();
-  for (let tile = 0; tile < paint.length; tile++) yield* rasterise(paint[tile], tile, base);
-  const target = Array.from({ length: TILE_COUNT }, (_, t) => tileCoverage(base.colour, ATLAS_W, ATLAS_H, t));
+/** The painter of one tile, built alone. */
+function painterFor(tile: number, tileSize: number): LaidOutPainter {
+  const rng = (k: number): Rng => new Rng(0x1eaf + k * 7919);
+  const make: (() => LaidOutPainter)[] = [
+    () => sprigPainter(rng(0)), () => sprayPainter(rng(1), tileSize), () => blobPainter(rng(2)), () => conifer(23), () => birchPainter(rng(4)),
+    () => shrubPainter(rng(5)), () => sprigPainter(rng(6)), () => birchPainter(rng(7)), () => pinePainter(rng(8), tileSize), () => beechPainter(rng(9)),
+    () => beechPainter(rng(10)), () => hawthornPainter(rng(11)), () => brushPainter(rng(12), tileSize), () => brushPainter(rng(13), tileSize),
+    () => pinePainter(rng(14), tileSize, true), () => sprayPainter(rng(15), tileSize),
+    () => sheetPainter(rng(16), 'oak'), () => sheetPainter(rng(17), 'birch'), () => sheetPainter(rng(18), 'beech'), () => sheetPainter(rng(19), 'hazel'),
+  ];
+  return make[tile]();
+}
+
+const BROADLEAF_SHOOTS = new Set<number>([TILE.sprig, TILE.oak2, TILE.birch, TILE.birch2, TILE.beech, TILE.beech2, TILE.shrub, TILE.hawthorn]);
+const layouts = new Map<number, ShootLayout | null>();
+
+/** Leaves and twigs of a broadleaf shoot tile in tile coordinates (the same at every tile size), null for other tiles. Deterministic. */
+export function shootLayout(tile: number): ShootLayout | null {
+  if (!layouts.has(tile)) layouts.set(tile, BROADLEAF_SHOOTS.has(tile) ? painterFor(tile, TILE_SIZE).layout ?? null : null);
+  return layouts.get(tile) ?? null;
+}
+
+const opacity = new Map<string, (u: number, v: number) => boolean>();
+const OPACITY_RES = 128;
+/**
+ * Whether a tile paints anything at an atlas uv inside it (the same shapes at every tile size), or with `grow` > 0 whether it paints anything
+ * within that many cells (1/128 of the tile) of it. Used to keep foliage from crossing itself.
+ */
+export function tileOpacity(tile: number, grow = 0): (u: number, v: number) => boolean {
+  const key = `${tile}:${grow}`;
+  let f = opacity.get(key);
+  if (!f) {
+    // Painted once into a coarse mask (a few millimetres per cell on a shoot card); painting per lookup would dominate the tree build.
+    const paint = painterFor(tile, TILE_SIZE), s = newSample(), [u0, v0, u1, v1] = tileRect(tile), N = OPACITY_RES;
+    let mask = new Uint8Array(N * N);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) mask[y * N + x] = paint((x + 0.5) / N, (y + 0.5) / N, s) ? 1 : 0;
+    // Grown by a square of cells, one axis at a time.
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      if (grow <= 0) break;
+      const out = new Uint8Array(N * N);
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        for (let k = -grow; k <= grow && !out[y * N + x]; k++) {
+          const xx = x + k * dx, yy = y + k * dy;
+          if (xx >= 0 && xx < N && yy >= 0 && yy < N && mask[yy * N + xx]) out[y * N + x] = 1;
+        }
+      }
+      mask = out;
+    }
+    const cell = (t: number): number => Math.min(N - 1, Math.max(0, Math.floor(t * N)));
+    const m = mask;
+    f = (u, v) => m[cell((v - v0) / (v1 - v0)) * N + cell((u - u0) / (u1 - u0))] === 1;
+    opacity.set(key, f);
+  }
+  return f;
+}
+
+const sprays = new Map<number, SprayLayout>();
+/** Leader and side shoots of a spruce spray tile (`needles` or `needles2`) in tile coordinates. Deterministic. */
+export function sprayLayout(tile: typeof TILE.needles | typeof TILE.needles2): SprayLayout {
+  if (!sprays.has(tile)) sprays.set(tile, sprayPainter(new Rng(0x1eaf + tile * 7919), 64).spray);
+  return sprays.get(tile)!;
+}
+
+/** Single-leaf sheet a broadleaf shoot tile's leaves are cut from at the extreme tier (hawthorn borrows the lobed oak leaf), null for others. */
+export function sheetFor(tile: number): number | null {
+  if (tile === TILE.sprig || tile === TILE.oak2 || tile === TILE.hawthorn) return TILE.oakSheet;
+  if (tile === TILE.birch || tile === TILE.birch2) return TILE.birchSheet;
+  if (tile === TILE.beech || tile === TILE.beech2) return TILE.beechSheet;
+  if (tile === TILE.shrub) return TILE.hazelSheet;
+  return null;
+}
+
+function* atlasSteps(tileSize: number): Steps<LeafAtlas> {
+  const W = tileSize * TILES_X, H = tileSize * TILES_Y;
+  const base: Level = { colour: new Uint8Array(W * H * 4), data: new Uint8Array(W * H * 4) };
+  const paint = painters(tileSize);
+  for (let tile = 0; tile < paint.length; tile++) yield* rasterise(paint[tile], tile, base, tileSize);
+  const target = Array.from({ length: TILE_COUNT }, (_, t) => tileCoverage(base.colour, W, H, t));
   const levels: Level[] = [base];
-  let w = ATLAS_W, h = ATLAS_H;
-  for (let l = 1; l < ATLAS_MIPS; l++) {
+  let w = W, h = H;
+  for (let l = 1; l < atlasMips(tileSize); l++) {
     levels.push(yield* downsample(levels[l - 1], w, h, target));
     w >>= 1; h >>= 1;
   }
-  return { colour: levels.map((l) => l.colour), data: levels.map((l) => l.data) };
+  return { tileSize, colour: levels.map((l) => l.colour), data: levels.map((l) => l.data) };
 }
 
-/** The deterministic leaf atlas; level 0 is ATLAS_W x ATLAS_H. */
-export function buildLeafAtlas(): LeafAtlas {
-  return runSync(atlasSteps());
+/** The deterministic leaf atlas; level 0 is ATLAS_W x ATLAS_H at the default tile size. */
+export function buildLeafAtlas(tileSize = TILE_SIZE): LeafAtlas {
+  return runSync(atlasSteps(tileSize));
 }
 
 /** The same atlas built in slices of about `budgetMs` with an event-loop yield between them, so the loading screen keeps painting. */
-export function buildLeafAtlasSliced(budgetMs = 8, yieldFn?: () => Promise<void>): Promise<LeafAtlas> {
-  return runSliced(atlasSteps(), budgetMs, yieldFn);
+export function buildLeafAtlasSliced(budgetMs = 8, yieldFn?: () => Promise<void>, tileSize = TILE_SIZE): Promise<LeafAtlas> {
+  return runSliced(atlasSteps(tileSize), budgetMs, yieldFn);
 }

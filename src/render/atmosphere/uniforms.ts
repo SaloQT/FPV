@@ -2,12 +2,12 @@ import { DEG, LUNAR_FEATURES, LUNAR_ROWS, galacticAxesEquatorial } from './celes
 import type { AtmosphereSettings } from './settings';
 
 /** Rows (vec4) before the lunar feature table; mirrors struct AtmosParams in shaders/sky/atmos_uniforms.wgsl. */
-export const FIXED_ROWS = 11;
+export const FIXED_ROWS = 12;
 export const ATMOS_PARAM_BYTES = (FIXED_ROWS + LUNAR_ROWS) * 16;
 const OBLIQUITY_J2000 = 23.4392911 * DEG;
 
 const ROW = {
-  flags: 0, sky2: 4, cloudA: 8, cloudB: 12, wind: 16, cloudC: 20, cloudD: 24, eclNorth: 28, gal0: 32, gal1: 36, gal2: 40, maria: 44,
+  flags: 0, sky2: 4, cloudA: 8, cloudB: 12, wind: 16, cloudC: 20, cloudD: 24, eclNorth: 28, gal0: 32, gal1: 36, gal2: 40, cloudE: 44, maria: 48,
 } as const;
 
 export interface AtmosParamInputs {
@@ -27,6 +27,8 @@ export interface AtmosParamInputs {
   historyBlend: number;
   historyValid: boolean;
   lightSteps: number;
+  /** Cloud edge detail 0..1: 1 adds the extreme tier's finer erosion octave and wispy edges (cloud_density.wgsl). */
+  cloudDetail?: number;
   /** Night-dome radiance (nits, rgb) for the world sky-view LUT (see nightDome.ts); stored in the free w lanes of the galactic axis rows. */
   nightDome?: ArrayLike<number>;
 }
@@ -79,6 +81,7 @@ export class AtmosUniforms {
     windOffset(s.windSpeed * 1.8, s.windDirectionDeg + 15, p.timeSeconds, CIRRUS_WIND);
     d[ROW.wind] = CUMULUS_WIND[0]; d[ROW.wind + 1] = CUMULUS_WIND[1]; d[ROW.wind + 2] = CIRRUS_WIND[0]; d[ROW.wind + 3] = CIRRUS_WIND[1];
     d[ROW.cloudC] = p.cloudSteps; d[ROW.cloudC + 1] = p.jitterIndex; d[ROW.cloudC + 2] = p.shadowCenterX; d[ROW.cloudC + 3] = p.shadowCenterZ;
+    d[ROW.cloudE] = p.cloudDetail ?? 0;
     d[ROW.cloudD] = p.historyBlend; d[ROW.cloudD + 1] = p.historyValid ? 1 : 0; d[ROW.cloudD + 2] = p.lightSteps; d[ROW.cloudD + 3] = p.shadowExtentM;
     eclipticNorthWorld(p.equatorialToWorld, ECL);
     d[ROW.eclNorth] = ECL[0]; d[ROW.eclNorth + 1] = ECL[1]; d[ROW.eclNorth + 2] = ECL[2];

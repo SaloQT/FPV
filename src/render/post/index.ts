@@ -5,6 +5,7 @@ import { createCompositeStage } from './composite';
 import { createExposureStage } from './exposure';
 import { createMotionBlurStage } from './motionBlur';
 import { createTaaStage } from './taa';
+import { createWhiteBalanceStage } from './whiteBalance';
 import type { CompositeInput, OutSize, PostFlags, PostParams } from './types';
 
 /** 0 final, 1 no TAA (composite reads the raw jittered render-res image), 2 exposure heat overlay, 3 bloom only. */
@@ -79,13 +80,14 @@ export function createHistoryTracker(): HistoryTracker {
 }
 
 /**
- * Post-processing orchestrator. Frame order: motion blur -> TAAU (input = motion blur output) -> exposure(resolved) -> bloom(resolved)
+ * Post-processing orchestrator. Frame order: motion blur -> TAAU (input = motion blur output) -> exposure(resolved) -> white balance(hdr) -> bloom(resolved)
  * -> composite(target). All state that crosses frames lives in the stages; this owns only the history-validity decision.
  */
 export function createPostProcessor(): PostProcessorDev {
   const motionBlur = createMotionBlurStage();
   const taa = createTaaStage();
   const exposure = createExposureStage();
+  const whiteBalance = createWhiteBalanceStage();
   const bloom = createBloomStage();
   const composite = createCompositeStage();
   const history = createHistoryTracker();
@@ -101,6 +103,7 @@ export function createPostProcessor(): PostProcessorDev {
       motionBlur.init(rc);
       taa.init(rc);
       exposure.init(rc);
+      whiteBalance.init(rc);
       bloom.init(rc);
       composite.init(rc);
     },
@@ -109,12 +112,17 @@ export function createPostProcessor(): PostProcessorDev {
       motionBlur.resize(rc, out);
       taa.resize(rc, out);
       exposure.resize(rc, out);
+      whiteBalance.resize(rc, out);
       bloom.resize(rc, out);
       composite.resize(rc, out);
       // A render-resolution change alone keeps the out-res history valid; only a new output size starts over.
       if (out.width !== outW || out.height !== outH) history.invalidate();
       outW = out.width;
       outH = out.height;
+    },
+
+    resetHistory() {
+      history.invalidate();
     },
 
     update(rc: RenderContext, f: FrameInfo) {
@@ -134,6 +142,7 @@ export function createPostProcessor(): PostProcessorDev {
       motionBlur.encode(enc, rc, f, params, flags);
       taa.encode(enc, rc, f, params, flags, motionBlur.output);
       exposure.encode(enc, rc, f, params, flags, taa.resolved);
+      whiteBalance.encode(enc, rc, f, flags, exposure.ratio);
       bloom.encode(enc, rc, f, params, flags, taa.resolved);
 
       io.resolved = pickResolved(debug, taa.resolved, rc.gbuf.views.hdr);
@@ -160,6 +169,7 @@ export function createPostProcessor(): PostProcessorDev {
       motionBlur.destroy();
       taa.destroy();
       exposure.destroy();
+      whiteBalance.destroy();
       bloom.destroy();
       composite.destroy();
     },

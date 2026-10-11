@@ -25,7 +25,8 @@ export class AtmosphereLuts {
   private readonly sunView: Stage;
   private readonly aerial: Stage;
   private bound: { t: GPUTexture; m: GPUTexture; s: GPUTexture; a: GPUTexture } | null = null;
-  private baked = false;
+  /** Observer altitude (m) the transmittance and multiple-scattering LUTs were baked for (the boundary-layer haze sits on the land there). */
+  private bakedAltitudeM: number | null = null;
 
   constructor(private readonly rc: RenderContext) {
     const d = rc.device, C = GPUShaderStage.COMPUTE;
@@ -59,10 +60,14 @@ export class AtmosphereLuts {
     this.bindGroups();
   }
 
-  /** Bakes the transmittance and multiple-scattering LUTs once (constants of the atmosphere; frame.sky.xy must be valid). */
+  /**
+   * Bakes the transmittance and multiple-scattering LUTs (constants of the atmosphere and of the land's altitude, which carries the haze
+   * layer; frame.sky.xyz must be valid), again whenever the observer altitude changes.
+   */
   bake(enc: GPUCommandEncoder): void {
-    if (this.baked) return;
-    this.baked = true;
+    const altitude = this.rc.settings.observer.altitudeM;
+    if (this.bakedAltitudeM === altitude) return;
+    this.bakedAltitudeM = altitude;
     this.bindGroups();
     const pass = enc.beginComputePass({ label: 'atmosphere lut bake' });
     this.dispatch(pass, this.transmittance, TRANSMITTANCE_SIZE.width / 8, TRANSMITTANCE_SIZE.height / 8);

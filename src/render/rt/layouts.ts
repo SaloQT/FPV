@@ -1,7 +1,10 @@
 /** Bind group layouts of the RT passes. Binding numbers mirror the @binding declarations in shaders/rt/*.wgsl. */
 export interface RtLayouts {
-  /** group 2 of shadow / gi / spec. */
+  /** group 2 of gi / spec. */
   trace: GPUBindGroupLayout;
+  /** group 2 of the sun shadow: the trace entries plus the canopy shadow map (binding 17). Only this kernel binds it, so the gi layouts keep
+   * their texture count. */
+  shadowTrace: GPUBindGroupLayout;
   giHits: GPUBindGroupLayout | null;
   giShade: GPUBindGroupLayout | null;
   giVisibility: GPUBindGroupLayout | null;
@@ -37,14 +40,15 @@ export function createLayouts(device: GPUDevice): RtLayouts {
   const split = device.limits.maxSampledTexturesPerShaderStage >= 17;
   const visibility = device.limits.maxSampledTexturesPerShaderStage >= 19;
   const traceEntries = (format: GPUTextureFormat): GPUBindGroupLayoutEntry[] => [
-    uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, format), store2d(9, format), probeSampler, cloudShadow,
+    uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), tex2d(6), tex2d(7), store2d(8, format), store2d(9, format), probeSampler, cloudShadow, storageRo(16),
   ];
   const probeEntries = [
-    uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), store3d(6), store3d(7), store3d(8), storageRo(9), probeSampler, cloudShadow,
+    uniform(0), storageRo(1), storageRo(2), tex3d(3), tex3d(4), tex3d(5), store3d(6), store3d(7), store3d(8), storageRo(9), probeSampler, cloudShadow, storageRo(16),
   ];
 
   return {
     trace: layout('trace', traceEntries('rgba16float')),
+    shadowTrace: layout('shadow trace', [...traceEntries('rgba16float'), { binding: 17, visibility: C, texture: { sampleType: 'float' } }]),
     giHits: split ? layout('gi hits', traceEntries('rg32float')) : null,
     giVisibility: visibility ? layout('gi visibility', [...traceEntries('r32float'), tex2d(12), tex2d(13)]) : null,
     giShade: split ? layout('gi shade', [...traceEntries('rgba16float'), tex2d(12), tex2d(13), ...(visibility ? [tex2d(14), tex2d(15)] : [])]) : null,

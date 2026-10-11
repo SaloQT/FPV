@@ -21,7 +21,7 @@ const STEPS : u32 = 32u;
 // Radiance seen along dir from the camera at radius r, lit by one collimated light (single scattering + LUT multiple scattering + ground).
 fn marchSky(dir : vec3f, r : f32, lightDir : vec3f, lightE : vec3f) -> vec3f {
   let p0 = vec3f(0.0, r, 0.0);
-  let hitG = raySphere(p0, dir, frame.sky.x);
+  let hitG = raySphere(p0, dir, landRadius(r));
   let hitsGround = hitG.x > 0.0;
   let tTop = raySphere(p0, dir, frame.sky.y).y;
   let tMax = select(tTop, hitG.x, hitsGround);
@@ -36,7 +36,7 @@ fn marchSky(dir : vec3f, r : f32, lightDir : vec3f, lightE : vec3f) -> vec3f {
     thr *= s.trans;
     t0 = t1;
   }
-  if (hitsGround) { lum += thr * groundRadianceAt(p0 + dir * tMax, lightDir, lightE); }
+  if (hitsGround) { lum += thr * groundRadianceAt(p0 + dir * tMax, lightDir, lightE) * (LANDSCAPE_ALBEDO / GROUND_ALBEDO); }
   return lum;
 }
 

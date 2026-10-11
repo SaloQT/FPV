@@ -54,7 +54,7 @@ function readParams() {
     time: isTimeOfDay(t) ? t : null,
     frames: Math.max(1, Math.round(num('frames', DEFAULT_FRAMES))),
     soft: num('soft', 1),
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high' as Settings['quality'],
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high' as Settings['quality'],
     checker: q.get('tex') === '1' ? TEX_AMPLITUDE : 0,
     osd: q.get('osd') !== '0',
     realSky: q.get('atmo') === 'real',

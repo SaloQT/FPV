@@ -4,6 +4,8 @@
 #include "lighting/sky_safe.wgsl"
 #include "rt/rt_terrain.wgsl"
 #include "rt/rt_bvh.wgsl"
+#include "terrain/ground_palette.wgsl"
+#include "park/lights.wgsl"
 
 @group(${GRP}) @binding(3) var probeR : texture_3d<f32>;
 @group(${GRP}) @binding(4) var probeG : texture_3d<f32>;
@@ -88,8 +90,10 @@ fn envAt(y : f32) -> Env {
   return Env(sunE, moonE, zenith, GROUND_ALBEDO * (direct * INV_PI + 0.6 * zenith));
 }
 
+// The sky-view LUT is a clear sky; the clouds' own light (bright cumulus sides, the diffuse glow under a deck) is put back on the dome as a
+// gain from the cloud cover (rp.cloud.w, atmosphere cloudAmbientScale: 1 when clear, about 1.18 at the default cover, 1.8 overcast).
 fn envRadiance(dir : vec3f, e : Env) -> vec3f {
-  return mix(skyNits(dir), e.ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));
+  return mix(skyNits(dir) * max(rp.cloud.w, 1.0), e.ground, 1.0 - smoothstep(-0.08, 0.0, dir.y));
 }
 
 // Pre-exposed environment radiance toward dir, safe to store in fp16.
@@ -107,13 +111,18 @@ fn shIrradiance(c : vec4f, n : vec3f) -> f32 {
 }
 
 fn probeIrradiance(p : vec3f, n : vec3f, e : Env) -> vec3f {
+  // Interpolating outdoor probes through an opaque roof would inject the daylight sky into a dark ride.
+  if (parkRoom(p) >= 0) { return vec3f(0.0); }
   let dim = vec3f(rp.probeDim.xyz);
   let c = p / rp.f.y;
   let rel = c - vec3f(rp.probeLo.xyz);
   let m = min(rel, dim - 1.0 - rel);
   let w = smoothstep(0.0, 2.0, min(m.x, min(m.y, m.z)));
   let fallback = mix(e.ground, e.zenith, saturate1(n.y * 0.5 + 0.5)) * frame.params.y;
-  if (w <= 0.0) { return fallback; }
+  // Probes starting afresh (rp.probePrev.w: a new scene or a lighting cut) hold the old light, rescaled to the new exposure: after a jump from
+  // noon to midnight that is a million times the night's light, and fed back through the bounce it lit the crowns for seconds. That frame's
+  // bounce comes from the sky and ground of the current light instead.
+  if (w <= 0.0 || rp.probePrev.w == 1) { return fallback; }
   let uv = (c + 0.5) / dim;
   let r = textureSampleLevel(probeR, probeSampler, uv, 0.0);
   let g = textureSampleLevel(probeG, probeSampler, uv, 0.0);
@@ -124,14 +133,40 @@ fn probeIrradiance(p : vec3f, n : vec3f, e : Env) -> vec3f {
 
 struct Surface { n : vec3f, albedo : vec3f, metal : f32, emissive : vec3f, ao : f32, trans : f32 }
 
+// Mean albedo of the ground a ray lands on, so the bounce has the colour of the ground the raster draws: olive sward on deep soil,
+// brown soil in gullies and thin patches, gravel in stream beds, grey rock on steep and bare ground, snow up high. It is the layer mix of
+// terrainLayerWeights in terrain/ground_color.wgsl taken at its noise means, with the palette's own colours; the FBM patches are left out
+// because they would cost more than the rest of the hit shading and the GI only ever sees their average. The forest-floor cover map is not
+// bound in the RT passes, so litter under trees bounces as the sward or soil it replaces.
+fn terrainGroundAlbedo(y : f32, ny : f32, maps : vec4f) -> vec3f {
+  let soil = maps.x;
+  let flow = maps.y;
+  let slope = 1.0 - ny;
+  let hRel = (y - frame.terrain.z) / max(frame.terrain.w - frame.terrain.z, 1.0);
+  let steep = smoothstep(0.16, 0.30, slope);
+  let gentle = 1.0 - smoothstep(0.10, 0.26, slope);
+  let bare = 1.0 - smoothstep(0.02, 0.24, soil);
+  let rock = saturate1(steep + 0.9 * bare + 0.5 * smoothstep(0.62, 0.92, hRel));
+  let gully = smoothstep(0.35, 0.70, flow) * smoothstep(0.01, 0.05, slope);
+  let thinSoil = 1.0 - smoothstep(0.30, 0.70, soil);
+  let sparse = smoothstep(0.60, 0.86, 0.5 + 0.30 * smoothstep(0.03, 0.15, slope) + 0.25 * thinSoil);
+  let cover = smoothstep(0.22, 0.65, soil) * gentle * (1.0 - 0.85 * gully);
+  let sward = cover * (1.0 - 0.9 * sparse);
+  let channel = smoothstep(0.5, 0.9, flow);
+  let gravel = 0.7 * channel * (0.4 + 0.6 * maps.z);
+  let dirt = 0.10 + 0.9 * smoothstep(0.05, 0.35, soil) * (1.0 - smoothstep(0.35, 0.7, soil)) + 0.7 * channel + 0.9 * cover * sparse + 0.9 * gully;
+  let snow = smoothstep(0.78, 0.86, hRel) * gentle;
+  let bareGround = (sward * glBaseColor(GL_GRASS) + dirt * glBaseColor(GL_DIRT) + gravel * glBaseColor(GL_GRAVEL) + rock * glBaseColor(GL_ROCK))
+    / (sward + dirt + gravel + rock);
+  return mix(bareGround, glBaseColor(GL_SNOW), snow);
+}
+
 fn terrainSurface(p : vec3f) -> Surface {
   let uv = (terrainTexel(p.xz) + 0.5) / frame.terrain.x;
   let nrm = textureSampleLevel(terrainNormalTex, linearClamp, uv, 0.0);
   let maps = textureSampleLevel(terrainMapsTex, linearClamp, uv, 0.0);
   let n = normalize(nrm.xyz * 2.0 - 1.0);
-  let rock = smoothstep(0.55, 0.8, 1.0 - n.y);
-  var alb = mix(vec3f(0.12, 0.16, 0.06), vec3f(0.25, 0.18, 0.11), saturate1(maps.x));
-  alb = mix(alb, vec3f(0.3), rock) * mix(1.0, 0.6, saturate1(maps.w));
+  let alb = terrainGroundAlbedo(p.y, n.y, maps) * mix(1.0, 0.6, saturate1(maps.w));
   return Surface(n, alb, 0.0, vec3f(0.0), nrm.a, 0.0);
 }
 
@@ -161,9 +196,10 @@ var<private> giVisibilityValue : f32 = 1.0;
 fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u32) -> vec3f {
   let pre = frame.params.y;
   let key = keyDir();
+  let indoor = parkRoom(p) >= 0;
   let cosK = lightCosine(s, key.xyz);
   var vis = 1.0;
-  if (cosK > 0.0 && key.y > -0.03) {
+  if (!indoor && cosK > 0.0 && key.y > -0.03) {
 #ifdef SHADE_VISIBILITY
     vis = giVisibilityValue;
 #else
@@ -176,7 +212,25 @@ fn shadeSurface(s : Surface, p : vec3f, t : f32, kind : u32, e : Env, steps : u3
     vis *= cloudTransmittance(p);
 #endif
   }
-  let direct = (keyIrradiance(e) * (cosK * vis) + fillIrradiance(e) * lightCosine(s, fillDir())) * (pre * INV_PI);
+  var direct = (keyIrradiance(e) * (cosK * vis) + fillIrradiance(e) * lightCosine(s, fillDir())) * (pre * INV_PI);
+  if (indoor) { direct = vec3f(0.0); }
+  let range = parkLightRange(p);
+  // One light sampled in proportion to its unoccluded irradiance. PDF compensation preserves the full
+  // lighting integral, while the temporal GI/probe histories integrate the samples without N shadow rays per hit.
+  var totalWeight = 0.0; var chosenWeight = 0.0; var chosenE = vec4f(0.0); var chosenL = vec3f(0.0); var chosenCosine = 0.0;
+  for (var i = 0u; i < range.y; i++) {
+    let index = parkLightIndex(range.x + i); let eLocal = parkIrradiance(p, index);
+    if (eLocal.w < 0.05 || max(eLocal.x, max(eLocal.y, eLocal.z)) < 0.001) { continue; }
+    let l = normalize(park.data[index * 2u].xyz - p); let cosine = max(dot(s.n, l), 0.0);
+    let weight = dot(eLocal.rgb, vec3f(0.2126, 0.7152, 0.0722)) * cosine;
+    totalWeight += weight;
+    let random = hash21(vec2u(bitcast<u32>(p.x) + frameIndex() * 713u, bitcast<u32>(p.z) ^ (i * 979u)));
+    if (weight > 0.0 && random * totalWeight < weight) { chosenWeight = weight; chosenE = eLocal; chosenL = l; chosenCosine = cosine; }
+  }
+  if (chosenWeight > 0.0) {
+    let hit = traceBvh(p + s.n * 0.035, chosenL, max(0.0, chosenE.w - 0.35), 512u);
+    if (hit.prim == NO_NODE) { direct += chosenE.rgb * (chosenCosine * pre * INV_PI * totalWeight / chosenWeight); }
+  }
   let diffuse = s.albedo * (1.0 - 0.7 * s.metal);
   let emission = min(s.emissive * (EMISSIVE_MAX_NITS * pre), vec3f(MAX_RADIANCE));
   return min(diffuse * (direct + probeIrradiance(p + s.n * 0.5, s.n, e)) + emission, vec3f(MAX_RADIANCE));
@@ -198,8 +252,39 @@ fn hitRadianceChord(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32, ch
   var s = surfaceAt(h, p, d);
   if (s.trans <= 0.0) { return shadeSurface(s, p, h.t, h.kind, e, steps); }
   s.albedo = CANOPY_SCATTER_ALBEDO;
-  let lit = shadeSurface(s, p, h.t, h.kind, e, steps);
+  let lit = canopyScatter(s, h, o, d, e, steps, chord);
   return mix(lit, skyRadiance(d, e), chord);
+}
+
+// Below this chord transmittance a crown hit traces its own shadow ray; above it the leaves' scattered light is under a fifth of what the ray
+// returns, and the crown's own transmittance toward the key light stands in for the ray.
+const CANOPY_SHADOW_CHORD : f32 = 0.8;
+
+// Light the leaves along a chord through crown `h` scatter toward the ray's origin. They see less of the key light the deeper they lie, so
+// they are shaded at the chord's middle rather than at the sunlit rim where the ray leaves the crown, and with the crown's own leaves
+// between them and the light. A short chord (most rays from the outer leaves) skips the shadow ray: no BVH walk, only the crown's own
+// transmittance; the park's local lights are left to the probe term.
+fn canopyScatter(s : Surface, h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32, chord : f32) -> vec3f {
+  let pre = frame.params.y;
+  let mid = o + d * (0.5 * h.t);
+  let key = keyDir();
+  let cosK = lightCosine(s, key.xyz);
+  var vis = 0.0;
+  if (cosK > 0.0 && key.y > -0.03 && parkRoom(mid) < 0) {
+    vis = exp(-canopyOpticalDepth(h.prim, mid, key.xyz, rp.f.w));
+#ifdef SHADE_VISIBILITY
+    // The recorded visibility was taken where the ray left the crown (gi.wgsl VISIBILITY_ONLY): the other trees and the terrain.
+    vis *= giVisibilityValue;
+#else
+    if (chord < CANOPY_SHADOW_CHORD && h.t < NEAR_SHADOW_RANGE) {
+      // From inside the crown the shadow ray's transmittance takes in the crown's own leaves as well as everything beyond.
+      vis = keyVisibility(mid, key.xyz, SHADOW_RAY_RANGE, max(16u, steps / 3u));
+    }
+    vis *= cloudTransmittance(mid);
+#endif
+  }
+  let direct = (keyIrradiance(e) * (cosK * vis) + fillIrradiance(e) * lightCosine(s, fillDir())) * (pre * INV_PI);
+  return min(s.albedo * (direct + probeIrradiance(mid, s.n, e)), vec3f(MAX_RADIANCE));
 }
 
 fn hitRadiance(h : SceneHit, o : vec3f, d : vec3f, e : Env, steps : u32) -> vec3f {

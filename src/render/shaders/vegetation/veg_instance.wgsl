@@ -16,9 +16,13 @@ struct Variant {
   bound : vec4f,     // x = bounding sphere centre height, y = radius (m at scale 1), z = LOD0 range, w = LOD1 range (in radii)
   shape : vec4f,     // x = mesh height, y = sway Hz, z = sway strength (crown offset per m/s of wind, as a fraction of height), w = leaf flutter (m)
   leafTone : vec4f,  // rgb = leaf or rock albedo, a = translucency
+  crown : vec4f,     // x = crown centre height, yzw = crown radii (m at scale 1; zero for rocks)
 };
 
 const KIND_BUSH : u32 = 1u;
+// Reserved packed normal: the CPU encoder uses [-32767,32767], never -32768.
+const PARK_PLANT_NORMAL : u32 = 0x80008000u;
+const PARK_PLANT_DISTANCE : f32 = 1900.0;
 
 fn yawRotate(p : vec3f, yaw : f32) -> vec3f {
   let c = cos(yaw);
@@ -30,7 +34,13 @@ fn yawRotate(p : vec3f, yaw : f32) -> vec3f {
 const LOD_FADE_BAND : f32 = 0.12;
 
 // Distances (m) at which an instance hands over from LOD0 to LOD1 and from LOD1 to LOD2 (the cull and the draw shaders must agree).
+// At the extreme tier (vp.tree.w = 1) a tree never drops to its LOD2 crown billboards: out to the draw distance it keeps its LOD1 mesh,
+// whose limbs and leaf clusters give a real silhouette with gaps, so distant forest does not turn into smooth blobs.
+const NEVER : f32 = 1.0e9;
+
 fn lodEdges(v : Variant, inst : Instance) -> vec2f {
   let reach = v.bound.y * inst.scale * vp.tree.x;
-  return vec2f(v.bound.z, v.bound.w) * reach;
+  var e = vec2f(v.bound.z, v.bound.w) * reach;
+  if (vp.tree.w > 0.5 && v.range.z != 2u) { e.y = NEVER; }
+  return e;
 }

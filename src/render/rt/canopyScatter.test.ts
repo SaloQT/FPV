@@ -29,7 +29,8 @@ describe('leaf-crown scatter model in the shaders', () => {
     const back = Number(deferred.match(/const LEAF_AMBIENT_BACK\s*:\s*f32\s*=\s*([^;]+);/)?.[1]);
     expect(back).toBeGreaterThan(0.2);
     expect(back).toBeLessThanOrEqual(1);
-    expect(deferred).toMatch(/\(1\.0\s*\+\s*LEAF_AMBIENT_BACK\s*\*\s*LEAF_TRANSMITTANCE\s*\*\s*msc\.g\)/);
+    // In proportion to the leaf's openness: a leaf deep in a crown sees leaves behind it, not sky.
+    expect(deferred).toMatch(/\(1\.0\s*\+\s*LEAF_AMBIENT_BACK\s*\*\s*LEAF_TRANSMITTANCE\s*\*\s*translucency\s*\*\s*ao\)/);
   });
 
   it('refills part of a leaf\'s occlusion with the light the occluding leaves scatter (a fraction, never the whole occlusion)', () => {
@@ -37,7 +38,8 @@ describe('leaf-crown scatter model in the shaders', () => {
     const fill = Number(deferred.match(/const LEAF_AO_FILL\s*:\s*f32\s*=\s*([^;]+);/)?.[1]);
     expect(fill).toBeGreaterThan(0.1);
     expect(fill).toBeLessThan(1);
-    expect(deferred).toMatch(/mix\(ao,\s*1\.0,\s*LEAF_AO_FILL\s*\*\s*msc\.g\)/);
+    // The refill scales with the leaf's own openness: the light scattered into a pocket is what got into that part of the crown.
+    expect(deferred).toMatch(/mix\(ao,\s*1\.0,\s*LEAF_AO_FILL\s*\*\s*translucency\s*\*\s*ao\)/);
   });
   it('counts a hit inside a porous crown as occlusion only by the leaves\' share of the chord, in the GI contact visibility', () => {
     const gi = read('rt/gi.wgsl');
