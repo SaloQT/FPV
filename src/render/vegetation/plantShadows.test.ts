@@ -121,8 +121,8 @@ describe('a tree\'s ray-traced shadow is the shadow of the tree that is drawn', 
         // conifer's cone (the oak scores 0.32).
         expect(canopyOverlap(variant, prims), VARIANT_DEFS[variant].name).toBeGreaterThanOrEqual(0.3);
       }
-    // Voxelising every plant's drawn leaves takes a few seconds, longer when the whole suite runs in parallel.
-    }, 60000);
+    // Voxelising every plant's drawn leaves takes a few seconds, minutes when the whole suite runs in parallel.
+    }, 180000);
   }
 
   it('park: the wood capsules lie inside the drawn trunk and thick limbs and are about as thick as them', () => {

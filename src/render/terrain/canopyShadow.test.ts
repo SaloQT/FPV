@@ -27,6 +27,23 @@ describe('canopy shadow map', () => {
     expect(fromHalf(out[k + 1])).toBeCloseTo(15, 1);
     expect(fromHalf(out[k + 2])).toBeCloseTo(21, 1);
     expect(fromHalf(out[texel(t, 256, 12, 0)])).toBe(0);
+    // The crown's horizontal radius, which the shadow march skips a leaf's own crown out to; nothing where there is no crown.
+    expect(fromHalf(out[k + 3])).toBeCloseTo(4, 2);
+    expect(fromHalf(out[texel(t, 256, 12, 0) + 3])).toBe(0);
+  });
+
+  it('gives a cone crown its full depth on the axis from its base, and half of it half way out', () => {
+    // 40 m wide, so the map's 4 m texels sample it on the axis and exactly half way out.
+    const out = rasterCanopyShadow(t, [{ ...crown(0, 0, 10), rx: 40, rz: 40, cone: true }], 256);
+    const k = texel(t, 256, 0, 0), half = texel(t, 256, 20, 0);
+    // On the axis: the whole 6 m from the base at y = 15 up to the tip at 21.
+    expect(fromHalf(out[k])).toBeCloseTo(3, 1);
+    expect(fromHalf(out[k + 1])).toBeCloseTo(15, 1);
+    expect(fromHalf(out[k + 2])).toBeCloseTo(21, 1);
+    // 20 m out of 40: a 3 m chord standing on the base (an ellipsoid's would be 5.2 m, centred).
+    expect(fromHalf(out[half])).toBeCloseTo(1.5, 1);
+    expect(fromHalf(out[half + 1])).toBeCloseTo(15, 1);
+    expect(fromHalf(out[half + 2])).toBeCloseTo(18, 1);
   });
 
   it('adds overlapping crowns and spans both of their heights', () => {

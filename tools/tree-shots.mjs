@@ -4,6 +4,10 @@
  *
  *   node tools/tree-shots.mjs --out .bench/trees/before [--quality high,ultra] [--width 1280] [--views .bench/trees/views.json] [--only bark-oak,edge]
  *     [--frames 90] [--timed 60] [--hour 9] [--seed 1337] [--no-clouds] [--no-scans] [--atmos JSON] [--skip modules] [--artifact dir]
+ *     [--source dir]
+ *
+ * --source <dir> renders the code of a copy (a folder holding its own src/, e.g. a scratch copy under .bench for an A/B) instead of the
+ * working tree; assets still come from this repo's public/.
  *
  * Writes <out>/<view>-<quality>.png and <out>/timings.json (mean and median GPU ms over the last --timed frames of each view). */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -23,12 +27,13 @@ const EXPORTS = [
 
 if (process.argv[2] === '--build') {
   // The bundler runs in its own process: Vite's native bundler loaded next to Dawn crashes Dawn's pipeline compiler (tools/brain/bundle.mjs).
-  // `--build [dir]` bundles into dir (default .bench/trees/bundle, which the helper scripts in .bench/trees import).
+  // `--build [dir] [source]` bundles the sources under source (default this repo) into dir (default .bench/trees/bundle, which the
+  // helper scripts in .bench/trees import).
   const { build } = await import('vite');
-  const dir = resolve(process.argv[3] ?? BUNDLE);
+  const dir = resolve(process.argv[3] ?? BUNDLE), source = resolve(process.argv[4] ?? ROOT);
   await mkdir(dir, { recursive: true });
   const entry = resolve(dir, 'entry.ts');
-  await writeFile(entry, EXPORTS.map(([names, path]) => `export { ${names} } from ${JSON.stringify(resolve(ROOT, path).replaceAll('\\', '/'))};`).join('\n'));
+  await writeFile(entry, EXPORTS.map(([names, path]) => `export { ${names} } from ${JSON.stringify(resolve(source, path).replaceAll('\\', '/'))};`).join('\n'));
   await build({ root: ROOT, configFile: false, logLevel: 'warn', publicDir: false, build: { ssr: entry, outDir: dir, emptyOutDir: false, target: 'es2022', rolldownOptions: { output: { entryFileNames: 'trees.mjs' } } } });
   process.exit(0);
 }
@@ -51,7 +56,7 @@ else {
   // each other's bundle. "bundled <dir>" tells a driving script the working tree has been read.
   const dir = resolve(`${BUNDLE}-${process.pid}`);
   process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
-  execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--build', dir], { stdio: 'inherit' });
+  execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--build', dir, resolve(args.source ?? ROOT)], { stdio: 'inherit' });
   console.log(`bundled ${dir}`);
   a = await import(pathToFileURL(resolve(dir, 'trees.mjs')).href);
 }

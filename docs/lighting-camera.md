@@ -143,6 +143,13 @@ at about 90 km, above the clouds).
 Flicker: `tools/lightcast/flight.mjs --clouds --date 2026-06-28 --hour 22 --static` logs `topDiff` (sky third, codes per frame): 1.3 at
 extreme, under the 2-code check.
 
+**Trap: cost per density sample.** Everything in `cumulusDensity` runs for every view-march, light-march and cloud-shadow sample. The
+clearing's mask first ran by day too (it was zeroed only afterwards, about 0.13 ms at ultra); `nightClearing` now returns early when
+`day >= 1`, a uniform branch, pixel-identical (clean A/B, max difference 0 at 12:00 and 23:30). The convective-cell weather map
+(`cumulusCells`, terrain) costs 0.26-0.33 ms at ultra the same way; with the weather replaced by a constant, clouds drop from 1.11 to
+0.59-0.66 ms. A per-frame r16float weather texture around the camera (refreshed when the wind drift passes a texel) would recover
+most of that at the same look (backlog item; not built). Bisect with `tools/audit/cloudbisect.py`.
+
 ## Lighting cuts (time-of-day jumps)
 
 **What** (`src/render/lightingCut.ts`). A frame whose sun or moon moved over 1 degree, or whose astronomy luminance estimate jumped over 2
@@ -205,6 +212,15 @@ IndexedDB, the worker tree build and BC7 bark, so check there before calling a s
 default track world for `world=theme-park`, so compare tracks. Per-module cost: `node tools/audit/modcost.mjs --tag x [--source dir]
 [--detail 1]` times every module's init and setScene and the frame's GPU ms with each module's hooks switched off (`--detail` adds the RT
 sub-passes and clouds). Run-to-run noise is about ±0.2 ms; wall-clock init times swing 1.5-3x while other work loads the machine.
+
+**Clean A/B of one edit.** `python tools/audit/abpair.py <name> <file under src/> <old.txt> <new.txt> -- <measure.mjs args>` snapshots
+`src/` twice at the same moment (one copy with the edit undone) and prints the pixel difference per frame. Comparing against an older
+copy picks up other agents' edits since (a whole-frame difference that has nothing to do with the change under test). Never A/B by
+swapping files in the shared tree.
+
+**Ultra budget (track 210-t2, gate-3 view, 1280x720, modcost).** HEAD b9e3721: 6.0 ms. Now: 8.2-8.45 ms. Passes: pre 2.0 (clouds
+1.11), G-buffer 3.1, RT 2.75-2.95 (probes 1.38-1.44, GI rays 0.72), lighting 0.13, post 0.2. Modules: vegetation 3.2, RT 2.9, atmosphere
+1.4, terrain 1.2. Target ≤ 7.0 ms; the open cuts are trees' geometry and RT per-ray cost and terrain's cloud weather.
 
 **GPU lock.** Every tool takes the machine-wide lock (`tools/native-bench/lock.mjs`) per job. Keep jobs short and never delete a lock
 whose process is alive.

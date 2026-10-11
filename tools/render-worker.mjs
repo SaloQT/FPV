@@ -12,6 +12,7 @@
 import { fork } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, rmSync, statSync, watch } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { offscreenSurface } from './native-bench/runtime.mjs';
@@ -108,7 +109,10 @@ function closures(a, snap) {
 
 /** Records the device's shader modules and pipelines for WGSL hot swaps (render-hotswap.mjs); made with the device. */
 let tracker = null;
-const gpu = await openSharedGpu({ backend: process.env.FPV_GPU_BACKEND ?? 'd3d12', onDevice: (device) => { tracker = trackPipelines(device, globalThis); } });
+/** The Dawn device (opened on demand, given up while another process holds the GPU lock: see yieldGpu). */
+let gpu = null;
+const openGpu = async () => { gpu ??= await openSharedGpu({ backend: process.env.FPV_GPU_BACKEND ?? 'd3d12', onDevice: (device) => { tracker = trackPipelines(device, globalThis); } }); };
+await openGpu();
 /** The current code: the bundle's exports, its source snapshot, serial number, closures, and the files changed since each older serial. */
 let code = null;
 const changesBySerial = new Map(); // serial -> files changed to reach it from serial - 1
@@ -275,6 +279,7 @@ async function shot(req) {
   const stages = {}, t0 = performance.now();
   const views = await viewsOf(req);
   await refreshCode(stages);
+  await openGpu();
   const a = code.a;
   installFetch({ noScans: req.noScans });
   const results = {}, actions = {};
@@ -409,5 +414,34 @@ try {
   });
 } catch (e) { log(`no file watcher (${e?.message ?? e}); edits are picked up at the next shot`); }
 
-process.on('disconnect', () => { dropRenderers(); gpu.close(); bundler.disconnect(); rmSync(BUNDLES, { recursive: true, force: true }); process.exit(0); });
+/**
+ * Gives the GPU up while another process holds the GPU lock: the resident renderers, the pipeline cache and the Dawn device go, so their
+ * memory is free for that render (an extreme-tier run next to an idle server ran out of GPU memory). The next shot opens a new device.
+ */
+const LOCK = resolve(homedir(), '.fpv-native-bench', 'gpu.lock');
+function lockHolder() {
+  try {
+    const pid = JSON.parse(readFileSync(LOCK, 'utf8')).pid;
+    if (pid === process.pid) return null;
+    process.kill(pid, 0); // throws when that process is gone
+    return pid;
+  } catch { return null; }
+}
+let yielding = false;
+setInterval(() => {
+  if (!gpu || yielding) return;
+  const pid = lockHolder();
+  if (pid === null) return;
+  yielding = true;
+  serially(() => {
+    if (!gpu) return;
+    dropRenderers();
+    tracker = null;
+    gpu.close();
+    gpu = null;
+    log(`gave the GPU up: process ${pid} holds the GPU lock`);
+  }).finally(() => { yielding = false; });
+}, 1000).unref();
+
+process.on('disconnect', () => { dropRenderers(); gpu?.close(); bundler.disconnect(); rmSync(BUNDLES, { recursive: true, force: true }); process.exit(0); });
 process.send({ ready: true });

@@ -240,6 +240,9 @@ try {
     renderer.setScene(scene);
     for (const [name, v0] of Object.entries(views)) {
       if (only && !only.has(name)) continue;
+      // Every view starts from the same clock, so its cloud field (wind drift follows the frame time) does not depend on which views ran
+      // before it or on --time: two runs of one view see the same clouds and can be compared (as .bench/lightcast/measure.mjs does).
+      time = 10;
       // --face-sun turns the view toward the sun's azimuth at the same downward pitch (glints and back-lit grass).
       let v = v0;
       if (args['face-sun']) {

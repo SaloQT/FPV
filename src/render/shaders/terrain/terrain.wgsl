@@ -154,6 +154,39 @@ struct RockFace {
   tone : f32,
 };
 
+// Relief of bare rock at 3 to 15 m, the scale between the terrain mesh (which is smooth there) and the detail texture: swells, hollows
+// and spalled scars. A height field in world space, sampled on the three axis planes and blended by the normal (a field in the face's own
+// tangent frame would slide as that frame turns across a dome); its gradient, projected into the surface, bends the normal. Shading only:
+// returns the bent normal and the hollows' sky occlusion. Fades out as a feature nears a pixel.
+const ROCK_RELIEF_FREQ : f32 = 0.09;
+const ROCK_RELIEF_M : f32 = 2.6;
+
+fn rockRelief(p : vec3f, n : vec3f, fp : f32) -> vec4f {
+  var w = pow(abs(n), vec3f(4.0));
+  w = w / (w.x + w.y + w.z);
+  let f = ROCK_RELIEF_FREQ;
+  var g = vec3f(0.0);
+  var h = 0.0;
+  if (w.y > 0.05) {
+    let r = tnFbmD(p.xz * f + vec2f(37.0, 11.0), 2, fp * f);
+    g += w.y * vec3f(r.y, 0.0, r.z);
+    h += w.y * r.x;
+  }
+  if (w.x > 0.05) {
+    let r = tnFbmD(p.zy * f + vec2f(5.0, 71.0), 2, fp * f);
+    g += w.x * vec3f(0.0, r.z, r.y);
+    h += w.x * r.x;
+  }
+  if (w.z > 0.05) {
+    let r = tnFbmD(p.xy * f + vec2f(53.0, 29.0), 2, fp * f);
+    g += w.z * vec3f(r.y, r.z, 0.0);
+    h += w.z * r.x;
+  }
+  let gt = g - n * dot(g, n);
+  let bent = normalize(n - ROCK_RELIEF_M * f * gt);
+  return vec4f(bent, 1.0 - 0.45 * smoothstep(0.0, 0.5, -h));
+}
+
 fn rockHash(bed : i32, salt : i32) -> f32 { return hash21(bitcast<vec2u>(vec2i(bed, salt))); }
 
 fn rockFace(p : vec3f, n : vec3f, fp : f32, steep : f32) -> RockFace {
@@ -191,7 +224,9 @@ fn rockFace(p : vec3f, n : vec3f, fp : f32, steep : f32) -> RockFace {
   let dCrack = min(min(min(fA, 1.0 - fA) * lenA, min(fB, 1.0 - fB) * lenB), min(fb, 1.0 - fb) * spacing);
   let width = 0.025 + 0.06 * h2;
   let lineFade = 1.0 - smoothstep(0.5 * width, 2.0 * width, fp);
-  let crack = (1.0 - smoothstep(0.4 * width, width + 0.5 * fp, dCrack)) * lineFade;
+  // Only some stretches of each joint are open; the rest are closed hairlines the eye does not pick out, so the face is not a ruled grid.
+  let open = smoothstep(0.35, 0.6, tnValue(p.xz * 0.18 + vec2f(f32(bi) * 3.1, p.y * 0.2)));
+  let crack = (1.0 - smoothstep(0.4 * width, width + 0.5 * fp, dCrack)) * lineFade * open;
 
   // Block facet: tilted about the face's horizontal and up-dip axes.
   let t1 = normalize(vec3f(-n.z, 0.0, n.x) + vec3f(1e-4, 0.0, 0.0));
@@ -208,10 +243,10 @@ fn rockFace(p : vec3f, n : vec3f, fp : f32, steep : f32) -> RockFace {
     r.ao *= 1.0 - ledgeVis * 0.25 * (1.0 - smoothstep(0.0, 0.12, fb));
   }
   r.n = bent;
-  r.ao *= 1.0 - 0.65 * crack;
+  r.ao *= 1.0 - 0.5 * crack;
   // Each bed its own shade (strata), each block a little off it.
   let bedTone = mix(1.0, 0.78 + 0.44 * rockHash(bi, 53), 1.0 - smoothstep(0.3, 0.8, fp / spacing));
-  r.tone = bedTone * mix(1.0, (0.9 + 0.2 * h1) * (1.0 - 0.45 * crack), facetFade);
+  r.tone = bedTone * mix(1.0, (0.9 + 0.2 * h1) * (1.0 - 0.3 * crack), facetFade);
   return r;
 }
 
@@ -406,7 +441,9 @@ fn fs(in : VsOut) -> FsOut {
   let mr = tnFbmD(w.xz * MICRO_FREQ, i32(tp.octaves), fpXZ * MICRO_FREQ * MICRO_FADE);
   var n = normalize(ts.normal + dn - MICRO_SLOPE * vec3f(mr.y, 0.0, mr.z));
   var microAo = 1.0 - 0.3 * smoothstep(0.0, 0.7, -mr.x);
-  // Bare bedrock, from slabs to cliffs: runnels on the steep part, joints and blocks throughout, ledges only where it is steep.
+  var shapeN = ts.normal;
+  // Bare bedrock, from slabs to cliffs: runnels on the steep part, swells and hollows, joints and blocks throughout, ledges only where
+  // it is steep.
   if (rockShare > 0.3 && ts.normal.y < 0.95) {
     let rockK = smoothstep(0.3, 0.7, rockShare);
     let steep = 1.0 - smoothstep(0.5, 0.7, ts.normal.y);
@@ -416,6 +453,11 @@ fn fs(in : VsOut) -> FsOut {
       microAo *= mix(1.0, runnel.w, rockK * steep);
     }
     let k = rockK * (1.0 - smoothstep(0.85, 0.95, ts.normal.y));
+    // The relief bends the smooth surface normal (it is shape, not texture), and the fine detail rides on it.
+    let relief = rockRelief(w, ts.normal, ctx.footprint);
+    shapeN = normalize(mix(ts.normal, relief.xyz, k));
+    n = normalize(n + shapeN - ts.normal);
+    microAo *= mix(1.0, relief.w, k);
     let face = rockFace(w, n, ctx.footprint, steep);
     n = normalize(mix(n, face.n, k));
     microAo *= mix(1.0, face.ao, k);
@@ -426,8 +468,9 @@ fn fs(in : VsOut) -> FsOut {
   // that a real face, which the same relief shadows, does not show. Ease them toward the smooth normal there; the blocks and ledges of
   // a cliff keep half their bend, so the face still reads as jointed in its own shade.
   let keyL = select(frame.sunDir.xyz, frame.moonDir.xyz, frame.misc.w == 1u);
+  // Rock keeps its metre-scale relief (shapeN): that is shape, which a grazing light picks out on a real face too.
   let graze = 1.0 - smoothstep(0.05, 0.35, dot(ts.normal, keyL));
-  n = normalize(mix(n, ts.normal, mix(0.8, 0.5, rockShare) * graze));
+  n = normalize(mix(n, shapeN, mix(0.8, 0.5, rockShare) * graze));
 
   // Damp ground darkens and gains some gloss, but only the waterline is a film of water: a valley floor must not read as wet asphalt.
   var wet = 0.6 * smoothstep(0.35, 0.9, maps.w);

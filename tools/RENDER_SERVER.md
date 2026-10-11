@@ -57,20 +57,47 @@ between shots as before.
 
 ## What an edit costs
 
-Measured at 640x360, high, one view, 15 frames: medians of 3 rounds, fresh and server alternating, lock waits excluded
-(`.bench/speedup/bench.mjs`, results in `.bench/speedup/results-full.json`).
+Measured at 640x360, high, one view, 15 frames: medians of 3 rounds, fresh and server alternating, lock waits excluded, on a shared and
+loaded machine (`.bench/speedup/bench.mjs`; results in `.bench/speedup/results-push3.json`, the tree generator row in `results-full.json`).
 
-| Edit | What the server does | Fresh process | Server |
-|---|---|---|---|
-| None (another view, same code) | Reuses the renderer | 15 s | 0.2 s |
-| A shader (`.wgsl`) | Recompiles the pipelines that include the file | 13-25 s | 1.7-3.6 s |
-| TypeScript in one render module (`terrain/clipmap.ts`) | Swaps that module for a new instance | 17.0 s | 1.65 s |
-| Vegetation TS outside the generators (`grass.ts`, `params.ts`) | Swaps vegetation; tree meshes stay cached | 14.7-16.7 s | 1.7-1.9 s |
-| Tree generator (`treeGen.ts`) | Swaps vegetation, rebuilds the trees | 26.8 s | 17.7 s |
-| Renderer core (`lighting.ts`) | New renderer on the same device | 14.7 s | 7.7 s |
-| A comment only | Nothing (the bundle comes out the same) | 15 s | 0.2 s |
+| Edit | What the server does | Fresh process | Server | Cut |
+|---|---|---|---|---|
+| None (another view, same code) | Reuses the renderer | 12 s | 0.2 s | 98% |
+| TS in one render module (`terrain/clipmap.ts`) | Swaps that module; its pipelines come from the cache | 12.5 s | 0.21 s | 98.3% |
+| TS in the lighting stage (`lighting.ts`) | Swaps the lighting stage alone | 11.95 s | 0.20 s | 98.3% |
+| TS in post-processing (`post/composite.ts`) | Swaps the post stage alone | 12.3 s | 0.34 s | 97.2% |
+| Vegetation TS outside the tree generator (`grass.ts`, `params.ts`) | Swaps vegetation; meshes, bark noise and placement kept | 12.4-12.8 s | 0.75-0.78 s | 94% |
+| A shader edit that changes the image (`vegetation/tree.wgsl`) | Recompiles the 3 pipelines that include the file | 12.4 s | 1.24 s | 90% |
+| Renderer core (`renderer.ts`) | New renderer on the same device; pipelines from the cache | 12.6 s | 1.87 s | 85% |
+| Tree generator (`treeGen.ts`) | Swaps vegetation, rebuilds every tree | 26.8 s | 17.7 s | 34% |
+| A comment only | Nothing (the bundle comes out the same) | 12 s | 0.2 s | 98% |
 
-The log line of each shot says what was done: `reuse`, `pipelines N`, `swap terrain`, `rebuild (<file>)`.
+These times assume no other process rendered since the server's last shot. If one did, the server gave its GPU up (see Commands) and
+builds the renderer again first: about 11 s at high.
+
+The server's frames matched the fresh process's: max 4/255, in at most 6 pixels. Two fresh runs of the same source differ by just as much
+(max 4, in 5 pixels).
+
+The log line of each shot says what was done: `reuse`, `pipelines N`, `swap terrain`, `swap lighting stage`, `rebuild (<file>)`.
+
+### What is left before every edit takes 2% of a fresh shot
+
+- **Vegetation edits (0.75 s).** What remains is real work in the new module:
+  - init (0.3 s: reading the 18 cached tree entries, the bark scans, the leaf atlas);
+  - setScene (0.35 s: RT proxies, park plantings, forest floor, far forest).
+  To go lower, the server would have to carry the old module's scene state into the new one, which needs the module's cooperation.
+- **Shader edits (1.2 s).** The time is the driver compiling the edited pipelines (about 1 s for the three tree LODs, side by side). A
+  shader shared by many pipelines recompiles all of them.
+- **Renderer core edits (1.9 s).** Every module is set up again. Their pipelines come from the cache, but their CPU work (vegetation,
+  terrain upload, placement) runs again.
+- **Tree generator edits (18 s).** Building the trees is the cost; only the species whose plan or parameters changed rebuild.
+- **Fixed overhead per shot (0.15-0.2 s).** Rendering the 15 frames and reading them back takes about 0.12 s. The rest:
+  - checking `src/` for edits: 20 ms;
+  - the client process: about 60 ms;
+  - the PNG, now encoded in the process: 30 ms instead of an ffmpeg run.
+
+  Bundling (0.13 s) and reading the import graph (50 ms) start when a file is saved, so a shot that follows a few hundred ms after the save
+  doesn't wait for them.
 
 ## Commands
 
@@ -80,6 +107,11 @@ curl -s http://127.0.0.1:47811/status
 curl -s -X POST http://127.0.0.1:47811/stop
 ```
 
+- **GPU memory.** While another process holds the GPU lock, the worker gives the GPU up, so that render gets all the GPU memory (an
+  extreme-tier run next to an idle server once ran out of it). The worker checks the lock every second; when another live process holds it,
+  the worker drops its renderers, its pipeline cache and its Dawn device. That took it from 472 MB to 67 MB within 1-3 s. The next shot opens a new device and builds the renderer again: about 11 s at
+  high, then fast again. To free everything before a big run by hand, stop the server: `curl -s -X POST http://127.0.0.1:47811/stop`
+  (the next shot-client call starts it again).
 - The worker restarts by itself when it crashes or grows past `--max-rss-gb`.
 - Renderers idle for 10 minutes are dropped, to free GPU memory (`FPV_RENDER_SERVER_IDLE_MIN`).
 - `FPV_RENDER_SERVER_KEEP` sets how many renderers stay resident (default 2).
@@ -93,9 +125,16 @@ curl -s -X POST http://127.0.0.1:47811/stop
   process with Dawn). It writes one file per source module, named by content hash. An unchanged module keeps its file name, so Node hands
   the new build the instance it already has, with its state. Only the edited files and the files that import them are new instances.
 - What the edit reaches comes from the import graph (`src/render/vegetation/sourceClosure.ts`):
-  - the renderer core (renderer.ts and its imports, less the module list): a new renderer;
+  - the renderer core (renderer.ts and its imports, less the module list and the two stages): a new renderer;
+  - only the lighting (`lighting.ts`) or post-processing (`post/`) code: that stage is swapped (`Renderer.replaceStages`);
   - a render module's own files: that module is swapped (`Renderer.replaceModules`);
   - the world generators: a new scene.
+- Pipelines are kept by content (shader code, entry points, constants, state, layout content) in `tools/render-hotswap.mjs`. A module set
+  up again gets the pipelines it had before instead of compiling them: Dawn itself compiles every request again.
+- Work that doesn't depend on the edit is kept by the modules themselves:
+  - the tree meshes (disk cache, keyed on the generator code);
+  - the bark noise (built once);
+  - the placement (kept for the same world, by content).
 - A shader edit goes into the live shaderLib (`setShaderSource`). `tools/render-hotswap.mjs` recreates the shader modules whose code
   included the file and the pipelines built on them, and points `setPipeline` at the new ones. It refuses where a swap could leave
   something stale, and the owning module is swapped instead:
@@ -107,5 +146,5 @@ curl -s -X POST http://127.0.0.1:47811/stop
 ## Checking it
 
 `node .bench/speedup/bench.mjs` edits a scratch copy of `src/`, renders the same view through the server and through a fresh process
-after each edit, and compares the pixels. The last run differed by at most 1/255 per channel, which matches the repeatability of two
-fresh runs.
+after each edit, and compares the pixels (`--kinds` picks the edits; the `-visible` ones change the image, to prove the server picks them
+up). The last run differed by at most 4/255 in at most 6 pixels, which matches two fresh runs of the same source.

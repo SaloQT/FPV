@@ -21,7 +21,8 @@ describe('variant meshes', () => {
       expect(v.lods.length).toBe(LOD_COUNT);
       expect(v.def.group === 'rock').toBe(isRockVariant(i));
     });
-  }, SLOW);
+  // The first test builds every variant's meshes, which takes minutes when the whole suite runs in parallel.
+  }, 180000);
 
   it('cuts the triangle count at every LOD, down to crossed cards for trees and 20 faces for rocks', () => {
     for (const v of assets()) {

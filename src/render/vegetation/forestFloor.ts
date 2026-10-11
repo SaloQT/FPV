@@ -65,7 +65,7 @@ const LEAF_DENSITY_BUSH = 0.4;
 
 function* shadowCrowns(place: VegPlacement): Generator<ShadowCrown> {
   const p = place.plants;
-  const out: ShadowCrown = { x: 0, y: 0, z: 0, cx: 0, cy: 0, cz: 0, rx: 0, ry: 0, rz: 0, density: 0 };
+  const out: ShadowCrown = { x: 0, y: 0, z: 0, cx: 0, cy: 0, cz: 0, rx: 0, ry: 0, rz: 0, density: 0, cone: false };
   for (let i = 0; i < p.count; i++) {
     const def = VARIANT_DEFS[p.variant[i]];
     const plan = variantPlan(p.variant[i]);
@@ -78,6 +78,8 @@ function* shadowCrowns(place: VegPlacement): Generator<ShadowCrown> {
     out.cz = (-sn * plan.crownC[0] + c * plan.crownC[2]) * s;
     out.rx = plan.crownR[0] * s; out.ry = plan.crownR[1] * s; out.rz = plan.crownR[2] * s;
     out.density = def.group === 'bush' ? LEAF_DENSITY_BUSH : /^(spruce|pine|juniper)/.test(def.name) ? LEAF_DENSITY_CONIFER : LEAF_DENSITY_BROADLEAF;
+    // A spruce's branches shorten from its lowest whorl to the top (treePlan.ts sprucePlan): its crown is a cone in the plan's box.
+    out.cone = plan.species === 'spruce';
     yield out;
   }
 }

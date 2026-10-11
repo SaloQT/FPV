@@ -16,14 +16,15 @@
 #endif
 #endif
 
-struct PixelInfo { ok : bool, z : f32, n : vec3f, rough : f32, metal : f32, pos : vec3f }
+struct PixelInfo { ok : bool, z : f32, n : vec3f, rough : f32, metal : f32, pos : vec3f, leaf : bool }
 
-// Surface seen by RT texel `px` this frame (from the aux pass): world position, normal, effective roughness, metalness.
+// Surface seen by RT texel `px` this frame (from the aux pass): world position, normal, effective roughness, metalness, and whether it is a
+// leaf (aux_pass.wgsl puts AUX_FOLIAGE, 2, in the metalness of foliage).
 fn loadPixel(px : vec2i) -> PixelInfo {
   let z = textureLoad(auxDepth, px, 0).x;
-  if (z <= 0.0) { return PixelInfo(false, 0.0, vec3f(0.0, 1.0, 0.0), 1.0, 0.0, vec3f(0.0)); }
+  if (z <= 0.0) { return PixelInfo(false, 0.0, vec3f(0.0, 1.0, 0.0), 1.0, 0.0, vec3f(0.0), false); }
   let a = textureLoad(auxNormal, px, 0);
-  return PixelInfo(true, z, octDecode(a.xy), a.z, a.w, worldFromLinear(pixelUv(rtSrc(px)), z));
+  return PixelInfo(true, z, octDecode(a.xy), a.z, min(a.w, 1.0), worldFromLinear(pixelUv(rtSrc(px)), z), a.w > 1.5);
 }
 
 fn inRt(gid : vec2u) -> bool { return all(gid < rp.dims.xy); }

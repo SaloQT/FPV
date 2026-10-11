@@ -4,6 +4,26 @@ This file is the entry point for any agent session (Claude Code, Codex or anothe
 area you work in. Facts here come from package.json, the tools, README.md, src/render/README.md and the logs of the 2026-10-11 session;
 anything not confirmed is marked **unconfirmed**.
 
+## Resume here
+
+State when the 2026-10-11 session paused:
+
+- **Branch** `feat/ai-pilots-and-track-builder`. The last commit then was `99a97d6`, "Trees, leaves, ground, sky and camera look like
+  real photos, with an EXTREME tier and a fast render server". Run `git log -3` and `git status` to see what has happened since.
+- **Play**: `npm run dev`, then http://localhost:5173 for the game, http://localhost:5173/?mode=builder for the track builder and
+  http://localhost:5173/?mode=proplab for the propeller lab (no GPU needed).
+- **Train**: `npm run train` opens the training dashboard on http://localhost:8787.
+- **Render offline**: `node tools/shot-client.mjs --out .bench/<area>/<name> --quality high --views tools/views/trees.json` starts the render
+  server on first use (see [tools/RENDER_SERVER.md](tools/RENDER_SERVER.md)). Every GPU tool follows the GPU lock rules below.
+- **Trainer bundle is frozen.** `.bench/brain/bundle/` holds a trainer built 2026-10-10 22:30, and a `FROZEN` file keeps it. That build
+  has the tree layout of that evening (beech, snags, birch clumps, multi-box trunk colliders). It does not have the later mature tree
+  sizes, oak changes, park oak colliders, wider spruce or the Scots pine's smaller park footprint, which move trees and colliders
+  (list: [docs/history/2026-10-session.md](docs/history/2026-10-session.md), "Gameplay changes that need retraining"). Delete `FROZEN` so
+  the trainer rebuilds from the source before any retraining.
+- **Retraining the pilots on the new tree layout is paused until Nick asks for it.** The steps are in [TASKS.md](TASKS.md), "AI pilots
+  and training".
+- Open work: [TASKS.md](TASKS.md). What landed and why: [docs/history/2026-10-session.md](docs/history/2026-10-session.md).
+
 ## What the project is
 
 A WebGPU FPV quadcopter simulator in the browser (TypeScript, Vite): a rigid-body quad with a Betaflight-style flight controller,
@@ -55,8 +75,8 @@ for screenshots, videos and benchmarks. The full feature description is [README.
      out under that load. Run park tests on their own: `npx vitest run src/world/park --maxWorkers=3`.
    - Known slow, timeout-prone even alone: `src/world/park/validation.test.ts` ("100 reproducible seeds", 600 s limit; "every attraction
      repeatedly", 120 s limit) and `src/world/park/motionAudit.test.ts` (300 s limit). Re-run a timed-out file alone before you call it a failure.
-   - On 2026-10-11 12:34, `src/render` had 4 failures in `vegetation/meshes`, `plantShadows` and `foliageSpace`, with the tree and leaf work
-     still in progress. Check the current state before you assume your change caused them.
+   - The vegetation tests were green at the end of 2026-10-11 (leaves agent's report). The heavy vegetation files can time out under
+     load: run them with `npx vitest run src/render/vegetation --maxWorkers=1`.
    - Dashboard: `npm run test:dash`.
 3. **WGSL changes need a real GPU render.** Text tests and tsc do not compile WGSL. Render the affected views with a shot tool (below):
    the shot tools fail on any GPU validation or compile error. Open the PNG and look at it.
@@ -83,7 +103,9 @@ for screenshots, videos and benchmarks. The full feature description is [README.
 The client starts `tools/render-server.mjs` on first use (127.0.0.1:47811, log `.bench/render-server/server.log`). The server keeps the
 device, bundle and renderer between shots and redoes only what an edit reaches: about 1 s after a shader edit instead of 15-40 s.
 `--fresh` renders in a new process when the server is suspect; `--raw` also writes `.rgba` for pixel diffs; `--mode terrain` takes
-terrain-shots' world and arguments. Full reference: [tools/RENDER_SERVER.md](tools/RENDER_SERVER.md) (owned by the speedup work).
+terrain-shots' world and arguments. While another process holds the GPU lock, the server gives its GPU memory up within 1-3 s and
+reloads for the next shot. Stop it with `curl -s -X POST http://127.0.0.1:47811/stop`. Full reference:
+[tools/RENDER_SERVER.md](tools/RENDER_SERVER.md) (owned by the speedup work).
 
 ### Shot tools
 
@@ -103,8 +125,9 @@ terrain-shots' world and arguments. Full reference: [tools/RENDER_SERVER.md](too
   shadow over one image and not the other does not read as a difference.
 - **Parallel agents**: set a cache directory per agent, `FPV_TREE_CACHE_DIR=.cache/trees-<agent>`, so builds of different sources do not
   overwrite each other's tree meshes. A cold tree cache costs about 2 min of tree building at the first render.
-- Interleave A and B rounds (`tools/compare/ab-swap.mjs`, `tools/compare/terrain-ab.mjs`, `tools/audit/perf-ab.mjs`) so background GPU
-  load hits both arms alike.
+- Interleave A and B rounds (`tools/compare/ab-swap.mjs` for trees, `tools/compare/terrain-ab.mjs`, `tools/audit/perf-ab.mjs`) so
+  background GPU load hits both arms alike. Build the A side from a copy, never by swapping files in `src/` (house rules); ab-swap
+  builds its A side as a scratch copy under `.bench/ab/` and renders it with `tree-shots.mjs --source`.
 - Native benchmark and shared queue: [tools/native-bench/README.md](tools/native-bench/README.md) (`npm run bench:native`, `bench:compare`).
 
 ### Audit and compare tools
@@ -117,12 +140,19 @@ Each file's header has its usage. Outputs go under `.bench/`.
 - `tools/audit/apshare.py`: share of aerial perspective in the darkest 5 % of the displayed frame (two `measure.mjs --dump` runs, with
   and without the AP in-scatter).
 - `tools/audit/astro.mjs`: sun and moon elevation and the moon's lit fraction at given hours of a date (pick a full-moon night).
+- `tools/audit/lc.py` (local contrast and luma p5/p50 of renders), `leafcolour.py` (hue and saturation of sunlit leaves in a box),
+  `fringe.py` (backlit fringe leaves against the sky).
+- `tools/audit/abpair.py`: a clean A/B of one text edit, from two snapshots of `src/` taken at the same moment, rendered with `measure.mjs`.
+- `tools/audit/cloudbisect.py`: cloud cost bisect at ultra (`modcost.mjs --detail` on copies of `src/` with one `cloud_density.wgsl`
+  change undone each).
+- `tools/audit/probes/*.test.ts.txt`: vegetation probes (cover, wind). Copy one into `src/render/vegetation/`, run it with vitest (it
+  fails on purpose and prints its table), then delete the copy.
 - `tools/audit/skyfrac.py`: sky fraction inside a crown's silhouette, the same way for a photo and a render (crown-density checks).
 - `tools/audit/modcost.mjs`: start-up time and GPU ms of each render module (one module switched off at a time).
 - `tools/audit/perf-ab.mjs` then `perf-summary.py`: HEAD worktree against the working tree in the browser.
 - `tools/audit/fetchrefs.py`, `findref.py`, `contact.py`: find, fetch and review reference photos (licence kept in `sources.json`).
 - `tools/compare/`: `sheet.py` (photo | before | after), `metric-sheet.py` (with metrics), `pair.py`, `row.py`, `refpair.py`,
-  `imgstats.py`, `diffimg.mjs` (raw frame diff), `ab-swap.mjs`, `terrain-ab.mjs`.
+  `imgstats.py`, `diffimg.mjs` (raw frame diff), `ab-swap.mjs` (tree A/B from a scratch copy), `terrain-ab.mjs`.
 - `tools/audit/profsum.mjs`: summary of a `.cpuprofile`.
 
 ## Quality tiers
@@ -149,6 +179,8 @@ and share links treat the two alike. A module raises detail for Extreme only thr
   regenerate the hard track files and re-score (see [TASKS.md](TASKS.md)).
 - `node tools/pilot-lap-video.mjs --brain public/brains/ace.json --out .bench/pilot-video/lap.mp4 [--park destination | --track export.json]`:
   a video of a brain's lap (FPV with OSD, chase and helicopter views, the drone's own sound). Flags in its header.
+- `node tools/brain/smooth-score.mjs <brain.json> <track.json,...> [flights]`: flies a brain in the game's sim and scores how smooth
+  its clean flights are (stick change, body rotation rate, jerk; lower is smoother), so two brains compare on one line.
 - Training runs, logs and the hard-track campaign (`.bench/hard-track/`, `loop.mjs`, `train-set.txt`, `holdout-set.txt`) live in the
   ignored `.bench/` and are not in a fresh clone.
 
@@ -162,6 +194,14 @@ and share links treat the two alike. A module raises detail for Extreme only thr
 - Never stress the GPU or a model server (see the GPU lock).
 - Python that writes text files opens them with `newline=''` so they get LF line endings; read and write with `encoding='utf-8'`.
 - Don't edit files another agent is working on; agree first. Copy rather than move anything in `.bench/` that someone may be using.
+- Never make a before/after by swapping files in the shared working tree: other agents' builds and tests read it while the swap is in.
+  Build the "before" side from a copy, either a git worktree (`git worktree add --detach .bench/<name> HEAD`) or a scratch copy of `src/`
+  under `.bench/`, and point the tool at it: `terrain-shots.mjs --source <copy>`, `measure.mjs --source <copy>`,
+  `modcost.mjs --source <copy>`, `browser-check.mjs --root <copy>`, `shot-client.mjs --source <copy> --port <a free port>` (a second
+  render server for the copy), `tree-shots.mjs --source <copy>`, or `tree-shots.mjs --artifact <dir>` from
+  `npm run bench:artifact -- --source <copy>`.
+- To run a command inside a copy or worktree, use a sub-shell, `( cd .bench/<copy> && <command> )`, or a tool flag such as `--source`
+  or `git -C <copy>`. Never move the session's working folder into a worktree: doing so can switch other agents' working folder too.
 - Outbound requests (User-Agent, URLs, payloads) never carry the developer's name, handle or email.
 
 ## Areas and their design notes
@@ -178,7 +218,7 @@ and share links treat the two alike. A module raises detail for Extreme only thr
 | AI pilots and trainer | `src/ai/`, `tools/brain/` | README "AI pilots" |
 | Native benchmark | `tools/native-bench/` | [tools/native-bench/README.md](tools/native-bench/README.md) |
 
-The four art notes under `docs/` were being written on 2026-10-11; if one is missing, the area's history is in
+Each design note says what the area does, why, and how to verify it. The session's changelog is
 [docs/history/2026-10-session.md](docs/history/2026-10-session.md).
 
 ## Open issues

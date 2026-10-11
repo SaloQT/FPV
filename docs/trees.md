@@ -60,7 +60,9 @@ spires). `placement.ts` applies the layer and `EXTRA_SNAGS` (5 %) only beyond `T
 placed scale, so no spot or collider moves. `placement.test.ts` divides far conifers' scale by `EMERGENT_MAX` for that reason.
 
 Far LOD: broadleaf LOD2 is five clumps of three tetrahedral cards on the crown's main leaf masses (`treeGen.ts crownClumps`, k-means over
-clusters) with twice the bake's crown occlusion, instead of three whole-crown billboards; spruce keeps its cone cards. Beyond the tree draw
+clusters) with twice the bake's crown occlusion, instead of three whole-crown billboards; spruce keeps its cone cards. A clump's cards are
+clamped under the crown's top and inside the reach of the mid LOD's cluster cards round the axis, so the far crown is no wider than the
+near one; `src/world/park/planting.test.ts` checks every LOD against the footprint the park reserves (`plantingBounds`). Beyond the tree draw
 distance, `veg_far.wgsl` cards give each of their 1-3 crowns its own shade; their clump and gap detail runs at extreme only.
 
 Measure with local contrast of the forest area at 9/33/97 px windows (`tools/audit/metrics.py` style), against `tools/audit/refs/aerial`.
@@ -114,6 +116,15 @@ mirror in `src/render/rt/canopy.ts`).
   chords (transmittance above `CANOPY_SHADOW_CHORD` 0.8) skip the BVH shadow ray. The rim made deep leaves glow at low sun, and the shadow
   rays were the cost.
 
+- Sun shadow from crowns comes from the canopy shadow map (`src/render/terrain/canopyShadow.ts`: optical depth, crown bottom and top,
+  and in alpha the widest crown's horizontal radius), marched in `rt/shadow.wgsl canopyTransmittance`. Crowns go in as the plan's
+  ellipsoids, a spruce's as a cone standing on the bottom of its box (`forestFloor.ts shadowCrowns`): as an ellipsoid, the widened spruce
+  crown was full depth almost to its rim, closed the gaps between neighbours, and the floor of a spruce stand lost its sun dapple (terrain's
+  forest view, floor p5 61 → 73; 67 with the cone). A leaf skips the samples within its
+  own crown's radius: the map merges every crown, so a sun-side leaf was shaded as if deep inside its crown (backlit fringe 4.2 stops
+  under the sky against 2.1-2.8 in photos; 3.2 with the skip). Its own crown's shading comes from the leaf shader's sunflecks instead. The
+  shadow pass knows a leaf by `AUX_FOLIAGE` (2.0) in the RT aux normal's w (`aux_pass.wgsl`, `rt_trace_io.wgsl loadPixel` `pix.leaf`).
+
 Verify: `colliders.test.ts` (budget, line coverage, camera round), `src/world/park/parkBudget.test.ts`, `src/render/rt/` tests. Cost on
 track 210-t2 gate 3: `node tools/audit/modcost.mjs --tag <t> --source <dir> --quality ultra --detail 1`.
 
@@ -152,5 +163,9 @@ sources at once, or they evict each other's entries. Shader (`.wgsl`) edits do n
   placement on the first run and saved to `.bench/trees/views.json`); `node tools/shot-client.mjs` for fast repeat shots
   (`tools/RENDER_SERVER.md`). Compare with clouds off; keep the default sky for final look sheets. Render extreme only for final sheets.
 - WGSL is not compiled by the tests: every shader change needs a real render (a broken shader shows as `GPU errors` in tree-shots).
+- Before/after renders never swap files in `src/`: `node tools/compare/ab-swap.mjs --prefix p --a <dir with the old files> -- <tree-shots
+  args>` renders A from a scratch copy under `.bench/ab/` (`tools/tree-shots.mjs --source <copy>`); light and cost splits take
+  `--source <copy>` too (`tools/lightcast/measure.mjs`, `tools/audit/modcost.mjs`).
+- Mid-LOD bark covers almost nothing (about 0.01 % of a frame at 100 m): cost cuts there do not pay; bark cost is the near trunks.
 - The GPU is shared: `tools/native-bench/lock.mjs`. Timings on a shared machine move ±1-3 ms between runs, so interleave A and B rounds and
   compare medians.

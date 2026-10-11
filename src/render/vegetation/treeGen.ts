@@ -244,8 +244,9 @@ function emitFronds(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading, lod: 
       if (lod === 0) {
         const anchor = nearestWood(wood, sub(f.c, mul(up, 0.94)));
         // A juniper page is a grid of two rows, so it bends with the wind as a whole frond would, and it starts a quarter of the frond out
-        // from the centre, where the pages crowd together, on a bare stalk from the wood.
-        const piece = juniper ? shapedCard(add(anchor.point, mul(up, 0.5)), mul(right, 1.2), mul(up, 0.75), 0.97, o, FLAT, 2, sprayTile) : cardPiece(anchor.point, right, up, 0.97, o, sprayTile, pair);
+        // from the centre, where the pages crowd together, on a bare stalk from the wood. JUNIPER_PAGE_LENGTH keeps the page, once moved out
+        // off the centre line, inside the footprint the park reserves for the frond (src/world/park/planting.ts plantingBounds).
+        const piece = juniper ? shapedCard(add(anchor.point, mul(up, 0.5)), mul(right, 1.2), mul(up, JUNIPER_PAGE_LENGTH), 0.97, o, FLAT, 2, sprayTile) : cardPiece(anchor.point, right, up, 0.97, o, sprayTile, pair);
         if (juniper) {
           // A steep frond's page reaches past the centre line with its inner edge, where it would cut through every page on the far side: it
           // moves straight out until that edge stands JUNIPER_AXIS_ROOM off the line.
@@ -481,8 +482,9 @@ const FROND_SHOOTS = 2, INNER_SHOOTS = 1;
 const SPRAY_SHELL = 0.85;
 /** How far (rad) the two halves of a near-LOD spray shoot droop from the branch's level either side. */
 const SPRAY_DROOP = 1.15;
-/** How far (m) a juniper's frond pages keep their inner edges off the shrub's centre line (emitFronds). */
-const JUNIPER_AXIS_ROOM = 0.15;
+/** How far (m) a juniper's frond pages keep their inner edges off the shrub's centre line, and a page's height as a share of its frond's
+ * half-length (emitFronds). */
+const JUNIPER_AXIS_ROOM = 0.15, JUNIPER_PAGE_LENGTH = 0.72;
 /** How far a spruce spray built shoot by shoot (sprayShoots) spreads off its card's plane, per metre of spray length. */
 const SPRAY_SPREAD = 0.15;
 
@@ -828,13 +830,17 @@ function emitBillboards(b: MeshBuilder, rng: Rng, plan: TreePlan, sh: Shading): 
     // A broadleaf crown seen from afar is a heap of leaf masses with dark hollows and sky between them, not one smooth ball: a few clumps
     // of cards at the crown's main leaf masses (three cards each, turned so a clump reads from above as well as from the side), each as
     // large as its mass, so the outline is irregular and the inner and lower clumps come out darker than the outer ones.
+    // How far the mid LOD's cluster cards reach from the axis (a card's corner at 1.05 r * sqrt 2 from its cluster's centre).
+    const reach = Math.max(...plan.clusters.map((c) => Math.hypot(c.c[0], c.c[2]) + c.r * 1.05 * Math.SQRT2));
     for (const clump of crownClumps(plan, LOD2_CLUMPS)) {
       const o = cardOptions(sh, TILE.blob, KIND.blob, rng.next());
       // The far crown keeps twice the bake's share of the crown occlusion: it has no GI proxies and no finer leaves to carry the depth.
       o.aoAt = (p) => 1 - 2 * (1 - sh.aoAt(p));
-      // A card's corner reaches 1.4 times its half size from the clump's centre: kept under the crown's top.
+      // A card's corner reaches 1.4 times its half size from the clump's centre: kept under the crown's top and inside the reach of the
+      // mid LOD's cards round the axis (so the far crown is no wider than the near one, nor than a park planting's footprint).
       const top = plan.crownC[1] + plan.crownR[1], spin = randomDir(rng), turn = rng.range(0, TAU);
-      const h = Math.max(0.2, Math.min(0.8 * clump.r, (top - clump.c[1]) / 1.42));
+      const side = (reach - Math.hypot(clump.c[0], clump.c[2])) / 1.42;
+      const h = Math.max(0.2, Math.min(0.8 * clump.r, (top - clump.c[1]) / 1.42, side));
       for (const corner of TETRAHEDRON.slice(0, 3)) {
         const n = rotAxis(corner, spin, turn), across = norm(cross(n, Math.abs(n[1]) < 0.9 ? UP : [1, 0, 0]));
         card(b, clump.c, mul(across, h), mul(cross(n, across), h), o);

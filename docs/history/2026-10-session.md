@@ -67,7 +67,11 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
 - **Terrain**: new ground materials, rock, grass colour and wind, wet-gravel sparkle fix, extreme grass to 600 m, horizon band fixed at
   the source; jointed bedrock, scree aprons, stream-bed patchwork; forest floor with canopy tint, herbs, humus and trunk-foot AO; track
   corridor wear (`trackWear` in `terrain.wgsl`); lone-tree blob shadows fixed by capping the a-trous shadow blur to the penumbra.
-- **Clouds**: overhead base dark, textured and ragged; horizon step slices and the 18:48 flat peach slab fixed.
+- **Clouds**: overhead base dark, textured and ragged; horizon step slices and the 18:48 flat peach slab fixed. Second pass: the worm
+  shapes and flat cotton bodies became separate convective cells with cauliflower tops and lumpy bases.
+- **Terrain, final pass**: the blue-white speckle along the track corridor at 18:48 is gone (stream-bed grass thinned, the sward floor
+  applies under every blade); a 3D understorey of ferns, herbs and sticks (visual only, no colliders); backlit cliff mottle eased (still
+  to be checked in motion); far grass colour matched to the photos. Design note: [terrain-sky.md](../terrain-sky.md).
 - **Exposure and colour**: lifted blacks at low sun traced to crown-interior GI and leaf ambient (not aerial perspective or the toe);
   auto white balance now balances golden hour (saturation 0.28-0.35 to 0.39-0.42); exposure key 0.3 kept; cloud sky-light gain wired
   into the RT; GI history resets on time-of-day jumps.
@@ -77,11 +81,18 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
 - **Extreme start**: warm start 14.6-18 s (target 15).
 - **Trees, second pass**: aerial forest no longer reads as identical broccoli (per-crown tint jitter, storeys, spires and snags off the
   race line, LOD2 crown clumps); trunks vary in lean and girth, with snags, fallen tops, logs and reshaped surface roots; the baked crown
-  AO that was double counted with RT GI is undone where the RT proxies already shade; RT proxies follow the camera at extreme. Plain-LOD canopy spheres come from the disk cache, so a warm start no longer refits them.
+  AO that was double counted with RT GI is undone where the RT proxies already shade; RT proxies follow the camera at extreme. Plain-LOD canopy spheres come from the disk cache, so a warm start no longer refits them. The canopy march in
+  `shadow.wgsl` skips a leaf's own crown, which lifted the backlit fringe leaves from 4.15 to 3.21 stops under the sky (photos 2.06-2.77).
+  Mature tree sizes, the reshaped open oak and the Scots pine's needle clumps landed (gameplay effects listed below). The ultra lodScale
+  went to 1.0 (-0.35 ms). A forest-floor dapple regression from the widened spruce crowns, drawn as ellipsoids in the canopy shadow map,
+  was fixed by drawing them as cones (`canopyShadow.ts`, `forestFloor.ts`).
 - **Gameplay change, spruce crowns**: the spruces' crowns widened to the photos' width (reach 0.31 open, 0.22 forest, 0.28 old) and their
   settled layout crowns with them (`variants.ts LAYOUT_CROWNS`), so placement keeps wider spruces clear of gates and obstacles. On the
   1337 world (high and extreme) 4 trees moved and the colliders went 1266 to 1265 (4 boxes removed, 3 added); the nearest moved tree is
   11 m from the racing line. The seed 7 test world is unchanged. Retrain with the other layout changes.
+- **Leaves, final pass**: ultra conifers stay clash-free in strong wind; spruce crowns went from 37 % to about 20 % sky at 10 m (ultra)
+  and from 41 % to 14 % (extreme), against 9.4 % in the photo; sunlit and backlit leaf colour measured against the oak photos and left
+  as it is; no blue clipping in noon grass in flight frames; vegetation tests green. Design note: [foliage.md](../foliage.md).
 - **Gates and props**: new materials and weathering; the track ground wear landed in the terrain shader.
 - **Ultra performance against HEAD** measured in the browser; the cuts went to trees (tree draw, RT proxies) and terrain (clouds,
   terrain draw).
@@ -90,6 +101,47 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
   silhouettes against the airglow without one. Flicker is 1.3 codes per frame at extreme. Details in
   [lighting-camera.md](../lighting-camera.md#night-clouds).
 - **Moonlit forest at extreme** left as it is: still readable, and a real low-light camera is that dark.
+- **Golden hour**: white balance keeps a low sun's amber (`whiteBalance.ts` warmRG, warmBG); 18:48 mean saturation 0.46 at ultra over
+  6 views (was 0.41). The extreme re-run is still open.
+- **Shade trim** left at 0.30: after the crown-shadow fix, 0.30 and 0.45 score the same against the photos (mean |p50 error| 28.2 and
+  28.1). Meadow-edge frames render darker than their photos and forest frames brighter, so no metering law wins; the forest gap is the
+  crown-interior floor, not exposure.
+- **Ultra GPU cost** on track 210-t2 rose from 6.0 ms at HEAD to 8.2-8.45 ms with the art work; trees cut the ultra lodScale (-0.35 ms)
+  and the rest is in TASKS.
+
+## Gameplay changes that need retraining
+
+The pilots train on worlds built by the trainer bundle, frozen 2026-10-10 22:30 (`.bench/brain/bundle/FROZEN`) with the tree layout of
+that evening. Each change below moves trees, colliders or obstacles after that point, so the hard tracks are regenerated and the
+brains re-scored and retrained once retraining resumes (paused until Nick asks). Only the worlds named were measured; others were not.
+
+1. **Tree layout, 2026-10-10** (in the frozen bundle): species and forms placed directly (beech stands, snags, birch clumps, 22
+   variants), spacing per variant, up to 4 trunk boxes per stem and 6 per clump. Colliders +17-41 % per track; closest trunk box
+   4.61 m from the racing line (was 5.9 m).
+2. **Mature tree sizes, 2026-10-11**: oak open 15 to 20 m, forest 17 to 25, veteran 12 to 16; birch 13 to 16, clump 12 to 15, weeping
+   14 to 17; beech open 17 to 22, forest 24 to 30. Trunk collider boxes are taller and thicker to match, and crown keep-outs drop a few
+   trees near gates. Crown spread in closed stands is visual only (tint alpha): positions and colliders do not change with it. Park
+   plantings grow with the new sizes. Test scene: 501 trees near the line, 755 trunk boxes, 840 colliders; closest trunk box 4.61 m from
+   the racing line.
+3. **Oak changes, 2026-10-11**: the open oak's trunk is thicker (breast-height radius 0.46 to 0.56 m at scale 1) and forks at 3.4-5 m
+   into 4-6 heavy limbs, a crown about 25 m across on a 16-17 m top; forest and veteran oaks share the skeleton with their own
+   proportions. The trunk-box half-width cap rose from 0.4 to 1.2 m for every species, so any trunk wider than the old cap got a wider
+   box. The three oak entries in `variants.ts` LAYOUT_CROWNS were updated. Seed 1337: 99.9 % of plants keep their spot and species, 11
+   oaks dropped or moved by the wider gate keep-outs, 22 got a new size; test scene colliders 840 to 835, closest trunk box 4.62 m from
+   the racing line.
+4. **Park oak colliders**: park trees build their collider rods from the plan's trunk and main limbs (`src/world/park/planting.ts`, up
+   to 24 rods per tree), so park oak colliders follow the new trunk and limbs. Park collider counts were not measured.
+5. **Wider spruce crowns**: 4 trees moved on the 1337 world (high and extreme), colliders 1266 to 1265; nearest moved tree 11 m from
+   the racing line; the seed 7 test world is unchanged. In parks, the default 1337 parks plant no spruce and are byte-identical; space-
+   and alpine-themed beds plant spruce scaled to fit the bed, and the open spruce's footprint grew 6.15 to 9.92 m (forest 5.87 to
+   8.55), so those spruces come out up to about 35 % shorter with colliders to match (ride-row beds cap an open spruce at 6.8 m, was up
+   to 10.3; planters at 4.4 m, was up to 6.3).
+6. **Scots pine in parks** (in commit 99a97d6): needle clumps replaced three big clusters per limb, so the pine's park footprint
+   (plantingBounds) shrank from 7.15 to 6.21 m radius at scale 1, and park districts pack trees by that footprint. Seed 1337: compact
+   park 1118 to 1113 plantings (parts 87835 to 87736), destination park 2073 to 2041 plantings (parts 164494 to 164239). The park race
+   track keeps the same path.
+7. **Planned, approved by Nick 2026-10-11: rock outcrops as rock-block props with colliders**, chosen over displacing the terrain
+   geometry. New solid obstacles on the ground, so the training worlds and the brains' sensing change when it lands.
 
 ## Tooling and iteration speed
 
@@ -99,5 +151,15 @@ A terse changelog of the work done between about 2026-10-07 and 2026-10-11, rebu
   out-of-process bundler and WGSL hot-swap of the affected pipelines. A shot after a shader edit takes about 1 s instead of 15-40 s
   (`tools/RENDER_SERVER.md`). Dawn already compiles with DXC by default, so `use_dxc` changes nothing; a pipeline cache that lasts
   across processes would need a rebuilt dawn.node, so it is out of scope.
+- Final speed-up numbers: a per-species tree cache key took an extreme render after a `grass.ts` edit from 140.9 to 15.8 s, and after
+  one species' parameter from 141.0 to 20.0 s. Async pipeline creation for terrain and vegetation took the ultra renderer start from
+  10.45 to 7.88 s with matching pixels. In the render server, a TypeScript edit in a render module, the lighting stage or post shoots in
+  0.2-0.34 s (about 12 s fresh); vegetation edits take 0.75 s, shader edits 1.2 s, renderer core edits 1.9 s and tree generator edits
+  18 s. The full table is in `tools/RENDER_SERVER.md`, "What an edit costs".
+- The render server gives the GPU up while another process holds the GPU lock: within 1-3 s its worker drops the renderers, pipeline
+  cache and Dawn device (472 MB to 67 MB of GPU memory), and the next shot matches a fresh render exactly.
 - The extreme leaf atlas cache went from 224 MB to 25.5 MB, stored deflated (covered by `treeCache.test.ts`).
+- `tools/compare/ab-swap.mjs` used to swap files in the shared `src/` for its A side; it now builds the A side as a scratch copy under
+  `.bench/ab/` and renders it with the new `tree-shots.mjs --source`, so the working tree is never written to. AGENTS.md now forbids
+  swap-based A/Bs and changing the session's folder into a worktree.
 - Bench tools promoted from `.bench/` into `tools/audit/`, `tools/compare/`, `tools/lightcast/` and `tools/views/` so a fresh clone has them.

@@ -49,10 +49,13 @@ export function installFetch({ noScans = false } = {}) {
  * Opens Dawn and makes navigator.gpu hand every Renderer the same device, so pipelines compiled for one renderer are found in Dawn's
  * cache by the next. The renderer's device.destroy() is a no-op on it; close() destroys it.
  */
+const INSTANCES = [];
 export async function openSharedGpu({ backend = 'd3d12', onDevice = null } = {}) {
   const { openRuntime } = await import('./native-bench/runtime.mjs');
   const runtime = await openRuntime({ backend });
   const gpu = runtime.gpu;
+  // A Dawn instance must outlive every object made from it (tools/brain/bundle.mjs): kept for the process's life, also after close().
+  INSTANCES.push(gpu);
   const real = await gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!real) throw new Error(`no ${backend} adapter`);
   let device = null, descriptor = null, destroyDevice = null;

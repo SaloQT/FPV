@@ -31,14 +31,24 @@ fn canopyClump(p : vec3f) -> f32 {
   return 3.0 * smoothstep(0.46, 0.72, n);
 }
 
-// Fraction of the key light the crowns let through to p along d.
-fn canopyTransmittance(p : vec3f, d : vec3f) -> f32 {
+// Fraction of the key light the crowns let through to p along d. A leaf (`leaf`) is not shaded through its own crown here: the map merges
+// every crown into one column, so a leaf on the sun side of its crown would count the whole crown's depth as if it lay deep inside, and
+// backlit outer leaves came out 1.5-2 stops darker than in photos. Its own crown's shading comes from the shoot's sunfleck instead (tree.wgsl,
+// the exact depth through the crown toward the sun). The own crown is taken as the samples within its horizontal radius (the map's alpha:
+// the widest crown over the leaf) of the leaf across the ground; crowns beyond, and everything over trunks and ground, still shade as before.
+fn canopyTransmittance(p : vec3f, d : vec3f, leaf : bool) -> f32 {
   let dy = max(d.y, CANOPY_MIN_SUN_Y);
   let slant = CANOPY_STEP_M / dy;
+  var own = 0.0;
+  if (leaf) {
+    let c0 = canopyAt(p.xz);
+    if (c0.x > 0.0 && p.y > c0.y - 1.0 && p.y < c0.z + 1.0) { own = c0.w; }
+  }
   var tau = 0.0;
   for (var k = 0; k < CANOPY_STEPS; k++) {
     let h = CANOPY_STEP_M * (f32(k) + 0.5);
     let q = p + d * (h / dy);
+    if (length(q.xz - p.xz) < own) { continue; }
     let c = canopyAt(q.xz);
     if (c.x <= 0.0 || q.y < c.y || q.y > c.z) { continue; }
     tau += c.x / max(c.z - c.y, 1.0) * slant * canopyClump(q);
@@ -65,7 +75,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let tanA = tan(min(key.w, 0.2)) * rp.f.x;
     let dir = normalize(key.xyz + tanA * (r * cos(phi) * basis[0] + r * sin(phi) * basis[1]));
     vis = keyVisibility(o, dir, SHADOW_RANGE, rp.cfg.y) * cloudTransmittance(pix.pos);
-    if (vis > 0.0) { vis *= canopyTransmittance(o, dir); }
+    if (vis > 0.0) { vis *= canopyTransmittance(o, dir, pix.leaf); }
   }
   textureStore(out0, px, vec4f(vis, 0.0, 0.0, 0.0));
 }
