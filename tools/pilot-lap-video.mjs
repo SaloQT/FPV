@@ -13,7 +13,7 @@
  *
  *   node tools/pilot-lap-video.mjs --brain public/brains/ace.json --out .bench/pilot-video/lap.mp4 [--seed 1337] [--park destination | --track export.json]
  *     [--width 1920] [--fps 60] [--quality ultra] [--hour 15] [--tries 12] [--laps 1] [--pip video.mp4] [--pip-volume 0.8] [--crf 16]
- *     [--views fpv,chase,heli] [--reuse fpv,chase] [--no-lock] [--lens 0.35] [--video-noise 0.15] [--flight-only]
+ *     [--views fpv,chase,heli] [--reuse fpv,chase] [--pick fastest|smooth] [--no-lock] [--lens 0.35] [--video-noise 0.15] [--flight-only]
  */
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -82,16 +82,30 @@ function fly(sample) {
   }
   return { sample, crashed: true, at: racer.time, why: 'out of time' };
 }
+/** How twitchy a clean flight looks: the mean change of the body rotation rate from one video frame to the next over the laps, deg/s. */
+function twitch(r) {
+  const end = lineFrame(r.frames, lapCount), DEG = 180 / Math.PI;
+  let sum = 0, n = 0;
+  for (let f = r.goFrame + 1; f <= end; f++) {
+    const w = r.frames[f].state.angVel, p = r.frames[f - 1].state.angVel;
+    sum += Math.hypot(w[0] - p[0], w[1] - p[1], w[2] - p[2]) * DEG; n++;
+  }
+  return sum / Math.max(1, n);
+}
+// --pick fastest (default) keeps the fastest clean flight; --pick smooth keeps the calmest one, which films better.
+const pick = args.pick ?? 'fastest';
+if (!['fastest', 'smooth'].includes(pick)) throw new Error('--pick is fastest or smooth');
 let best = null;
 for (let k = 0; k < tries; k++) {
   const sample = k === 0 ? null : k, began = performance.now(), r = fly(sample);
-  console.log(`flight ${k + 1}/${tries} (${sample === null ? 'mean action' : `sample ${sample}`}): ${r.crashed ? `${r.why} at ${r.at.toFixed(1)} s` : `clean, laps ${r.laps.map((t, i) => (t - (r.laps[i - 1] ?? 0)).toFixed(2)).join(', ')} s`} (${((performance.now() - began) / 1000).toFixed(0)} s wall)`);
-  if (!r.crashed && (!best || r.lap < best.lap)) best = r;
+  if (!r.crashed) r.twitch = twitch(r);
+  console.log(`flight ${k + 1}/${tries} (${sample === null ? 'mean action' : `sample ${sample}`}): ${r.crashed ? `${r.why} at ${r.at.toFixed(1)} s` : `clean, laps ${r.laps.map((t, i) => (t - (r.laps[i - 1] ?? 0)).toFixed(2)).join(', ')} s, twitch ${r.twitch.toFixed(1)} deg/s`} (${((performance.now() - began) / 1000).toFixed(0)} s wall)`);
+  if (!r.crashed && (!best || (pick === 'smooth' ? r.twitch < best.twitch : r.lap < best.lap))) best = r;
 }
 if (!best) throw new Error(`No clean lap in ${tries} flights`);
 const frames = best.frames, total = frames.length;
 const lapTimes = best.laps.map((t, i) => t - (best.laps[i - 1] ?? 0));
-console.log(`Using ${best.sample === null ? 'the mean action' : `sample ${best.sample}`}: ${lapCount} laps in ${best.lap.toFixed(2)} s, ${total} frames (${(total / fps).toFixed(1)} s)`);
+console.log(`Using ${best.sample === null ? 'the mean action' : `sample ${best.sample}`} (${pick}): ${lapCount} laps in ${best.lap.toFixed(2)} s, twitch ${best.twitch.toFixed(1)} deg/s, ${total} frames (${(total / fps).toFixed(1)} s)`);
 const recipe = file ? null : { ...a.defaultParkRecipe(seed, size), route: 'race' };
 // What the browser stage needs: each frame's state, OSD snapshot and height above the ground; the FPV pass adds its camera.
 const telemetry = { fps, seed, size, recipe, parkPrerollS: PARK_PREROLL_S, frames: frames.map(f => ({ ...f, agl: f.state.pos[1] - world.ground.groundHeightAt(f.state.pos[0], f.state.pos[2]) })) };

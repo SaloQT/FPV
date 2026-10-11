@@ -558,6 +558,19 @@
     "evalLap": 0,
     "meanReturn": 798.8021174304419
    }
+  },
+  {
+   "file": "smooth-a.json",
+   "name": "smooth-a",
+   "stats": {
+    "steps": 47411888128,
+    "iterations": 90431,
+    "seconds": 44040.2130625,
+    "gatesPerMinute": 40.740966796875,
+    "bestLap": 9.460000038146973,
+    "evalLap": 0,
+    "meanReturn": 2862.785714285714
+   }
   }
  ]
 }

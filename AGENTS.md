@@ -8,20 +8,22 @@ anything not confirmed is marked **unconfirmed**.
 
 State when the 2026-10-11 session paused:
 
-- **Branch** `feat/ai-pilots-and-track-builder`. The last commit then was `99a97d6`, "Trees, leaves, ground, sky and camera look like
-  real photos, with an EXTREME tier and a fast render server". Run `git log -3` and `git status` to see what has happened since.
+- **Branch** `feat/ai-pilots-and-track-builder`. Run `git log -5` and `git status` to see the latest commits.
 - **Play**: `npm run dev`, then http://localhost:5173 for the game, http://localhost:5173/?mode=builder for the track builder and
   http://localhost:5173/?mode=proplab for the propeller lab (no GPU needed).
 - **Train**: `npm run train` opens the training dashboard on http://localhost:8787.
 - **Render offline**: `node tools/shot-client.mjs --out .bench/<area>/<name> --quality high --views tools/views/trees.json` starts the render
   server on first use (see [tools/RENDER_SERVER.md](tools/RENDER_SERVER.md)). Every GPU tool follows the GPU lock rules below.
-- **Trainer bundle is frozen.** `.bench/brain/bundle/` holds a trainer built 2026-10-10 22:30, and a `FROZEN` file keeps it. That build
-  has the tree layout of that evening (beech, snags, birch clumps, multi-box trunk colliders). It does not have the later mature tree
-  sizes, oak changes, park oak colliders, wider spruce or the Scots pine's smaller park footprint, which move trees and colliders
-  (list: [docs/history/2026-10-session.md](docs/history/2026-10-session.md), "Gameplay changes that need retraining"). Delete `FROZEN` so
-  the trainer rebuilds from the source before any retraining.
-- **Retraining the pilots on the new tree layout is paused until Nick asks for it.** The steps are in [TASKS.md](TASKS.md), "AI pilots
-  and training".
+- **Trainer bundle is frozen.** `.bench/brain/bundle/` holds a trainer built 2026-10-11 21:42 from commit `99a97d6`, and a `FROZEN` file
+  keeps it. It has the mature trees, the oak rework and the wider spruce. It does not have the Scots pine's smaller park footprint
+  (commit `374dab8`), which only moves park plantings, not the hard tracks. The previous build is kept in `.bench/brain/bundle-2026-10-10/`.
+  Delete `FROZEN` to rebuild from the current source. Both live under the ignored `.bench/`, so a fresh clone builds its own.
+- **Pilots on the new tree layout.** On 2026-10-11 `hard31s-c` still flew 24 of the 49 hard tracks reliably (at least 3 in 4 clean,
+  `node .bench/hard-track/score.mjs`). A gentle smoothing post-train from it, `smooth-a` (template `smooth-lines`, crash penalty 30,
+  lr 5e-5, 30 min, on those 24 tracks), flies about 6 % calmer (body rate 316 against 335 deg/s) and stays reliable on 19 of them,
+  including 201-t6. Stronger smoothing (`cinematic`) made it calmer still but crashed far more, so it wasn't kept. Measure smoothness
+  with `node tools/brain/smooth-score.mjs <brain> <tracks> [flights]`, and film the calmest clean flight with
+  `tools/pilot-lap-video.mjs --pick smooth` (the brain's own mean-action flight is usually about 20 % calmer than sampled ones).
 - Open work: [TASKS.md](TASKS.md). What landed and why: [docs/history/2026-10-session.md](docs/history/2026-10-session.md).
 
 ## What the project is
