@@ -15,6 +15,11 @@ export const HOVER_THROTTLE = 0.32;
 export const RESPAWN_OFFER_S = 1.2;
 /** A crashed quad lying still on the ground is disarmed after this long. */
 export const AUTO_DISARM_S = 2;
+/**
+ * A brain flies on for this long after its finish, along the course and clear of whatever lies past the line, and its quad is
+ * then parked on its pad, disarmed. Levelled out at race speed instead, it flew straight into the trees.
+ */
+export const BRAIN_COOLDOWN_S = 4;
 
 /** The slice of the app settings the session reads; the UI's settings store satisfies it structurally. */
 export interface SessionSettings {

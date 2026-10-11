@@ -11,6 +11,8 @@ export class ModuleHost {
   private readonly modules: RenderModule[] = [];
   private readonly lists: Record<Hook, RenderModule[]> = { update: [], encodePre: [], encodeGBuffer: [], encodeRT: [], encodeSky: [], encodeForward: [] };
   private readonly reported = new Set<string>();
+  /** Wall time of each module's init and setScene (ms, newest last), so a tool can show which stage of a start-up is slow. */
+  readonly timings: { stage: string; ms: number }[] = [];
 
   constructor(private readonly candidates: readonly RenderModule[], private readonly report: (message: string) => void) {}
 
@@ -29,8 +31,10 @@ export class ModuleHost {
 
   async init(rc: RenderContext): Promise<void> {
     for (const m of this.candidates) {
+      const t0 = performance.now();
       try {
         await m.init(rc);
+        this.timings.push({ stage: `${m.name} init`, ms: performance.now() - t0 });
       } catch (e) {
         this.fail(m, 'init', e);
         continue;
@@ -38,6 +42,12 @@ export class ModuleHost {
       this.modules.push(m);
       for (const h of HOOKS) if (typeof m[h] === 'function') this.lists[h].push(m);
     }
+    const t0 = performance.now();
+    await Promise.all(this.modules.map(async (m) => {
+      if (!m.ready) return;
+      try { await m.ready(); } catch (e) { this.fail(m, 'ready', e); }
+    }));
+    this.timings.push({ stage: 'background compiles wait', ms: performance.now() - t0 });
   }
 
   resize(rc: RenderContext): void {
@@ -50,7 +60,44 @@ export class ModuleHost {
   setScene(rc: RenderContext, scene: SceneData): void {
     for (const m of this.modules) {
       if (!m.setScene) continue;
+      const t0 = performance.now();
       try { m.setScene(rc, scene); } catch (e) { this.fail(m, 'setScene', e); }
+      this.timings.push({ stage: `${m.name} setScene`, ms: performance.now() - t0 });
+    }
+  }
+
+  /**
+   * Swaps modules for new instances with the same names (the render server, after an edit to their code): each old one is destroyed and
+   * the new one initialised, given `scene` and put in the old one's place in the hook order. A failing init throws, for the caller to
+   * build the renderer afresh.
+   */
+  async replace(rc: RenderContext, fresh: readonly RenderModule[], scene: SceneData | null): Promise<void> {
+    for (const m of fresh) {
+      const i = this.modules.findIndex((o) => o.name === m.name);
+      if (i < 0) throw new Error(`no render module "${m.name}" to replace`);
+      const old = this.modules[i];
+      try { old.destroy?.(); } catch (e) { this.fail(old, 'destroy', e); }
+      const t0 = performance.now();
+      await m.init(rc);
+      await m.ready?.();
+      this.timings.push({ stage: `${m.name} init`, ms: performance.now() - t0 });
+      this.modules[i] = m;
+      if (scene && m.setScene) {
+        const t1 = performance.now();
+        m.setScene(rc, scene);
+        this.timings.push({ stage: `${m.name} setScene`, ms: performance.now() - t1 });
+      }
+    }
+    for (const h of HOOKS) {
+      this.lists[h].length = 0;
+      for (const m of this.modules) if (typeof m[h] === 'function') this.lists[h].push(m);
+    }
+  }
+
+  resetLighting(): void {
+    for (const m of this.modules) {
+      if (!m.resetLighting) continue;
+      try { m.resetLighting(); } catch (e) { this.fail(m, 'resetLighting', e); }
     }
   }
 

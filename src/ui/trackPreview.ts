@@ -82,6 +82,8 @@ export class TrackPreview {
   }
 
   private paintSummary(track: TrackData | null): void {
+    if (track?.parkMap) { const p = track.parkMap; setText(this.summaryCourse, `${p.rides.length} attractions · ${p.rides.filter(r => r.coaster).length} coasters`);
+      setText(this.summaryTime, ` · ${p.guests.toLocaleString()} guests · ${p.layout}`); this.legend.replaceChildren(); return; }
     if (track === null) {
       setText(this.summaryCourse, 'No track yet');
       setText(this.summaryTime, '');
@@ -124,6 +126,7 @@ export class TrackPreview {
     g.clearRect(0, 0, w, h);
     const track = this.state.track;
     if (track === null) return;
+    if (track.parkMap) { this.drawPark(g, track, w, h, dpr); return; }
     const key = `${w}x${h}`;
     if (this.model === null || this.modelKey !== key || this.modelTrack !== track) {
       this.model = buildPreview(track, { width: w, height: h, padding: Math.round(26 * dpr) });
@@ -139,6 +142,17 @@ export class TrackPreview {
     this.drawGates(g, m, track, dpr);
     this.drawStart(g, m, dpr);
     this.drawScale(g, m, dpr, w, h);
+  }
+
+  private drawPark(g: CanvasRenderingContext2D, track: TrackData, w: number, h: number, dpr: number): void {
+    const map = track.parkMap!, scale = Math.min(w, h) / (2 * map.radius + 40);
+    const x = (p: readonly number[]) => w / 2 + p[0] * scale, y = (p: readonly number[]) => h / 2 + p[2] * scale;
+    const line = (points: readonly (readonly number[])[], color: string, width: number) => { g.beginPath(); points.forEach((p, i) => i ? g.lineTo(x(p), y(p)) : g.moveTo(x(p), y(p))); g.strokeStyle = color; g.lineWidth = width; g.stroke(); };
+    for (const path of map.paths) line(path, '#445361', dpr * 2);
+    for (const rail of map.rails) line(rail, '#ffb14d', dpr * 1.1);
+    for (const r of map.rides) { g.fillStyle = r.coaster ? '#ffb14d' : '#54cdd4'; g.beginPath(); g.arc(x(r.pos), y(r.pos), 3 * dpr, 0, Math.PI * 2); g.fill(); }
+    if (track.path.length) line(track.path, '#c58bff', dpr * 1.5);
+    g.fillStyle = '#62f58a'; g.beginPath(); g.arc(x(track.start.pos), y(track.start.pos), 4 * dpr, 0, Math.PI * 2); g.fill();
   }
 
   private drawGrid(g: CanvasRenderingContext2D, m: PreviewModel, dpr: number, w: number, h: number): void {

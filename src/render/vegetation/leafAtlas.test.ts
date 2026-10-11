@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ATLAS_H, ATLAS_MIPS, ATLAS_W, COLOUR_RANGE, TILE, TILES_X, TILES_Y, TILE_COUNT, TILE_SIZE, buildLeafAtlas, buildLeafAtlasSliced, leafColour, tileCoverage, tileRect, type LeafAtlas } from './leafAtlas';
+import { ATLAS_H, ATLAS_MIPS, ATLAS_W, COLOUR_RANGE, EXTREME_TILE_SIZE, TILE, atlasMips, TILES_X, TILES_Y, TILE_COUNT, TILE_SIZE, buildLeafAtlas, buildLeafAtlasSliced, leafColour, tileCoverage, tileRect, type LeafAtlas } from './leafAtlas';
 
 const CUT = 128;
 const TONE = [0.06, 0.125, 0.03];
@@ -20,10 +20,13 @@ describe('leaf atlas', () => {
     expect(ATLAS_H).toBe(TILE_SIZE * TILES_Y);
   }, SLOW);
 
-  it('tiles the atlas 3 x 2 with rectangles that cover it exactly', () => {
+  it('tiles the atlas 4 x 5 with rectangles that cover it exactly', () => {
     expect(TILE_COUNT).toBe(TILES_X * TILES_Y);
-    expect(tileRect(TILE.sprig)).toEqual([0, 0, 1 / 3, 0.5]);
-    expect(tileRect(TILE.shrub)).toEqual([2 / 3, 0.5, 1, 1]);
+    expect(tileRect(TILE.sprig)).toEqual([0, 0, 1 / 4, 1 / 5]);
+    expect(tileRect(TILE.shrub)).toEqual([1 / 4, 1 / 5, 2 / 4, 2 / 5]);
+    expect(tileRect(TILE.hawthorn)).toEqual([3 / 4, 2 / 5, 1, 3 / 5]);
+    expect(tileRect(TILE.needles2)).toEqual([3 / 4, 3 / 5, 1, 4 / 5]);
+    expect(tileRect(TILE.hazelSheet)).toEqual([3 / 4, 4 / 5, 1, 1]);
     let area = 0;
     for (let t = 0; t < TILE_COUNT; t++) {
       const [u0, v0, u1, v1] = tileRect(t);
@@ -55,7 +58,7 @@ describe('leaf atlas', () => {
   it('paints green leaf colours with real-foliage ratios: green above red above blue on average, some yellow and some dead leaves', () => {
     const data = atlas().colour[0];
     let r = 0, g = 0, b = 0, n = 0, yellow = 0, dead = 0;
-    for (const tile of [TILE.sprig, TILE.birch, TILE.blob]) {
+    for (const tile of [TILE.sprig, TILE.oak2, TILE.birch, TILE.birch2, TILE.beech, TILE.beech2, TILE.blob]) {
       const ox = (tile % TILES_X) * TILE_SIZE, oy = Math.floor(tile / TILES_X) * TILE_SIZE;
       for (let y = 0; y < TILE_SIZE; y++) {
         for (let x = 0; x < TILE_SIZE; x++) {
@@ -147,4 +150,12 @@ describe('leaf atlas', () => {
     sliced.colour.forEach((level, l) => expect(same(level, atlas().colour[l])).toBe(true));
     sliced.data.forEach((level, l) => expect(same(level, atlas().data[l])).toBe(true));
   }, SLOW);
+  it('builds the extreme tier atlas at twice the resolution with the same shapes and coverage', () => {
+    const big = buildLeafAtlas(EXTREME_TILE_SIZE), w = EXTREME_TILE_SIZE * TILES_X, h = EXTREME_TILE_SIZE * TILES_Y;
+    expect(big.tileSize).toBe(EXTREME_TILE_SIZE);
+    expect(big.colour.length).toBe(atlasMips(EXTREME_TILE_SIZE));
+    expect(atlasMips(TILE_SIZE)).toBe(ATLAS_MIPS);
+    big.colour.forEach((level, l) => expect(level.length).toBe((w >> l) * (h >> l) * 4));
+    for (let tile = 0; tile < TILE_COUNT; tile++) expect(Math.abs(tileCoverage(big.colour[0], w, h, tile) - coverage(0, tile))).toBeLessThan(0.04);
+  }, SLOW * 4);
 });

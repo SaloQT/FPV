@@ -10,6 +10,13 @@ const RAYLEIGH_H : f32 = 8.0;
 const MIE_SCATTER : f32 = 0.092;
 const MIE_EXTINCTION : f32 = 0.1;
 const MIE_H : f32 = 1.4;
+// Boundary-layer haze: the aerosol of the mixed layer over the land, its density falling from the land datum (the observer's altitude, where
+// the terrain stands) with a short scale height. The MIE layer above runs from sea level, so at an upland site it left the valley air nearly
+// clean (about 70 km visibility) and mountains 5-10 km away as crisp as the foreground; with this layer the air near the ground sees about
+// 34 km, as on a clear summer day, while a vertical path gains only about 0.03 optical depth and the zenith keeps its blue. Mirrors physics.ts.
+const HAZE_SCATTER : f32 = 0.055;
+const HAZE_EXTINCTION : f32 = 0.06;
+const HAZE_H : f32 = 0.5;
 const MIE_G : f32 = 0.6;
 const MIE_NARROW_G : f32 = 0.96;
 const MIE_NARROW_WEIGHT : f32 = 0.12;
@@ -32,15 +39,19 @@ struct Medium {
   extinction : vec3f,
 };
 
+// Height of the land datum above sea level (km): the camera's height above sea level less its height in the world.
+fn hazeDatumKm() -> f32 { return max(frame.sky.z - frame.camPos.y * 0.001, 0.0); }
+
 fn mediumAt(heightKm : f32) -> Medium {
   let h = max(heightKm, 0.0);
   let dR = exp(-h / RAYLEIGH_H);
   let dM = exp(-h / MIE_H);
+  let dH = exp(-max(h - hazeDatumKm(), 0.0) / HAZE_H);
   let dO = max(0.0, 1.0 - abs(h - OZONE_CENTER) / OZONE_HALF);
   var m : Medium;
   m.scatterR = RAYLEIGH_SCATTER * dR;
-  m.scatterM = MIE_SCATTER * dM;
-  m.extinction = m.scatterR + vec3f(MIE_EXTINCTION * dM) + OZONE_ABSORB * dO;
+  m.scatterM = MIE_SCATTER * dM + HAZE_SCATTER * dH;
+  m.extinction = m.scatterR + vec3f(MIE_EXTINCTION * dM + HAZE_EXTINCTION * dH) + OZONE_ABSORB * dO;
   return m;
 }
 
@@ -113,6 +124,17 @@ fn scatterStep(p : vec3f, dir : vec3f, dt : f32, lightDir : vec3f, lightE : vec3
   res.dL = (s - s * stepT) / max(med.extinction, vec3f(1e-9));
   res.trans = stepT;
   return res;
+}
+
+// Albedo of the land seen past the terrain: the mean of meadow, forest and bare ground from the air (0.06-0.12, green-tinted).
+const LANDSCAPE_ALBEDO : vec3f = vec3f(0.075, 0.095, 0.055);
+
+// Radius (km) of the land surface round the camera. The planet's sphere is sea level, but the terrain stands at the observer's altitude
+// (its datum) plus its own heights: rays that pass under the land's horizon but over the sea-level one used to graze 1-2 km of dense air
+// and showed as a bright band (beige by day, orange at dawn, dark at night) between the last terrain ring and the sky. They hit the land.
+fn landRadius(r : f32) -> f32 {
+  let farH = frame.terrain.z + 0.35 * (frame.terrain.w - frame.terrain.z);
+  return clamp(r - (frame.camPos.y - farH) * 0.001, frame.sky.x, r - 1e-4);
 }
 
 // Radiance leaving the ground point pg toward the camera when lit by lightE (Lambert, albedo GROUND_ALBEDO), before path attenuation.

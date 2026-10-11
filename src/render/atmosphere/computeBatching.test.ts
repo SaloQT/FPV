@@ -28,7 +28,7 @@ function fixture() {
   const rc = {
     device, frame: { layout: {}, group: {} }, module: (path: string) => path,
     world: { tex: { transmittance: texture(), multiScatter: texture(), skyView: texture(), aerialPerspective: texture() }, samplers: { linearClamp: {} } },
-    gbuf: { width: 65, height: 37 }, quality: { tier: 'high' },
+    gbuf: { width: 65, height: 37 }, quality: { tier: 'high' }, settings: { observer: { latitudeDeg: 46, longitudeDeg: 8, altitudeM: 1200 } },
   } as unknown as RenderContext;
   type Dispatch = { label: string; groups: unknown[]; size: number[] };
   const passes: Dispatch[][] = [];
@@ -62,6 +62,14 @@ describe('compute pass batching retains dispatch contracts', () => {
     expect(passes[2].map(d => d.size)).toEqual([[Math.ceil(SKYVIEW_SIZE.width / 8), Math.ceil(SKYVIEW_SIZE.height / 8)], [Math.ceil(SKYVIEW_SIZE.width / 8), Math.ceil(SKYVIEW_SIZE.height / 8)], [AP_SLICES / 8, AP_SLICES / 8]]);
     for (const d of passes.flat()) { expect(d.groups[0]).toBe(rc.frame.group); expect(d.groups[1]).toBeDefined(); }
     expect(new Set(passes[2].map(d => d.groups[1])).size).toBe(3);
+  });
+
+  it('bakes again when the observer altitude changes (the haze layer sits on the land)', () => {
+    const { rc, passes, encoder } = fixture(); const luts = new AtmosphereLuts(rc);
+    luts.bake(encoder);
+    (rc.settings.observer as { altitudeM: number }).altitudeM = 300;
+    luts.bake(encoder); luts.bake(encoder);
+    expect(labels(passes)).toEqual([['atmosphere transmittance', 'atmosphere multi-scatter'], ['atmosphere transmittance', 'atmosphere multi-scatter']]);
   });
 
   it('rebinds replaced LUTs without changing the dispatch order or count', () => {

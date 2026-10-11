@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pilot lap audio and OSD</title>
+<style>html, body { margin: 0; background: transparent; } #osd { display: block; }</style>
+<div id="box"><canvas id="osd"></canvas></div>
+<script type="module">
+  // Renders the sound of a recorded lap (tools/pilot-lap-video.mjs telemetry) offline: the game's AudioEngine on the quad, onboard as a
+  // camera microphone close to the drone hears it, with the race beeps, and the park's ride sounds heard from the recorded camera.
+  // Also draws the game's FPV OSD for each frame, from the session snapshot recorded with the flight, as transparent PNGs.
+  import { AudioEngine } from '/src/audio/engine.ts';
+  import { ParkAudio } from '/src/audio/park.ts';
+  import { buildPark } from '/src/world/park/build.ts';
+  import { ParkRuntime } from '/src/world/park/runtime.ts';
+  import { OsdRenderer } from '/src/ui/osd.ts';
+  import { buildHud, createHudModel } from '/src/ui/hud.ts';
+  import { defaultAppSettings } from '/src/ui/settingsSchema.ts';
+
+  const QUANTUM = 128, RATE = 48000, MASTER = 0.8;
+  let osd = null, model = null, settings = null, tel = null;
+  window.setTelemetry = t => { tel = t; };
+  window.startOsd = (width, height) => {
+    const box = document.getElementById('box'), canvas = document.getElementById('osd');
+    box.style.width = `${width}px`; box.style.height = `${height}px`;
+    const g = canvas.getContext('2d');
+    osd = new OsdRenderer(canvas, g, () => 1); model = createHudModel();
+    // The keyboard hint is for players at the game, not viewers of a video.
+    const text = osd.painter.text.bind(osd.painter);
+    osd.painter.text = (s, ...rest) => { if (s !== 'F1 CONTROLS') text(s, ...rest); }; settings = { ...defaultAppSettings(), autoRespawn: true };
+  };
+  /** PNGs (base64) of the OSD for frames [from, to). */
+  window.osdFrames = async (from, to) => {
+    const canvas = document.getElementById('osd'), out = [];
+    for (let i = from; i < to; i++) {
+      const f = tel.frames[i], snap = { throttleHigh: false, turtle: false, respawnOffered: false, message: '', ...f.hud };
+      buildHud(f.state, snap, settings, f.state.pos[1] - f.agl, model, 'fpv');
+      osd.draw(model, i * 1000 / tel.fps);
+      const blob = await new Promise(done => canvas.toBlob(done, 'image/png'));
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let s = ''; for (let k = 0; k < bytes.length; k += 0x8000) s += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+      out.push(btoa(s));
+    }
+    return out;
+  };
+  window.renderLap = async () => {
+    const frameTime = 1 / tel.fps, n = tel.frames.length, total = Math.ceil(n * frameTime * RATE / QUANTUM) * QUANTUM;
+    // A park (its recipe) adds the rides heard from the camera; a plain track has only the drone.
+    const sim = tel.recipe ? new ParkRuntime(buildPark(tel.recipe).park) : null;
+    if (sim) for (let t = 0; t < tel.parkPrerollS; t += frameTime) sim.advance(frameTime);
+    const ctx = new OfflineAudioContext(2, total, RATE);
+    const engine = new AudioEngine({ mode: 'onboard', volumes: { master: MASTER, motors: 1, wind: 1 }, contextFactory: () => ctx });
+    await engine.start();
+    const park = sim ? new ParkAudio(ctx) : null;
+    const uctx = { speed: 0, agl: 0, dt: frameTime, cameraMode: 'chase', windSpeed: 0 };
+    const frame = i => {
+      const f = tel.frames[i], s = f.state;
+      if (sim) { sim.drone = s.pos; sim.advance(frameTime); }
+      uctx.speed = Math.hypot(s.vel[0], s.vel[2]); uctx.agl = f.agl;
+      engine.update(s, uctx);
+      park?.update(sim, f.camera, MASTER);
+      if (f.countdown !== null) engine.beeper.countdown(f.countdown);
+      for (const ev of f.events) if (ev === 'gate') engine.beeper.gatePass(); else engine.beeper.lap();
+    };
+    frame(0);
+    for (let i = 1; i < n; i++) {
+      const at = Math.round(i * frameTime * RATE / QUANTUM) * QUANTUM;
+      if (at >= total) break;
+      void ctx.suspend(at / RATE).then(() => { frame(i); return ctx.resume(); });
+    }
+    const buffer = await ctx.startRendering();
+    const synth = engine.synthKind;
+    engine.dispose(); park?.dispose();
+    // 16-bit interleaved PCM, returned as base64 chunks so no single string gets too long.
+    const l = buffer.getChannelData(0), r = buffer.getChannelData(1), pcm = new Int16Array(l.length * 2);
+    let peak = 0;
+    for (let i = 0; i < l.length; i++) {
+      peak = Math.max(peak, Math.abs(l[i]), Math.abs(r[i]));
+      pcm[2 * i] = Math.max(-1, Math.min(1, l[i])) * 32767; pcm[2 * i + 1] = Math.max(-1, Math.min(1, r[i])) * 32767;
+    }
+    const bytes = new Uint8Array(pcm.buffer), chunks = [];
+    for (let o = 0; o < bytes.length; o += 3 << 20) {
+      let s = ''; const part = bytes.subarray(o, o + (3 << 20));
+      for (let k = 0; k < part.length; k += 0x8000) s += String.fromCharCode(...part.subarray(k, k + 0x8000));
+      chunks.push(btoa(s));
+    }
+    return { rate: RATE, chunks, peak, synth };
+  };
+  window.audioReady = true;
+</script>

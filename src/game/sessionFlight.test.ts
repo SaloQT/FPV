@@ -118,6 +118,25 @@ describe('takeoff, crash and respawn', () => {
     expect(rig.session.state).toBe('ready');
   });
 
+  it('a respawn keeps the pack the quad crashed with, swaps a flat one, and a reset puts in a fresh one', () => {
+    const rig = makeSessionRig();
+    const crashAndRespawn = (): void => {
+      takeOff(rig);
+      rig.physics.crashOnStep = rig.physics.steps + 3;
+      rig.run(0.05);
+      rig.input.actions.push('respawn');
+      rig.run(0.01);
+    };
+    crashAndRespawn();
+    expect(rig.physics.resets.at(-1)!.pack).toBe('kept');
+    rig.physics.flat = true;
+    crashAndRespawn();
+    expect(rig.physics.resets.at(-1)!.pack).toBe('fresh');
+    rig.physics.flat = false;
+    rig.session.resetTrack();
+    expect(rig.physics.resets.at(-1)!.pack).toBe('fresh');
+  });
+
   it('auto-respawn does it on its own once the cooldown is over', () => {
     const rig = makeSessionRig({ autoRespawn: true });
     takeOff(rig);

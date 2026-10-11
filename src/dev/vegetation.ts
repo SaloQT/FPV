@@ -45,7 +45,7 @@ function readParams() {
     view: v,
     seed: num('seed', 1),
     time: isTimeOfDay(t) ? t : 'noon',
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high' as Settings['quality'],
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high' as Settings['quality'],
     x: q.has('x') ? num('x', 0) : null,
     z: q.has('z') ? num('z', 0) : null,
     yaw: q.has('yaw') ? num('yaw', 0) : null,

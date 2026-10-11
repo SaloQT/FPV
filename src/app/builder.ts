@@ -9,7 +9,7 @@
  */
 import { BrainRacer } from '../ai/racer';
 import { BRAIN_PHYSICS_HZ } from '../ai/spec';
-import type { CameraState, RenderQuality, TerrainData, TerrainSampler, TrackData, TrackRecipe, Vec3 } from '../contracts';
+import { gameplayQuality, type CameraState, type RenderQuality, type TerrainData, type TerrainSampler, type TrackData, type TrackRecipe, type Vec3 } from '../contracts';
 import { CAMERA_FAR } from '../game/cameraRig';
 import { createRaceSnapshot, type RaceSnapshot } from '../game/gateTimer';
 import { quatLookAlong } from '../game/quat';
@@ -357,7 +357,7 @@ export class BuilderHub implements BuilderHost {
     this.stopBenchmark();
     // The hub loads the brains, then leaves the menu; the builder steps aside then (`left`).
     if (names.length === 1) ctx.brains.fly(names[0]);
-    else ctx.brains.race(names);
+    else ctx.brains.race(names.map((name) => ({ name, count: 1 })));
   }
 
   benchmark(names: readonly string[]): void {
@@ -665,11 +665,11 @@ export class BuilderHub implements BuilderHost {
   /** The terrain to build on: the one on screen, the one from before, the last one generated, or a new one. */
   private async terrainFor(ctx: AppCtx, seed: number, quality: RenderQuality, token: number): Promise<Terrain> {
     for (const w of [ctx.world, this.before]) {
-      if (w !== null && w.terrainSeed === seed && w.quality === quality) return { seed, quality, terrain: w.terrain, sampler: w.sampler };
+      if (w !== null && w.terrainSeed === seed && gameplayQuality(w.quality) === gameplayQuality(quality)) return { seed, quality, terrain: w.terrain, sampler: w.sampler };
     }
-    if (this.cache !== null && this.cache.seed === seed && this.cache.quality === quality) return this.cache;
+    if (this.cache !== null && this.cache.seed === seed && gameplayQuality(this.cache.quality) === gameplayQuality(quality)) return this.cache;
     this.progress(token, 'Generating terrain', 0);
-    const terrain = await generateTerrainAsync({ seed, quality }, (stage, f) => this.progress(token, stage, f * 0.85));
+    const terrain = await generateTerrainAsync({ seed, quality: gameplayQuality(quality) }, (stage, f) => this.progress(token, stage, f * 0.85));
     if (token !== this.token) throw new StaleBuild('terrain replaced');
     this.cache = { seed, quality, terrain, sampler: createTerrainSampler(terrain) };
     return this.cache;

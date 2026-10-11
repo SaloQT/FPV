@@ -1,4 +1,4 @@
-import type { StarCatalog } from '../../contracts';
+import type { RenderQuality, StarCatalog } from '../../contracts';
 import { bvToLinearRGB, magToIlluminance, starDirectionEq } from '../../world/astro/stars';
 
 /** Floats per star instance: (unit direction xyz, magnitude) then (linear rgb normalised to luminance 1, catalogue index). */
@@ -17,7 +17,7 @@ export const STAR_PSF_SCALE_MIN = 0.6;
 export const LOW_QUALITY_STAR_LIMIT = 6.5;
 
 /** Faintest star magnitude drawn per quality tier: the naked-eye limit on low, then progressively deeper into the catalogue. */
-export function starMagnitudeLimit(tier: 'low' | 'medium' | 'high' | 'ultra'): number {
+export function starMagnitudeLimit(tier: RenderQuality): number {
   switch (tier) {
     case 'low': return LOW_QUALITY_STAR_LIMIT;
     case 'medium': return 7.5;

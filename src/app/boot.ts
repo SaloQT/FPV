@@ -8,6 +8,8 @@ import { createSessionSnapshot } from '../game/sessionTypes';
 import { InputManager } from '../input/inputManager';
 import { createPostProcessor } from '../render/post';
 import { Renderer } from '../render/renderer';
+import { parseProp, PROP_STORAGE_KEY } from '../prop/files';
+import { quadWithProp } from '../prop/fit';
 import { rateProfileOf } from '../sim/fc/ratePresets';
 import { getPreset } from '../sim/presets';
 import { QuadPhysics } from '../sim/quad';
@@ -181,11 +183,22 @@ interface Parts {
   world: World;
 }
 
+/** The chosen quad, fitted with the prop picked in the prop lab (?mode=proplab) when there is one; stock otherwise. */
+function chosenQuad(preset: string): ReturnType<typeof getPreset> {
+  const base = getPreset(preset);
+  try {
+    const raw = localStorage.getItem(PROP_STORAGE_KEY);
+    return raw ? quadWithProp(base, parseProp(raw)) : base;
+  } catch {
+    return base;
+  }
+}
+
 /** Creates the sim objects and the shared context. Nothing here touches the GPU. */
 function assemble(p: Parts): AppCtx {
   const { canvas, store, params, world } = p;
   const settings = store.get();
-  const physics = new QuadPhysics(getPreset(settings.quadPreset), world.sampler, settings.seed);
+  const physics = new QuadPhysics(chosenQuad(settings.quadPreset), world.sampler, settings.seed);
   physics.fc.setRates(rateProfileOf(settings.rates));
   physics.setAtmosphere(settings.observer.altitudeM, 15);
   const ground = new PadGround(world.sampler, null);
@@ -232,7 +245,7 @@ function assemble(p: Parts): AppCtx {
   const aspect = canvas.clientHeight > 0 ? canvas.clientWidth / canvas.clientHeight : 16 / 9;
   const ctx: AppCtx = {
     params, canvas, root: p.root, store, renderer: p.renderer, mods: p.mods, physics, ground, wind, input, session, rig, astro, audio, ui, brains, builder,
-    loading: p.loading, colliders: [],
+    loading: p.loading, colliders: [], senseColliders: () => [],
     world, preview: null, busy: false, hidden: document.hidden, camPreferred: params.cam ?? 'fpv', aspect, time: 0,
     frame: { dt: 0, time: 0, camera: rig.camera, astro: astro.state(), quad: null },
     snap,

@@ -42,6 +42,7 @@ export function simulate(ctx: AppCtx, dt: number): void {
   pushWindIfMoved(ctx, dt);
 
   session.frame(dt);
+  ctx.park?.present(session.alpha, session.stepper.dt);
   ctx.brains.step(ctx, dt);
   const rs = session.renderState();
   const view = ctx.brains.view(rs);
@@ -113,6 +114,7 @@ export function present(ctx: AppCtx, frameMs: number, nowMs: number): void {
     a.cameraMode = rig.mode;
     a.windSpeed = ctx.wind.speed;
     audio.update(rs, a);
+    audio.updatePark(ctx.park, f.camera);
     const settings = ctx.store.get();
     buildHud(rs, snap, settings, ctx.ground.groundHeightAt(rs.pos[0], rs.pos[2]), ui.hud, rig.mode);
     if (!OSD_IN_ALL_CAMERAS && rig.mode !== 'fpv') ui.hud.visible = false;

@@ -10,7 +10,7 @@
  *   cam=fpv|chase|free    camera mode once flying
  *   scenario=hover|fly|crash|gate   scripted autopilot (synthetic stick input)
  *   autostart=1           skip the start menu
- *   quality=low|medium|high|ultra
+ *   quality=low|medium|high|ultra|extreme
  *   scale=<0.25..1>       render scale        dyn=0|1  dynamic resolution
  *   gates=<n> laps=<n>    track size          wind=<m/s> winddir=<deg from>
  *   diff=<0..100>         track difficulty in percent (the share links carry it)
@@ -23,18 +23,21 @@
 import { GENERATED_STYLES, type GeneratedStyle, type RenderQuality, type TrackRecipe } from '../contracts';
 import { withLocalSolarHours } from '../game/clock';
 import type { CameraMode } from '../game/cameraRig';
-import { decodeRecipe } from '../ui/seedModel';
+import { decodeRecipe, decodeParkRecipe } from '../ui/seedModel';
+import type { ParkRecipe } from '../world/park/types';
+import { parkRecipeFromSettings, parkSettings } from '../world/park/settings';
 import type { AppSettings } from '../ui/settingsSchema';
 
 export type ScenarioName = 'hover' | 'fly' | 'crash' | 'gate';
 export const SCENARIOS: readonly ScenarioName[] = ['hover', 'fly', 'crash', 'gate'];
 const STYLES: readonly GeneratedStyle[] = GENERATED_STYLES;
 const CAMS: readonly CameraMode[] = ['fpv', 'chase', 'free'];
-const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
-export type AppMode = 'builder';
-const MODES: readonly AppMode[] = ['builder'];
+const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra', 'extreme'];
+export type AppMode = 'builder' | 'proplab';
+const MODES: readonly AppMode[] = ['builder', 'proplab'];
 
 export interface AppParams {
+  parkRecipe?: ParkRecipe;
   seed?: number;
   /** Seed the track is generated from, on the terrain of `seed`. */
   trackSeed?: number;
@@ -109,11 +112,15 @@ export function parseParams(search: string): AppParams {
   const agl = num(q, 'agl');
   const trk = q.get('trk');
   const recipe = trk === null ? null : decodeRecipe(trk);
+  const parkRecipe = q.has('park') ? decodeParkRecipe(q.get('park')!) : q.get('world') === 'theme-park' ? parkRecipeFromSettings({ seed: seed ?? 1337,
+    parkSize: q.get('size') as ParkRecipe['size'], parkTheme: q.get('theme') as ParkRecipe['theme'], parkLayout: q.get('layout') as ParkRecipe['layout'],
+    parkGuests: num(q, 'guests'), parkRoute: q.get('route') as ParkRecipe['route'], parkCoaster: num(q, 'coaster') }) : null;
   return {
     seed: seed === undefined ? undefined : Math.max(0, Math.floor(seed)) >>> 0,
     trackSeed: trackSeed === undefined ? undefined : Math.max(0, Math.floor(trackSeed)) >>> 0,
     style: pick(q, 'style', STYLES),
     ...(recipe === null ? {} : { recipe }),
+    ...(parkRecipe === null ? {} : { parkRecipe }),
     mode: pick(q, 'mode', MODES),
     hours: num(q, 't'),
     cam: pick(q, 'cam', CAMS),
@@ -154,6 +161,7 @@ export function settingsPatch(p: AppParams, base: Pick<AppSettings, 'timeMs' | '
   if (p.wind !== undefined) out.windSpeed = Math.max(0, p.wind);
   if (p.windDir !== undefined) out.windDirDeg = ((p.windDir % 360) + 360) % 360;
   if (p.hours !== undefined) out.timeMs = hoursToTimeMs(base.timeMs, base.observer.longitudeDeg, p.hours);
+  if (p.parkRecipe) Object.assign(out, parkSettings(p.parkRecipe));
   return out;
 }
 

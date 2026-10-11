@@ -4,6 +4,8 @@ import far from '../shaders/vegetation/veg_far.wgsl?raw';
 import { farToneDefines } from './treePlanFar';
 import grass from '../shaders/vegetation/grass.wgsl?raw';
 import { VARIANTS_OF, VARIANT_DEFS } from './variants';
+import tree from '../shaders/vegetation/tree.wgsl?raw';
+import { CROWN_AO_SHARE } from './treeGen';
 
 const number = (src: string, name: string): number => {
   const m = src.match(new RegExp(`const ${name} : f32 = ([0-9.]+);`));
@@ -20,7 +22,8 @@ describe('veg_far.wgsl', () => {
   });
 
   it('takes the leaf tone and translucency of each species from the variant table: the mean of its variants', () => {
-    const groups = [VARIANTS_OF.spruce, VARIANTS_OF.pine, VARIANTS_OF.oak, VARIANTS_OF.birch];
+    // Beech shares the round broadleaf class with oak.
+    const groups = [VARIANTS_OF.spruce, VARIANTS_OF.pine, [...VARIANTS_OF.oak, ...VARIANTS_OF.beech], VARIANTS_OF.birch];
     const defines = farToneDefines();
     groups.forEach((variants, k) => {
       expect(far).toContain('${TONE' + k + '}');
@@ -76,5 +79,12 @@ describe('grass.wgsl flower heads', () => {
   it('shades a head from its position on the disc and makes sub-pixel heads share the blade coverage dither', () => {
     expect(grass).toContain('headColour(in.hcode, in.head.xy, in.head.z');
     expect(grass).toContain('cover = sq(R / Rd)');
+  });
+});
+
+describe('tree.wgsl', () => {
+  it('undoes the bake\'s crown occlusion share for trees without GI proxies with the share the bake used', () => {
+    expect(number(tree, 'CROWN_AO_SHARE')).toBe(CROWN_AO_SHARE);
+    expect(tree).toContain('fn crownAo(baked : f32, slot : u32, v : Variant, local : vec3f, scale : f32, leaf : bool)');
   });
 });

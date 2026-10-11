@@ -112,7 +112,8 @@ describe('TREE_TIER', () => {
   it('draws further and at higher detail as the tier rises', () => {
     for (let i = 1; i < TIERS.length; i++) {
       expect(TREE_TIER[TIERS[i]].maxDistance).toBeGreaterThan(TREE_TIER[TIERS[i - 1]].maxDistance);
-      expect(TREE_TIER[TIERS[i]].lodScale).toBeGreaterThan(TREE_TIER[TIERS[i - 1]].lodScale);
+      // Ultra's near LOD reaches as far as high's (its near crowns are far heavier): a tier may match the one below, never fall under it.
+      expect(TREE_TIER[TIERS[i]].lodScale).toBeGreaterThanOrEqual(TREE_TIER[TIERS[i - 1]].lodScale);
     }
   });
 
@@ -143,7 +144,7 @@ describe('packVegParams', () => {
   const budget = grassBudget(qualityProfile('high'));
   const base: VegParamInput = {
     windDir: [3, 4], windSpeed: 6, quad: null, budget, waterLevel: 12.5, seed: 77, cameraXZ: [100.3, -250.9],
-    tree: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, slots: 4096, draws: 36 },
+    tree: { lodScale: 1, maxDistance: 1600, minPixels: 1.5, leafDetail: 0, slots: 4096, draws: 36 },
     farDistance: 3500,
   };
   const pack = (over: Partial<VegParamInput> = {}) => {

@@ -22,7 +22,7 @@
 //   a = mean RGB transmittance over the same distance. Composite:  colour = colour * a + rgb.
 
 const AP_SLICES : f32 = 32.0;
-const AP_MAX_DISTANCE_M : f32 = 12000.0;
+const AP_MAX_DISTANCE_M : f32 = 40000.0;
 const AP_DEPTH_K : f32 = 6.0;
 
 fn atmosRadiusAtHeight(worldY : f32) -> f32 {

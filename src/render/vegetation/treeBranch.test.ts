@@ -72,6 +72,16 @@ describe('sprout', () => {
     expect(spread).toBeGreaterThan(1);
   });
 
+  it('keeps tiny child twigs thinner than their parent when a requested tip radius exceeds the fork', () => {
+    const parent: Limb = { pts: [[0, 0, 0], [0, 1, 0]], radii: [0.006, 0.002], order: 1 }, limbs = [parent], tips: Tip[] = [];
+    sprout(new Rng(4), parent, { levels: [{ ...LEVELS[0], start: 0.8, end: 0.95, tipRadius: 0.01 }], order0: 1, tipRadius: { 2: 0.1 }, tipFrom: 2, limbs, tips });
+    for (const child of limbs.slice(1)) {
+      const forkRadius = 0.006 - 0.004 * child.pts[0][1];
+      expect(child.parent).toBe(parent); expect(child.radii[0]).toBeLessThan(forkRadius);
+      expect(child.radii.at(-1)!).toBeLessThan(child.radii[0]); expect(Math.min(...child.radii)).toBeGreaterThan(0);
+    }
+  });
+
   it('is deterministic per seed and different between seeds', () => {
     expect(grow(9).limbs[3].pts).toEqual(grow(9).limbs[3].pts);
     expect(grow(9).limbs[3].pts).not.toEqual(grow(10).limbs[3].pts);

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { TrackData, TrackGate, Vec3 } from '../../contracts';
-import { PATH_AHEAD, PATH_MAX_STEP, packPath, pathArc, pathDelta, pathSearch, resamplePath, type PackedPath } from './pathProgress';
+import { Rng } from '../../sim/math3d';
+import {
+  PATH_AHEAD, PATH_GATE_SLACK, PATH_MAX_STEP, arcToGate, gateArc, packPath, pathArc, pathDelta, pathPaid, pathSearch, resamplePath, type PackedPath,
+} from './pathProgress';
 
 function gate(index: number, pos: Vec3, yaw: number, extra: Partial<TrackGate> = {}): TrackGate {
   return { index, kind: 'square', pos, yaw, pitch: 0, roll: 0, width: 3, height: 3, ...extra };
@@ -171,5 +174,124 @@ describe('progress along the path', () => {
     const run: Vec3[] = Array.from({ length: 51 }, (_, i) => [i, 5, 0] as Vec3);
     expect(packPath(track(run, false, [gate(0, [10, 5, 0], -Math.PI / 2)], [0.5, 5, 0])).length).toBeCloseTo(50, 3);
     expect(packPath(track(circle(80, 200), true, [gate(0, [80, 10, 0], 0)], [0, 0, 0])).length).toBeCloseTo(2 * Math.PI * 80, 0);
+  });
+});
+
+describe('progress stops paying past the gate due next', () => {
+  /**
+   * The kernel's path reward over `pts` (env.wgsl stepEnvs): gate 0 due at the start, `passes(prev, pos, next)` says whether a
+   * move clears the gate due next. A move that clears one pays in full and measures the arc left from the gate passed.
+   */
+  function fly(p: PackedPath, pts: Vec3[], passes: (prev: Vec3, pos: Vec3, next: number) => boolean): number {
+    const gates = p.gateSample.length;
+    let next = 0;
+    let idx = pathSearch(p, p.startSample, pts[0]);
+    let s = pathArc(p, idx, pts[0]);
+    let left = arcToGate(p, next, s);
+    let paid = 0;
+    for (let k = 1; k < pts.length; k++) {
+      let passed = -1;
+      if (passes(pts[k - 1], pts[k], next)) {
+        passed = next;
+        next = (next + 1) % gates;
+      }
+      idx = pathSearch(p, idx, pts[k]);
+      const s1 = pathArc(p, idx, pts[k]);
+      const d = pathDelta(p, s, s1);
+      if (passed < 0) {
+        paid += pathPaid(left, d);
+        left -= d;
+      } else {
+        paid += d;
+        left = arcToGate(p, next, s1, passed);
+      }
+      s = s1;
+    }
+    return paid;
+  }
+
+  /** Points along the x axis through `xs`, 0.4 m apart. */
+  function along(xs: number[]): Vec3[] {
+    const out: Vec3[] = [[xs[0], 5, 0]];
+    for (let k = 1; k < xs.length; k++) {
+      const n = Math.ceil(Math.abs(xs[k] - xs[k - 1]) / 0.4);
+      for (let j = 1; j <= n; j++) out.push([xs[k - 1] + ((xs[k] - xs[k - 1]) * j) / n, 5, 0]);
+    }
+    return out;
+  }
+
+  // A 300 m run with gates at x = 50, 100, 150 and 280 (an open run finishes at its last gate)
+  const GX = [50, 100, 150, 280];
+  const line = (): PackedPath => packPath(track(Array.from({ length: 301 }, (_, i) => [i, 5, 0] as Vec3), false,
+    GX.map((x, i) => gate(i, [x, 5, 0], -Math.PI / 2))));
+  /** Crossing gate `next`'s x forwards clears it, except the first `misses` crossings of gate 0. */
+  const crossing = (misses = 0) => {
+    let missed = 0;
+    return (a: Vec3, b: Vec3, next: number): boolean => {
+      if (!(a[0] < GX[next] && b[0] >= GX[next])) return false;
+      if (next === 0 && missed < misses) { missed++; return false; }
+      return true;
+    };
+  };
+
+  it('pays the whole run when every gate is cleared', () => {
+    expect(fly(line(), along([0, 160]), crossing())).toBeCloseTo(160, 4);
+  });
+
+  it('pays nothing for flying on after a miss', () => {
+    expect(fly(line(), along([0, 200]), crossing(Infinity))).toBeCloseTo(50 + PATH_GATE_SLACK, 4);
+  });
+
+  it('pays for going back through a missed gate and on: the retry is what earns', () => {
+    const p = line();
+    // Back behind the missed gate, it is down to what it earned getting there
+    expect(fly(p, along([0, 80, 30]), crossing(1))).toBeCloseTo(30, 4);
+    // Through it the second time and on to the end: the whole run's progress
+    expect(fly(p, along([0, 80, 30, 200]), crossing(1))).toBeCloseTo(200, 4);
+    // Hanging about past the missed gate pays nothing either way
+    expect(fly(p, along([0, 80, 55, 90, 60]), crossing(Infinity))).toBeCloseTo(50 + PATH_GATE_SLACK, 4);
+  });
+
+  it('measures the next pass of a one-gate circuit a lap ahead, even when the drone crosses a little before the gate sample', () => {
+    const p = packPath(track(circle(60, 120), true, [gate(0, [60, 10, 0], 0)]));
+    const g = gateArc(p, 0);
+    expect(arcToGate(p, 0, g - 0.5, 0)).toBeCloseTo(p.length + 0.5, 3);
+    expect(arcToGate(p, 0, g + 0.5, 0)).toBeCloseTo(p.length - 0.5, 3);
+    // A spawn 1.5 m behind it measures from the drone
+    expect(arcToGate(p, 0, g - 1.5)).toBeCloseTo(1.5, 3);
+  });
+
+  it('pays every lap of a circuit, one gate or two unevenly spaced', () => {
+    const lap = (a0: number, a1: number): Vec3[] => {
+      const n = Math.round(((a1 - a0) * 61.5) / 0.4);
+      return Array.from({ length: n + 1 }, (_, k) => {
+        const a = a0 + ((a1 - a0) * k) / n;
+        return [61.5 * Math.cos(a), 10.5, 61.5 * Math.sin(a)] as Vec3;
+      });
+    };
+    const angle = (q: Vec3): number => Math.atan2(q[2], q[0]);
+    // Clears gate `next` where the angle crosses its own
+    const at = (angles: number[]) => (a: Vec3, b: Vec3, next: number): boolean => {
+      const t = angles[next], da = (x: number): number => Math.atan2(Math.sin(x - t), Math.cos(x - t));
+      return da(angle(a)) < 0 && da(angle(b)) >= 0;
+    };
+    const one = packPath(track(circle(60, 120), true, [gate(0, [60, 10, 0], 0)]));
+    expect(fly(one, lap(0.3, 0.3 + 4 * Math.PI), at([0]))).toBeCloseTo(2 * one.length, -1);
+    const g1 = 0.2 * 2 * Math.PI;
+    const two = packPath(track(circle(60, 120), true, [gate(0, [60, 10, 0], 0), gate(1, [60 * Math.cos(g1), 10, 60 * Math.sin(g1)], 0)]));
+    expect(fly(two, lap(0.3, 0.3 + 4 * Math.PI), at([0, g1]))).toBeCloseTo(2 * two.length, -1);
+  });
+
+  it('pays nothing over any wander that comes back to where it started without a gate', () => {
+    const rng = new Rng(3);
+    let left = 20, paid = 0, sum = 0;
+    const move = (d: number): void => {
+      paid += pathPaid(left, d);
+      left -= d;
+      sum += d;
+    };
+    for (let k = 0; k < 2000; k++) move(Math.max(-10, Math.min(10, 4 * rng.gauss())));
+    while (Math.abs(sum) > 1e-9) move(-Math.sign(sum) * Math.min(5, Math.abs(sum)));
+    expect(paid).toBeCloseTo(0, 6);
   });
 });

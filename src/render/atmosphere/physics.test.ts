@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AIRGLOW_HEIGHT_KM, AP_MAX_DISTANCE_M, ATMOSPHERE_TOP_KM, MIE_EXTINCTION, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, OZONE_ABSORPTION, OZONE_CENTER_KM,
+  AIRGLOW_HEIGHT_KM, AP_MAX_DISTANCE_M, ATMOSPHERE_TOP_KM, HAZE_EXTINCTION, HAZE_SCALE_HEIGHT_KM, HAZE_SCATTER, MIE_EXTINCTION, MIE_SCALE_HEIGHT_KM, MIE_SCATTER, OZONE_ABSORPTION, OZONE_CENTER_KM,
   OZONE_HALF_WIDTH_KM, PLANET_RADIUS_KM, RAYLEIGH_SCALE_HEIGHT_KM, RAYLEIGH_SCATTER, SKYVIEW_SIZE, apDistanceToSlice, apSliceToDistance,
   MS_DIPOLE, MS_DIPOLE_MU_HI, MS_DIPOLE_MU_LO, distanceToTop, hgPhase, mediumAt, miePhase, multiScatterDipole, opticalDepthToTop, rayleighPhase, skyViewParams, skyViewUv, subUvToUnit, transmittanceParams,
   transmittanceToTop, transmittanceUv, unitToSubUv, vanRhijn,
@@ -86,6 +86,19 @@ describe('medium', () => {
     expect(m.scatterRayleigh).toEqual([...RAYLEIGH_SCATTER]);
     expect(m.scatterMie).toBeCloseTo(MIE_SCATTER, 9);
     expect(m.extinction[1]).toBeCloseTo(RAYLEIGH_SCATTER[1] + MIE_EXTINCTION, 9);
+  });
+
+  it('adds a boundary-layer haze on the land: about 30-40 km visibility at an upland site, little extra over the zenith', () => {
+    const datum = 1.2;
+    const clean = mediumAt(datum), hazy = mediumAt(datum, undefined, datum);
+    expect(hazy.scatterMie - clean.scatterMie).toBeCloseTo(HAZE_SCATTER, 9);
+    const visibilityKm = 3.912 / hazy.extinction[1];
+    expect(visibilityKm).toBeGreaterThan(30);
+    expect(visibilityKm).toBeLessThan(40);
+    expect(mediumAt(datum + HAZE_SCALE_HEIGHT_KM, undefined, datum).extinction[1] - mediumAt(datum + HAZE_SCALE_HEIGHT_KM).extinction[1]).toBeCloseTo(HAZE_EXTINCTION / Math.E, 9);
+    // Below the datum (a valley under the observer) the layer is as dense as on the land, not denser.
+    expect(mediumAt(0.5, undefined, datum).scatterMie - mediumAt(0.5).scatterMie).toBeCloseTo(HAZE_SCATTER, 9);
+    expect(HAZE_EXTINCTION * HAZE_SCALE_HEIGHT_KM).toBeLessThan(0.05);
   });
 
   it('decays with the scale heights and peaks the ozone at 25 km', () => {

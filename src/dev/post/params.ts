@@ -76,7 +76,7 @@ export function readParams(search: string): DevPostParams {
     taa: q.get('taa') !== '0',
     motion: q.get('motion') === '1',
     debug: sanitizeDebug(num('debug', 0)),
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high',
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high',
     scale: Math.min(1, Math.max(0.25, num('scale', 1))),
     frames: Math.max(1, Math.floor(num('frames', 16))),
     dt: Math.min(0.25, Math.max(1e-3, num('dt', 1 / 60))),

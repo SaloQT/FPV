@@ -4,12 +4,20 @@ import { TORUS_STEPS_SHADER, bruteForce, type CpuHit } from './cpuReference';
 import type { RtLayouts } from './layouts';
 import { RtParamBlock, RT_PARAM_BYTES } from './params';
 import { primBounds } from './prims';
-import { DYNAMIC_MAX_PRIMS, type SceneBuffers } from './sceneBuffers';
+import type { SceneBuffers } from './sceneBuffers';
 
 export interface RtSelfTest {
   heightfield: { n: number; maxErr: number; mismatches: number };
   /** `mismatches` compares against a CPU brute force with the shader's torus step budget (traversal correctness); `torusBudgetMisses` counts extra rays whose only disagreement is a grazing torus hit the 32-step sphere trace cannot reach. */
-  bvh: { n: number; mismatches: number; torusBudgetMisses: number };
+  bvh: { n: number; mismatches: number; torusBudgetMisses: number; failures: BvhSelfTestFailure[] };
+}
+
+/** Bounded reproduction data; GPU indices are packed slots, CPU indices address static-then-dynamic primitives. */
+export interface BvhSelfTestFailure {
+  ray: number; origin: Vec3; direction: Vec3; tMax: number;
+  cpu: { index: number; shape: RTPrimitive['type'] | null; distance: number | null; primitive: RTPrimitive | null };
+  gpu: { slot: number; index: number; shape: RTPrimitive['type'] | null; distance: number | null; raw: number[]; primitive: RTPrimitive | null };
+  visitCap: number;
 }
 
 const TERRAIN_RAYS = 1000;
@@ -18,6 +26,7 @@ const HIT_TOLERANCE_M = 0.5;
 const BVH_TOLERANCE_M = 0.05;
 const TERRAIN_TMAX = 4000;
 const BVH_VISIT_CAP = 512;
+const MAX_FAILURE_RECORDS = 8;
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -74,12 +83,12 @@ export async function runSelfTest(
 ): Promise<RtSelfTest> {
   const rand = mulberry32(0x5eed);
   const statics = rc.rt.allStatic();
-  const dynamics = rc.rt.allDynamic().slice(0, DYNAMIC_MAX_PRIMS);
+  const dynamics = rc.rt.allDynamic();
   const prims = [...statics, ...dynamics];
   const nTerrain = sampler ? TERRAIN_RAYS : 0;
   const nBvh = prims.length ? BVH_RAYS : 0;
   const total = nTerrain + nBvh;
-  const result: RtSelfTest = { heightfield: { n: nTerrain, maxErr: 0, mismatches: 0 }, bvh: { n: nBvh, mismatches: 0, torusBudgetMisses: 0 } };
+  const result: RtSelfTest = { heightfield: { n: nTerrain, maxErr: 0, mismatches: 0 }, bvh: { n: nBvh, mismatches: 0, torusBudgetMisses: 0, failures: [] } };
   if (total === 0) return result;
 
   buffers.sync(rc.rt);
@@ -94,7 +103,7 @@ export async function runSelfTest(
     rtWidth: total, rtHeight: 1, fullWidth: total, fullHeight: 1, divisor: 1, maxSteps: steps, giRays: 0, spec: false, terrain: true,
     staticRoot: buffers.staticRoot, dynamicRoot: buffers.dynamicRoot, visitCap: BVH_VISIT_CAP, frameIndex: 0, debugView: 0, seed: 0,
     probeStride: 1, probePhase: 0, probeLo: [0, 0, 0], probeRays: 0, probePrevLo: [0, 0, 0], probeAllFresh: true, probeDim: [1, 1, 1],
-    softness: 1, probeSpacing: 1, probeHysteresis: 0, rayRange: 1, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1,
+    softness: 1, probeSpacing: 1, probeHysteresis: 0, rayRange: 1, cloudCenterX: 0, cloudCenterZ: 0, cloudExtentM: 1, cloudSkyGain: 1,
   });
   const paramBuf = d.createBuffer({ label: 'rt test params', size: RT_PARAM_BYTES, usage: U.UNIFORM | U.COPY_DST });
   const rayBuf = d.createBuffer({ label: 'rt test rays', size: rays.byteLength, usage: U.STORAGE | U.COPY_DST });
@@ -140,7 +149,17 @@ export async function runSelfTest(
     const o: Vec3 = [r[0], r[1], r[2]], dir: Vec3 = [r[4], r[5], r[6]];
     const gpu = out[4 * i];
     const disagrees = (cpu: CpuHit): boolean => (cpu.index >= 0) !== gpu >= 0 || (cpu.index >= 0 && Math.abs(cpu.t - gpu) > BVH_TOLERANCE_M);
-    if (disagrees(bruteForce(prims, o, dir, r[3], TORUS_STEPS_SHADER))) result.bvh.mismatches++;
+    const cpu = bruteForce(prims, o, dir, r[3], TORUS_STEPS_SHADER);
+    if (disagrees(cpu)) {
+      result.bvh.mismatches++;
+      if (result.bvh.failures.length < MAX_FAILURE_RECORDS) {
+        const slot = out[4 * i + 1], mapped = slot >= 0 ? buffers.slotToPrim(slot) : null;
+        const index = mapped ? mapped.index + (mapped.dynamic ? statics.length : 0) : -1;
+        result.bvh.failures.push({ ray: i - nTerrain, origin: o, direction: dir, tMax: r[3], visitCap: BVH_VISIT_CAP,
+          cpu: { index: cpu.index, shape: prims[cpu.index]?.type ?? null, distance: Number.isFinite(cpu.t) ? cpu.t : null, primitive: prims[cpu.index] ? structuredClone(prims[cpu.index]) : null },
+          gpu: { slot, index, shape: prims[index]?.type ?? null, distance: gpu >= 0 ? gpu : null, raw: Array.from(out.subarray(4 * i, 4 * i + 4)), primitive: prims[index] ? structuredClone(prims[index]) : null } });
+      }
+    }
     else if (disagrees(bruteForce(prims, o, dir, r[3]))) result.bvh.torusBudgetMisses++;
   }
   return result;

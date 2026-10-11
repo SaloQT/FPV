@@ -3,7 +3,7 @@
  * `--track`), the saved-track library, the builder camera's orbit and fly-through maths, and the side elevation profile. No DOM
  * and no GPU, so all of it is tested in Node.
  */
-import { TRACK_FEATURES, type GateKind, type ObstacleKind, type RenderQuality, type TrackData, type TrackFeature, type TrackGate, type TrackObstacle, type TrackRecipe, type Vec3 } from '../contracts';
+import { TRACK_FEATURES, gameplayQuality, type GateKind, type ObstacleKind, type RenderQuality, type TrackData, type TrackFeature, type TrackGate, type TrackObstacle, type TrackRecipe, type Vec3 } from '../contracts';
 import type { RaceSnapshot } from '../game/gateTimer';
 import { RECIPE_GATE_KINDS, RECIPE_LIMITS, RECIPE_OBJECT_KINDS, sanitizeRecipe } from '../world/track/recipe';
 import { onStorageKey } from './leaderboard';
@@ -162,7 +162,7 @@ export interface ImportedTrack {
   recipe?: TrackRecipe;
 }
 
-const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra'];
+const QUALITIES: readonly RenderQuality[] = ['low', 'medium', 'high', 'ultra', 'extreme'];
 const GATE_KINDS: readonly GateKind[] = ['square', 'arch', 'hoop', 'dive', 'flag', 'start', 'finish', 'window', 'ladder', 'tunnel', 'hurdle', 'drop'];
 const OBSTACLE_KINDS: readonly ObstacleKind[] = OBJECT_WEIGHT_KINDS;
 const STYLES: readonly TrackData['style'][] = ['race', 'freestyle', 'mountain', 'sprint', 'technical', 'acro', 'industrial', 'custom'];
@@ -245,7 +245,7 @@ export function sanitizeTrackData(raw: unknown): TrackData | null {
 }
 
 export function trackFileJson(f: TrackFile): string {
-  const out: Record<string, unknown> = { terrainSeed: f.terrainSeed >>> 0, quality: f.quality, track: f.track };
+  const out: Record<string, unknown> = { terrainSeed: f.terrainSeed >>> 0, quality: gameplayQuality(f.quality), track: f.track };
   if (f.recipe !== undefined) out.recipe = f.recipe;
   return JSON.stringify(out);
 }

@@ -34,7 +34,7 @@ describe('leaf transmission', () => {
 
   it('only scales the translucent term: an opaque surface (translucency 0) gets neither wrap nor back-lit light', () => {
     const pbr = resolveShader('common/pbr.wgsl');
-    expect(pbr).toMatch(/let wrap = 0\.5 \* translucency;/);
+    expect(pbr).toMatch(/let wrap = [0-9.]+ \* translucency;/);
     expect(pbr).toMatch(/let back = translucency \* saturate1\(-ndl\)/);
   });
 });

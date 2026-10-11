@@ -26,7 +26,7 @@ function readParams(): { time: 'noon' | 'dusk' | 'night'; frames: number; dyn: b
     time: isTimeOfDay(t) ? t : 'noon',
     frames: num('frames', Infinity),
     dyn: q.get('dyn') === '1',
-    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' ? quality : 'high',
+    quality: quality === 'low' || quality === 'medium' || quality === 'ultra' || quality === 'extreme' ? quality : 'high',
     scale: num('scale', 1),
     spin: num('spin', 0.1),
     fps: num('fps', 60),

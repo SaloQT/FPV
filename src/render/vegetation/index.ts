@@ -1,6 +1,6 @@
 import type { ObstacleCollider, Vec3 } from '../../contracts';
-import type { FrameInfo, RenderContext, RenderModule, SceneData } from '../contracts';
-import { buildColliders, buildRtProxies } from './colliders';
+import { isExtreme, type FrameInfo, type RenderContext, type RenderModule, type SceneData } from '../contracts';
+import { RT_CAMERA_RERANK, RT_CAMERA_WITHIN, buildColliders, buildRtProxies, cameraShare, forestRtCap } from './colliders';
 import { FarCanopy, FarCanopyPipeline } from './farCanopy';
 import { GrassPipelines, GrassSystem } from './grass';
 import { packInstances } from './instanceData';
@@ -13,6 +13,8 @@ import { placeFarForest } from './treePlanFar';
 import { TreeSystem } from './treeSystem';
 import { DRAW_COUNT } from './variants';
 import { VegetationRenderBundle } from './renderBundle';
+import { parkCanopyProxies, parkWoodProxies, prependParkPlantings, tierPlantCount } from './parkPlanting';
+import { publishCanopyShadowOf, publishForestFloor } from './forestFloor';
 
 export interface VegetationStats {
   /** Grass blades appended by the last sampled cull, all LODs. Null until the first async counter readback (dev builds only). */
@@ -77,16 +79,75 @@ export function createVegetationModule(): VegetationModule {
   let grass: GrassSystem | null = null;
   let grassPipes: GrassPipelines | null = null;
   let assets: TreeAssets | null = null;
+  let assetsPending = false;
   let trees: TreeSystem | null = null;
   let far: FarCanopy | null = null;
   let farPipe: FarCanopyPipeline | null = null;
   let farUncovered = 0;
   let built: VegPlan | null = null;
   let place: VegPlacement | null = null;
+  let parkPlantCount = 0;
   let colliders: ObstacleCollider[] = [];
   let rtCount = 0;
+  /** The forest alone (before the park plantings are merged in), the cap its RT proxies were built for and the registry version seen then. */
+  let forestPlace: VegPlacement | null = null;
+  let rtCap = -1, rtSeen = -1, rtExtreme = false;
+  /** Plants and rocks the race-line set has (proxyKey), the camera set's budget, and where the camera was when its set was last ranked. */
+  let lineTaken = new Set<number>();
+  let cameraTaken = new Set<number>();
+  let cameraBudget = 0;
+  /** The tree slot of each placed plant (park plantings first), from the last instance pack. */
+  let plantSlots: Uint32Array | null = null;
+
+  /**
+   * Tells the tree shader which trees have GI proxies (park plantings, the race-line set, the camera's round): the others have nothing for
+   * the GI rays from their leaves to hit, so they take their crown's full baked occlusion (tree.wgsl crownAo).
+   */
+  function publishProxied(ctx: RenderContext): void {
+    if (!trees || !plantSlots) return;
+    const bits = new Uint32Array(Math.ceil(trees.slots / 32));
+    plantSlots.forEach((slot, j) => {
+      const forest = j - parkPlantCount;
+      if (forest < 0 || lineTaken.has(forest) || cameraTaken.has(forest)) bits[slot >> 5] |= 1 << (slot & 31);
+    });
+    trees.setProxied(ctx, bits);
+  }
+  let cameraFocus: Vec3 | null = null;
   let treeCount = 0, bushCount = 0, rockCount = 0;
   const treeParams = { ...TREE_TIER.medium, slots: 0, draws: DRAW_COUNT };
+
+  /**
+   * The vegetation's RT proxies: the park plantings' and, within what the other static groups (park, track) leave under MAX_PRIMS, the
+   * forest's: about the start at ultra and below; at the extreme tier every plant along the race line (static), plus the plants round the
+   * camera that the line set leaves out (a dynamic group, re-ranked every RT_CAMERA_RERANK metres, so lone trees and views off the line
+   * are covered too and moving it never rebuilds the static tree). Rebuilt when the tier or the other groups change the budget.
+   */
+  function publishRt(ctx: RenderContext, camera?: Vec3): void {
+    if (!scene || !forestPlace) return;
+    const extreme = isExtreme(ctx.quality);
+    if (ctx.rt.version !== rtSeen || extreme !== rtExtreme) {
+      const parkProxies = [...parkCanopyProxies(scene.park?.park.plantings), ...parkWoodProxies(scene.park?.park.plantings)];
+      const cap = forestRtCap(extreme, ctx.rt.allStatic().length - rtCount + parkProxies.length);
+      const camera = extreme ? cameraShare(cap) : 0, line = cap - camera;
+      if (line !== rtCap || extreme !== rtExtreme) {
+        rtCap = line; rtExtreme = extreme; cameraBudget = camera; cameraFocus = null;
+        lineTaken = new Set<number>();
+        const proxies = buildRtProxies(forestPlace, sceneFocus(scene), line, { alongLine: extreme, taken: lineTaken });
+        proxies.push(...parkProxies);
+        rtCount = proxies.length;
+        ctx.rt.setStatic('vegetation', proxies);
+        if (!extreme) { ctx.rt.remove('vegetation-camera'); cameraTaken = new Set<number>(); }
+        publishProxied(ctx);
+      }
+    }
+    if (extreme && cameraBudget > 0 && camera && (!cameraFocus || Math.hypot(camera[0] - cameraFocus[0], camera[2] - cameraFocus[2]) > RT_CAMERA_RERANK)) {
+      cameraFocus = [camera[0], camera[1], camera[2]];
+      cameraTaken = new Set<number>();
+      ctx.rt.setDynamic('vegetation-camera', buildRtProxies(forestPlace, cameraFocus, cameraBudget, { within: RT_CAMERA_WITHIN, skip: lineTaken, taken: cameraTaken }));
+      publishProxied(ctx);
+    }
+    rtSeen = ctx.rt.version;
+  }
 
   function rebuildGrass(ctx: RenderContext): void {
     renderBundle.invalidate();
@@ -101,7 +162,7 @@ export function createVegetationModule(): VegetationModule {
     treeCount = bushCount = rockCount = 0;
     if (!paramsBuf || !assets || !place) return;
     const limits = TIER_LIMITS[ctx.quality.tier];
-    const plantCount = Math.min(limits.plants, place.plants.count);
+    const plantCount = tierPlantCount(place, limits.plants, parkPlantCount);
     const rocks = Math.min(limits.rocks, place.rocks.count);
     for (let i = 0; i < plantCount; i++) {
       if (assets.variants[place.plants.variant[i]].def.group === 'tree') treeCount++;
@@ -110,6 +171,8 @@ export function createVegetationModule(): VegetationModule {
     rockCount = rocks;
     const packed = packInstances([{ set: place.plants, count: plantCount }, { set: place.rocks, count: rocks }], assets.variants);
     trees = new TreeSystem(ctx, assets, paramsBuf, packed, devReadback);
+    plantSlots = packed.runSlots[0];
+    publishProxied(ctx);
   }
 
   function rebuildFar(ctx: RenderContext): void {
@@ -121,8 +184,8 @@ export function createVegetationModule(): VegetationModule {
     const q = ctx.quality;
     const limits = TIER_LIMITS[q.tier];
     // The real trees are a nearest-first prefix: complete out to the walk ring of their last tree (or the whole region when the cap was not reached).
-    const n = Math.min(limits.plants, place.plants.count);
-    const coveredRing = n < limits.plants ? REGION_RADIUS : place.plantRing[n - 1] - COARSE;
+    const n = tierPlantCount(place, limits.plants, parkPlantCount);
+    const coveredRing = n - parkPlantCount < limits.plants ? REGION_RADIUS : place.plantRing[n - 1] - COARSE;
     const forest = placeFarForest(scene.terrain, scene.track, { cap: FAR_TIER[q.tier].cards, radius: q.terrainViewDistance, coveredRing, uncoveredNear: FAR_UNCOVERED_NEAR });
     farUncovered = forest.uncovered;
     far = new FarCanopy(ctx, farPipe, paramsBuf, forest);
@@ -155,20 +218,31 @@ export function createVegetationModule(): VegetationModule {
     async init(ctx: RenderContext) {
       renderBundle.invalidate();
       paramsBuf = ctx.device.createBuffer({ label: 'vegetation-params', size: VEG_PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      assets = await TreeAssets.create(ctx);
+      // The far-canopy and grass pipelines start compiling before the trees load, the trees' once they have; ready() waits for all of them.
       farPipe = new FarCanopyPipeline(ctx);
       grassPipes = new GrassPipelines(ctx);
+      assets = await TreeAssets.create(ctx);
       built = vegPlan(ctx.quality);
       rebuildGrass(ctx);
+    },
+
+    async ready() {
+      await Promise.all([assets?.ready, farPipe?.ready, grassPipes?.ready]);
     },
 
     setScene(ctx: RenderContext, s: SceneData) {
       scene = s;
       place = placeVegetation(s.terrain, s.track, TIER_LIMITS.ultra);
+      // Park trunks have authoritative per-limb collision in ParkRuntime. Build
+      // forest boxes before adding its explicit trees, avoiding duplicate boxes.
       colliders = buildColliders(place);
-      const proxies = buildRtProxies(place, sceneFocus(s));
-      rtCount = proxies.length;
-      ctx.rt.setStatic('vegetation', proxies);
+      grassPipes?.setCover(publishForestFloor(s.terrain, place, s.track));
+      forestPlace = place;
+      rtCap = -1;
+      publishRt(ctx);
+      const merged = prependParkPlantings(place, s.park?.park.plantings);
+      place = merged.placement; parkPlantCount = merged.count;
+      publishCanopyShadowOf(s.terrain, place);
       const now = vegPlan(ctx.quality);
       built = built ? { ...now, grassBladesPerM2: built.grassBladesPerM2, grassDistance: built.grassDistance } : now;
       rebuildTrees(ctx);
@@ -181,6 +255,20 @@ export function createVegetationModule(): VegetationModule {
       const now = vegPlan(ctx.quality);
       const redo = diffPlans(built, now);
       built = now;
+      // Entering or leaving the extreme tier swaps the tree meshes for the dense-crowned set (or back); the old ones draw until the new are built.
+      if (assets && !assetsPending && assets.dense !== isExtreme(ctx.quality)) {
+        assetsPending = true;
+        // Swapped in once its pipelines have compiled too (TreeAssets.ready): the old meshes draw until then.
+        void TreeAssets.create(ctx).then((next) => next.ready.then(() => next)).then((next) => {
+          assetsPending = false;
+          if (!paramsBuf) { next.destroy(); return; }
+          const old = assets;
+          assets = next;
+          rebuildTrees(ctx);
+          old?.destroy();
+        }, () => { assetsPending = false; });
+      }
+      publishRt(ctx, f.camera.pos);
       if (redo.grass) rebuildGrass(ctx);
       if (redo.trees) rebuildTrees(ctx);
       if (redo.far) rebuildFar(ctx);
@@ -194,6 +282,7 @@ export function createVegetationModule(): VegetationModule {
       packVegParams(views, {
         windDir: wind.dir,
         windSpeed: wind.speed,
+        parkRadius: scene.track?.parkMap?.radius ?? 0,
         quad: currentQuad(f),
         budget: grass.budget,
         waterLevel: t.waterLevel,

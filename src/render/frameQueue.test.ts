@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { FrameQueue } from './frameQueue';
 
 describe('GPU frame readiness', () => {
+  it('bounds park pipelining to one preceding frame and restores the ordinary flight gate', async () => {
+    const queue = new FrameQueue(); queue.maxPending = 2;
+    let first!: () => void, second!: () => void;
+    queue.submitted(new Promise<void>(resolve => { first = resolve; })); expect(queue.ready).toBe(true);
+    queue.submitted(new Promise<void>(resolve => { second = resolve; })); expect(queue.ready).toBe(false);
+    first(); await Promise.resolve(); expect(queue.ready).toBe(true);
+    queue.maxPending = 1; expect(queue.ready).toBe(false);
+    second(); await Promise.resolve(); expect(queue.ready).toBe(true);
+  });
+
   it('waits for all scripted submissions, so an older completion cannot reopen a busy GPU', async () => {
     const queue = new FrameQueue();
     let first!: () => void, second!: () => void;

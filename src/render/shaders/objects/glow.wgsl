@@ -33,6 +33,6 @@ struct GlowOut {
   let profile = (1.0 - s2) * (1.0 - s2) * exp(-2.0 * s2);
   let energy = clamp(0.04 / in.halfWidth, 0.25, 1.0);
   let ap = sampleAerialPerspective(in.pos.xy * frame.screen.zw, in.dist);
-  let shown = glowShown(led.a, energy);
+  let shown = glowShown(led.a, energy) * glowNearFade(in.dist);
   return vec4f(led.rgb * (shown * profile) * ap.a, 0.0);
 }

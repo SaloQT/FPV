@@ -61,8 +61,12 @@ try {
   page.on('console', (m) => { const t = m.type(); const s = `[${t}] ${m.text()}`; if (t === 'error') errors.push(s); else if (args.verbose || t === 'warning') logs.push(s); });
   page.on('pageerror', (e) => errors.push(`[pageerror] ${e.stack ?? e.message}`));
   const url = base + (args.query ? (base.includes('?') ? '&' : '?') + args.query : '');
+  const tLoad = Date.now();
   await page.goto(url, { waitUntil: 'load' });
   const ready = await page.waitForFunction(() => window.__fpv && (window.__fpv.ready || window.__fpv.error), null, { timeout: waitMs }).then(() => true).catch(() => false);
+  // Start-up timing: page load to ready, and each render module's init and setScene (the slow stages show up here first).
+  const timings = await page.evaluate(() => window.__fpv?.stats?.initTimings ?? []).catch(() => []);
+  console.error(`shot: ready after ${((Date.now() - tLoad) / 1000).toFixed(1)} s; ${timings.filter((t) => t.ms >= 50).map((t) => `${t.stage} ${(t.ms / 1000).toFixed(1)} s`).join(', ') || 'no module stage over 50 ms'}`);
   if (!ready) { errors.push(`[harness] window.__fpv.ready not set within ${waitMs}ms`); }
   const fpvErr = await page.evaluate(() => window.__fpv?.error ?? null);
   if (fpvErr) errors.push(`[app] ${fpvErr}`);

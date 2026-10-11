@@ -71,7 +71,7 @@ export function runOptions(args) {
   if (!size) throw new Error('--size must be WIDTHxHEIGHT');
   const workload = args.workload ?? 'terrain-flight', quality = args.quality ?? 'high';
   if (!['stationary', 'terrain-flight', 'fpv-flight'].includes(workload)) throw new Error('Unknown workload');
-  if (!['low', 'medium', 'high', 'ultra'].includes(quality)) throw new Error('Unknown quality');
+  if (!['low', 'medium', 'high', 'ultra', 'extreme'].includes(quality)) throw new Error('Unknown quality');
   const backend = args.backend ?? (process.platform === 'win32' ? 'd3d12' : process.platform === 'darwin' ? 'metal' : 'vulkan');
   if (!['d3d12', 'vulkan', 'metal'].includes(backend)) throw new Error('Hardware backend must be d3d12, vulkan or metal');
   if (args.profile !== undefined && args.profile !== true) throw new Error('--profile is a flag');

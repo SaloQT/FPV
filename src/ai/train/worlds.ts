@@ -2,12 +2,13 @@
  * Training worlds: the game's own terrain, track, start pad and colliders (track boxes plus the trees and rocks the vegetation
  * module scatters), built exactly as the app builds them, and packed into the GPU buffers world.wgsl reads.
  *
- * A world's track comes from a generator style, from a track-builder recipe, or from a track file (a TrackData built on the
- * terrain of the same seed and quality).
+ * A world's track comes from a generator style, from a track-builder recipe, from a track file (a TrackData built on the
+ * terrain of the same seed and quality), or is a theme park's flight route (its race course, its tour or one of its coasters).
  */
 import type { GeneratedStyle, ObstacleCollider, TerrainData, TerrainQuality, TerrainSampler, TrackData, TrackRecipe, Vec3 } from '../../contracts';
 import { PadGround } from '../../app/padGround';
-import { buildTrack, type TrackStyle } from '../../app/world';
+import { buildTrack, type TrackResult, type TrackStyle } from '../../app/world';
+import type { ShareWorld } from '../../ui/seedModel';
 import { buildColliders } from '../../render/vegetation/colliders';
 import { TIER_LIMITS, placeVegetation } from '../../render/vegetation/placement';
 import { generateTerrain } from '../../world/terrain/generate';
@@ -16,6 +17,11 @@ import { trackColliders } from '../../world/track/colliders';
 import { archSpring, trackGateFrame } from '../../world/track/gate';
 import { generateTrack } from '../../world/track/generator';
 import { validateTrack } from '../../world/track/validate';
+import { buildPark } from '../../world/park/build';
+import { parkSenseColliders } from '../../world/park/raceColliders';
+import { parkPilotTrack } from '../../world/park/pilotGates';
+import { defaultParkRecipe } from '../../world/park/recipe';
+import type { ParkSize } from '../../world/park/types';
 import { GRID_CELL, PROXY_REACH } from '../gpu/quadConsts';
 import { gateShape } from '../spec';
 import { PATH_WORDS, packPath } from './pathProgress';
@@ -31,7 +37,13 @@ export interface TrainWorld {
   track: TrackData;
   colliders: ObstacleCollider[];
   /** Where the track came from (default 'style'). */
-  source?: 'style' | 'recipe' | 'file';
+  source?: 'style' | 'recipe' | 'file' | 'park';
+  /** The park size of a theme park world (its seed is `seed`). */
+  park?: ParkSize;
+  /** The route a theme park world flies. */
+  parkRoute?: ParkRoute;
+  /** What a game share link carries to rebuild this world (as the app's worldLink); none for a track file. */
+  share?: ShareWorld;
   /** Problems validateTrack found in a track file (the world still trains). */
   warnings?: string[];
 }
@@ -47,21 +59,35 @@ interface WorldOptions {
   vegetation?: boolean;
 }
 
-/** A generator style, a track-builder recipe (style 'custom') or a ready track on the terrain of `seed`. */
+/**
+ * A generator style, a track-builder recipe (style 'custom') or a ready track on the terrain of `seed`, or the race course of
+ * the theme park of `seed` and size `park` along `parkRoute` (default its race course).
+ */
 export type WorldSpec = WorldOptions & (
-  | { style: GeneratedStyle; recipe?: undefined; track?: undefined }
-  | { recipe: TrackRecipe; style?: undefined; track?: undefined }
-  | { track: TrackData; style?: undefined; recipe?: undefined }
+  | { style: GeneratedStyle; recipe?: undefined; track?: undefined; park?: undefined }
+  | { recipe: TrackRecipe; style?: undefined; track?: undefined; park?: undefined }
+  | { track: TrackData; style?: undefined; recipe?: undefined; park?: undefined }
+  | { park: ParkSize; parkRoute?: ParkRoute; style?: undefined; recipe?: undefined; track?: undefined }
 );
 
 export function buildTrainWorld(spec: WorldSpec): TrainWorld {
-  const terrain = generateTerrain({ seed: spec.seed, quality: spec.quality ?? 'low' });
+  if (spec.park) return parkWorld(spec.seed, spec.park, spec.parkRoute ?? 'race', spec.vegetation !== false);
+  const quality = spec.quality ?? 'low';
+  const terrain = generateTerrain({ seed: spec.seed, quality });
   const sampler = createTerrainSampler(terrain);
   let made: TrackData;
   let seed = spec.seed;
   let style: TrackStyle;
   let source: TrainWorld['source'];
+  let share: ShareWorld | undefined;
   const warnings: string[] = [];
+  const shareOf = (res: TrackResult): ShareWorld => {
+    const r = res.request;
+    const s: ShareWorld = { terrainSeed: spec.seed, trackSeed: r.seed, style: r.style, gateCount: r.gateCount, laps: r.laps, difficulty: r.difficulty, quality };
+    const recipe = res.track.recipe ?? r.recipe;
+    if (recipe !== undefined) s.recipe = recipe;
+    return s;
+  };
   if (spec.track) {
     made = fileTrack(spec.track, sampler, warnings);
     style = made.style;
@@ -75,22 +101,63 @@ export function buildTrainWorld(spec: WorldSpec): TrainWorld {
     seed = res.seed;
     style = res.style;
     source = 'recipe';
+    share = shareOf(res);
   } else {
     const res = buildTrack(sampler, { seed: spec.seed, style: spec.style, gateCount: spec.gateCount ?? 12, laps: spec.laps ?? 3, difficulty: spec.difficulty ?? 0.5 }, { generateTrack });
     made = res.track;
     seed = res.seed;
     style = res.style;
     source = 'style';
+    share = shareOf(res);
   }
-  const ground = new PadGround(sampler, made);
-  const track: TrackData = Number.isFinite(ground.padTop)
-    ? { ...made, start: { pos: [made.start.pos[0], ground.padTop, made.start.pos[2]], yaw: made.start.yaw } }
-    : made;
-  const colliders = trackColliders(made, sampler);
-  if (spec.vegetation !== false) for (const c of buildColliders(placeVegetation(terrain, made, TIER_LIMITS.ultra))) colliders.push(c);
-  const w: TrainWorld = { seed, style, terrain, sampler, ground, track, colliders, source };
+  const w: TrainWorld = { seed, style, ...onPad(terrain, sampler, made, spec.vegetation !== false), source };
   if (warnings.length) w.warnings = warnings;
+  if (share) w.share = share;
   return w;
+}
+
+/**
+ * The track on its pad, and the track boxes plus the trees and rocks the vegetation module scatters, as the game builds them.
+ * `flown` is the track the drones fly when it is not `made` itself (a park route's pilot track, whose extra gates have no frames).
+ */
+function onPad(terrain: TerrainData, sampler: TerrainSampler, made: TrackData, vegetation: boolean, flown: TrackData = made): Pick<TrainWorld, 'terrain' | 'sampler' | 'ground' | 'track' | 'colliders'> {
+  const ground = new PadGround(sampler, flown);
+  const track: TrackData = Number.isFinite(ground.padTop)
+    ? { ...flown, start: { pos: [flown.start.pos[0], ground.padTop, flown.start.pos[2]], yaw: flown.start.yaw } }
+    : flown;
+  const colliders = trackColliders(made, sampler);
+  if (vegetation) for (const c of buildColliders(placeVegetation(terrain, made, TIER_LIMITS.ultra))) colliders.push(c);
+  return { terrain, sampler, ground, track, colliders };
+}
+
+/** A theme park flight route: its race course, its tour, or the guide along coaster number n (zero-based). */
+export type ParkRoute = 'race' | 'tour' | number;
+
+/**
+ * A theme park route as the game's AI pilots fly it: the park built with that flight route, the route laid out for a brain
+ * (parkPilotTrack: hoops along a coaster's guide, a start pad 10 m behind gate 0). The park itself comes in as box stand-ins
+ * round the line (parkSenseColliders): the drones sense them and crash into them, the moving rides' swept space included.
+ */
+function parkWorld(seed: number, size: ParkSize, route: ParkRoute, vegetation: boolean): TrainWorld {
+  const coaster = typeof route === 'number';
+  const built = buildPark({ ...defaultParkRecipe(seed, size), route: coaster ? 'coaster' : route, coaster: coaster ? route : 0, guests: 0 });
+  const want = coaster ? `coaster-${route}` : route, made = built.track;
+  if (made.parkCourse !== want) throw new Error(`the ${size} park of seed ${seed} has no ${coaster ? `coaster ${route}` : `${route} route`}`);
+  const flown = parkPilotTrack(built.park, made);
+  if (!flown) throw new Error(`the ${want} route of the ${size} park of seed ${seed} has no line to fly`);
+  const w: TrainWorld = { seed: built.park.recipe.seed, style: made.style, ...onPad(built.terrain, createTerrainSampler(built.terrain), made, vegetation, flown), source: 'park', park: size, parkRoute: route };
+  for (const c of parkSenseColliders(built.park, made)) w.colliders.push(c);
+  return w;
+}
+
+/** A park list item as `train.mjs --parks` takes it: seed[:compact|destination|mega][:race|tour|coasterN]. */
+export function parseParkItem(item: string): { seed: number; park: ParkSize; parkRoute: ParkRoute } {
+  const [seed, size = 'destination', route = 'race', extra] = item.trim().split(':');
+  const n = /^coaster(\d+)$/.exec(route);
+  if (extra !== undefined || !/^\d+$/.test(seed) || !['compact', 'destination', 'mega'].includes(size) || !(route === 'race' || route === 'tour' || n)) {
+    throw new Error(`not a park: ${item} (seed[:compact|destination|mega][:race|tour|coasterN])`);
+  }
+  return { seed: Number(seed), park: size as ParkSize, parkRoute: n ? Number(n[1]) : route as 'race' | 'tour' };
 }
 
 /**

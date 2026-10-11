@@ -79,7 +79,7 @@ describe('sky shaders never store a value fp16 turns into Inf', () => {
   });
 
   it('the cloud march and the aerial froxels clamp their stores', () => {
-    expect(lines('cloud_march.wgsl').join('\n')).toContain('min((c.rgb + c.a * i.rgb) / CLOUD_STORE_SCALE, vec3f(FP16_STORE_MAX))');
+    expect(lines('cloud_march.wgsl').join('\n')).toContain('min((c.rgb + c.a * i.rgb) / cloudStoreScale(), vec3f(FP16_STORE_MAX))');
     expect(lines('aerial.wgsl').join('\n')).toContain('vec4f(min(lum, vec3f(FP16_STORE_MAX)),');
   });
 

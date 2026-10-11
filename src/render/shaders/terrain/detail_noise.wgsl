@@ -67,8 +67,8 @@ fn pCell(uv : vec2f, freq : i32, seed : u32) -> Cell {
   let f = p - base;
   let i = vec2i(base);
   var c = Cell(8.0, 8.0, 0.0, vec2f(0.0));
-  for (var y = -1; y <= 1; y++) {
-    for (var x = -1; x <= 1; x++) {
+  for (var y = -bounds.x; y <= bounds.x; y++) {
+    for (var x = -bounds.x; x <= bounds.x; x++) {
       let cell = vec2i(x, y);
       let h = hash2(wrapLattice(i + cell, vec2i(freq)), seed);
       let pt = vec2f(cell) + vec2f(f01(h), f01(pcgh(h))) - f;
@@ -100,8 +100,8 @@ fn pStones(uv : vec2f, freq : i32, seed : u32, rLo : f32, rHi : f32, elong : f32
   let f = p - base;
   let i = vec2i(base);
   var best = Stone(-1.0, 0.0, 1.0, vec2f(0.0));
-  for (var y = -1; y <= 1; y++) {
-    for (var x = -1; x <= 1; x++) {
+  for (var y = -bounds.x; y <= bounds.x; y++) {
+    for (var x = -bounds.x; x <= bounds.x; x++) {
       let cell = vec2i(x, y);
       let h0 = hash2(wrapLattice(i + cell, vec2i(freq)), seed);
       let h1 = pcgh(h0);

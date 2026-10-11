@@ -15,9 +15,10 @@ function needleDist(n: Needle, u: number, v: number): number {
 
 /** Texels per tile side of the splat raster: the leaf atlas tile size, so each texel centre the atlas samples reads exactly one needle. */
 export const NEEDLE_RES = 512;
+const NEEDLE_RES_DEFAULT = NEEDLE_RES;
 
 /** Painter over capsules, later ones on top: each capsule is splatted once into an id raster, so a spray of 100000 needles costs about as much as one of 1000. */
-function needlePainter(needles: readonly Needle[], extra: Painter | null): Painter {
+function needlePainter(needles: readonly Needle[], extra: Painter | null, NEEDLE_RES = NEEDLE_RES_DEFAULT): Painter {
   const ids = new Int32Array(NEEDLE_RES * NEEDLE_RES).fill(-1);
   needles.forEach((n, id) => {
     const x0 = Math.max(Math.floor((Math.min(n.ax, n.bx) - n.r) * NEEDLE_RES), 0), x1 = Math.min(Math.ceil((Math.max(n.ax, n.bx) + n.r) * NEEDLE_RES), NEEDLE_RES - 1);
@@ -33,13 +34,19 @@ function needlePainter(needles: readonly Needle[], extra: Painter | null): Paint
   };
 }
 
-const WOOD_SHADE = 0.32;
+/** Shoots and the leader are orange-brown bark, not dark green. */
+const WOOD_SHADE = 0.38;
+const WOOD_HUE = 0.85;
+/** Fine shoots inside a spray are young bark, still mostly green. */
+const SHOOT_HUE = 0.15;
 /** Needle radius in tile units: about 1.3 texels across at 512 texels per tile, so a needle on a 1.5 m spray is about 4 mm wide where a real one is 1.5. */
 export const NEEDLE_R = 0.0013;
 /** Spacing of needles along a shoot: a real spruce shoot carries one every 1.5-2 mm all round, about 1 mm per side on a 1.5 m card. */
 const NEEDLE_STEP = 0.0013;
 /** Distance between secondary branchlets along a side shoot: about 3 cm on a 1.5 m spray. */
 const SUB_STEP = 0.02;
+/** Needles painted at each step along a shoot (one fewer at random). */
+const NEEDLES_PER_STEP = 8;
 
 /**
  * Bottle-brush shoot from (sx, sy) along `ang` (clockwise from up), drooping by `sag` and turning its tip up again: a thin stem with
@@ -56,16 +63,18 @@ function shoot(rng: Rng, out: Needle[], sx: number, sy: number, ang: number, rea
     x += Math.sin(a) * reach / steps;
     y -= Math.cos(a) * 0.9 * reach / steps;
     if (k % 6 === 0 || k === steps) {
-      out.push({ ax: prevX, ay: prevY, bx: x, by: y, r: 0.0011, shade: 0.42, hue: 0, open, tu: 0, tv: 0 });
+      out.push({ ax: prevX, ay: prevY, bx: x, by: y, r: 0.0011, shade: 0.45, hue: SHOOT_HUE, open, tu: 0, tv: 0 });
       prevX = x; prevY = y;
     }
     if (f < 0.04) continue;
     const len = needle * (0.65 + 0.35 * Math.sin(Math.PI * Math.min(f * 0.9 + 0.1, 1))) * rng.range(0.8, 1.2);
     const fresh = sat((f - 0.72) / 0.28);
-    const count = rng.next() < 0.5 ? 4 : 3;
+    // Needles stand all round a real shoot, so seen from any side its brush is nearly solid out to the needle tips: two on the flanks and the
+    // rest spread over the brush (with three or four a spray card painted only a quarter of its tile and a crown of them read as a skeleton).
+    const count = rng.next() < 0.5 ? NEEDLES_PER_STEP : NEEDLES_PER_STEP - 1;
     for (let j = 0; j < count; j++) {
       const flank = j % 2 === 0 ? -1 : 1;
-      const spread = j >= 2 ? rng.range(-0.45, 0.45) : flank * rng.range(0.4, 1.2);
+      const spread = j >= 2 ? rng.range(-1, 1) : flank * rng.range(0.4, 1.2);
       const na = a + spread;
       out.push({
         ax: x, ay: y, bx: x + Math.sin(na) * len, by: y - Math.cos(na) * len * 0.9, r: NEEDLE_R,
@@ -82,13 +91,18 @@ function shoot(rng: Rng, out: Needle[], sx: number, sy: number, ang: number, rea
  * shoots, every one a fine bottle-brush of forward-swept needles. Older needles near the base are darker; the new growth at the tips is a
  * paler yellow-green.
  */
-export function sprayPainter(rng: Rng): Painter {
-  const needles: Needle[] = [];
+/** Where a spray tile's leader and side shoots run (tile coordinates), so the tree can build the spray as real shoots. */
+export interface SprayLayout { leader: [number, number][]; shoots: { ax: number; ay: number; bx: number; by: number }[] }
+
+export function sprayPainter(rng: Rng, res = NEEDLE_RES): Painter & { spray: SprayLayout } {
+  const needles: Needle[] = [], layout: SprayLayout = { leader: [], shoots: [] };
   const leader = (t: number): [number, number] => [0.5 + 0.03 * Math.sin(t * 2.6), 0.97 - 0.85 * t];
   for (let i = 0; i < 14; i++) {
     const [ax, ay] = leader(i / 14), [bx, by] = leader((i + 1) / 14);
-    needles.push({ ax, ay, bx, by, r: 0.0026, shade: WOOD_SHADE, hue: 0, open: 0.8, tu: 0, tv: 0 });
+    needles.push({ ax, ay, bx, by, r: 0.0026, shade: WOOD_SHADE, hue: WOOD_HUE, open: 0.8, tu: 0, tv: 0 });
+    layout.leader.push([ax, ay]);
   }
+  layout.leader.push(leader(1));
   const shoots = 17;
   for (let s = 0; s < shoots; s++) {
     const t = Math.min(0.03 + 0.9 * ((s + rng.range(-0.3, 0.3)) / (shoots - 1)), 0.93);
@@ -98,6 +112,7 @@ export function sprayPainter(rng: Rng): Painter {
       const reach = 0.4 * (1 - 0.6 * t) * rng.range(0.65, 1.12);
       const ang = side * (1.1 - 0.35 * t + rng.range(-0.18, 0.18));
       const [ex, ey] = shoot(rng, needles, sx, sy, ang, reach, 0.0135, 0.8, rng.range(0.15, 0.5));
+      layout.shoots.push({ ax: sx, ay: sy, bx: ex, by: ey });
       const subs = Math.round(reach / SUB_STEP);
       for (let k = 0; k < subs; k++) {
         if (rng.next() < 0.12) continue;
@@ -109,7 +124,80 @@ export function sprayPainter(rng: Rng): Painter {
   }
   const [tx, ty] = leader(1);
   shoot(rng, needles, tx, ty + 0.02, 0, 0.07, 0.011, 1, 0);
-  return needlePainter(needles, null);
+  return Object.assign(needlePainter(needles, null, res), { spray: layout });
+}
+
+/**
+ * Scots pine branch end: three or four branchlets fanning out from the card's base, each forking once into a whorl of side shoots, and every
+ * shoot a dense brush of paired needles 5 to 8 cm long that point forward and outward, fullest just behind the tip. Needles are grey to
+ * blue-green, a little paler on the newest growth, with a few yellowing needles of the oldest year class deep inside the brush. With
+ * `single`, one branchlet standing straight up the tile with its whorl and needles in proportion to it: the shoot the near LOD builds a pine's
+ * branch ends from.
+ */
+export function pinePainter(rng: Rng, res = NEEDLE_RES, single = false): Painter {
+  const needles: Needle[] = [];
+  // A single shoot is drawn about half a metre long, so its needles are a larger share of it: 5 to 8 cm on a real shoot of 30 to 50.
+  const needleScale = single ? 1.9 : 1;
+  const brush = (x: number, y: number, ang: number, reach: number, curl: number, depth: number): void => {
+    let px = x, py = y;
+    const steps = Math.max(8, Math.round(reach / 0.0028));
+    for (let k = 1; k <= steps; k++) {
+      const f = k / steps, a = ang + curl * f;
+      x += Math.sin(a) * reach / steps; y -= Math.cos(a) * reach / steps;
+      if (k % 5 === 0 || k === steps) { needles.push({ ax: px, ay: py, bx: x, by: y, r: 0.0024 * (1 - 0.5 * f), shade: WOOD_SHADE, hue: WOOD_HUE, open: 0.6, tu: 0, tv: 0 }); px = x; py = y; }
+      if (depth === 0 && k === Math.round(steps * rng.range(0.45, 0.6))) {
+        // The whorl: two side shoots leave the branchlet about half way out.
+        for (const side of [-1, 1]) brush(x, y, a + side * rng.range(0.5, 0.85), reach * rng.range(0.4, 0.55), -side * rng.range(0, 0.3), 1);
+      }
+      if (f < 0.3) continue;
+      // Needle pairs every few millimetres of shoot; the brush is fullest about two thirds of the way out.
+      const full = Math.sin(Math.PI * Math.min((f - 0.3) / 0.75, 1));
+      // Pairs stand all round the shoot; seen from the side about two pairs per step fill the brush.
+      for (let j = 0; j < 4; j++) {
+        const side = j % 2 === 0 ? -1 : 1;
+        const na = a + side * rng.range(j < 2 ? 0.35 : 0.1, 1.05);
+        const len = (0.024 + 0.018 * full) * rng.range(0.8, 1.15) * needleScale;
+        const old = f < 0.5 && rng.next() < 0.07;
+        needles.push({
+          ax: x, ay: y, bx: x + Math.sin(na) * len, by: y - Math.cos(na) * len, r: NEEDLE_R,
+          shade: (0.55 + 0.4 * rng.next()) * (0.8 + 0.25 * f), hue: old ? 0.7 + 0.2 * rng.next() : f > 0.85 && rng.next() < 0.4 ? 0.25 + 0.1 * rng.next() : 0.06 * rng.next(),
+          open: (0.55 + 0.45 * f) * (depth === 0 ? 1 : 0.9), tu: side * 0.45 + rng.range(-0.2, 0.2), tv: rng.range(-0.3, 0.3),
+        });
+      }
+    }
+  };
+  if (single) brush(0.5, 0.955, rng.range(-0.05, 0.05), 0.86, rng.range(-0.1, 0.1), 0);
+  else {
+    const n = rng.int(3, 4);
+    for (let s = 0; s < n; s++) {
+      const ang = -0.6 + 1.2 * ((s + rng.range(-0.2, 0.2)) / (n - 1));
+      brush(0.5, 0.955, ang, rng.range(0.7, 0.85) * (1 - 0.25 * Math.abs(ang)), rng.range(-0.2, 0.2), 0);
+    }
+  }
+  // Nothing may reach the tile border, where bilinear taps and mips would bleed into the neighbouring tile.
+  const inside = (x: number, y: number): boolean => x > 0.01 && x < 0.99 && y > 0.01 && y < 0.99;
+  return needlePainter(needles.filter((k) => inside(k.ax, k.ay) && inside(k.bx, k.by)), null, res);
+}
+
+/**
+ * A hanging spruce branchlet seen from the side, painted base at the bottom and tip at the top of the tile: a thin shoot densely clothed all
+ * round in short needles (a bottle-brush), with alternate side shoots that shorten toward the tip. Needles next to the shoot are more enclosed
+ * than the outer ones, and the new growth at the tips is paler. The tree drapes these along curved ribbons hanging from each branch.
+ */
+export function brushPainter(rng: Rng, res = NEEDLE_RES): Painter {
+  const needles: Needle[] = [];
+  const ang = rng.range(-0.08, 0.08);
+  const [tx, ty] = shoot(rng, needles, 0.5, 0.97, ang, 0.9, 0.05, 0.6, rng.range(0, 0.15));
+  const subs = rng.int(8, 11);
+  for (let k = 0; k < subs; k++) {
+    const f = 0.08 + 0.8 * (k + rng.range(-0.3, 0.3)) / subs;
+    const sx = 0.5 + (tx - 0.5) * f, sy = 0.97 + (ty - 0.97) * f;
+    const side = k % 2 === 0 ? 1 : -1;
+    shoot(rng, needles, sx, sy, ang + side * rng.range(0.55, 1.0), rng.range(0.2, 0.32) * (1 - 0.45 * f), 0.038, 0.8, rng.range(0.1, 0.35));
+  }
+  // Nothing may reach the tile border, where bilinear taps and mips would bleed into the neighbouring tile.
+  const inside = (x: number, y: number): boolean => x > 0.01 && x < 0.99 && y > 0.01 && y < 0.99;
+  return needlePainter(needles.filter((k) => inside(k.ax, k.ay) && inside(k.bx, k.by)), null, res);
 }
 
 /** A drooping branch seen from the side: a tapered capsule from the trunk (ax, ay) to the tip (bx, by), radius r0 at the trunk and r1 at the tip. */

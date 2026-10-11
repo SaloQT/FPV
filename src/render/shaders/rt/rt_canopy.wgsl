@@ -39,6 +39,21 @@ fn canopyJitter(o : vec3f, d : vec3f) -> f32 {
   return hash31(bitcast<vec3u>(o * 97.0 + d * 1013.0 + vec3f(f32(frameIndex() & 1023u) * 0.7548776662)));
 }
 
+// A ray that starts inside crown sphere `i` (a GI ray leaving a leaf of that crown) meets the crown where it leaves it: the distance to the
+// sphere's far side, or NO_HIT for a ray from outside (the plain sphere test finds its entry). Without this the ray would pass through its
+// own crown as if it were open sky, and every leaf inside a crown would be lit by the whole sky (rt_scene.wgsl hitRadianceChord then blends
+// the crown's scattered light with the sky by the chord's transmittance from the leaf out).
+fn canopyInsideExit(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
+  let c = bitcast<vec4f>(primWord(i, 0u)).xyz;
+  let r = bitcast<vec4f>(primWord(i, 1u)).w;
+  let oc = o - c;
+  let inside = r * r - dot(oc, oc);
+  if (inside <= 0.0) { return NO_HIT; }
+  let b = dot(oc, d);
+  let t = -b + sqrt(b * b + inside);
+  return select(NO_HIT, t, t > T_EPS && t <= tMax);
+}
+
 // Optical depth of crown sphere `i` along o + t*d (unit d) within [0, tMax].
 fn canopyOpticalDepth(i : u32, o : vec3f, d : vec3f, tMax : f32) -> f32 {
   let c = bitcast<vec4f>(primWord(i, 0u)).xyz;

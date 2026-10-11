@@ -1,7 +1,7 @@
 import type { RenderContext } from '../contracts';
 import type { PackedInstances } from './instanceData';
 import { ARGS_BYTES, ARGS_WORDS, type TreeAssets } from './treeAssets';
-import { DRAW_COUNT, FIRST_ROCK, LOD_COUNT, VARIANT_COUNT } from './variants';
+import { DRAW_COUNT, LOD_COUNT, VARIANT_COUNT, isRockVariant } from './variants';
 
 const COUNT_BYTES = DRAW_COUNT * 4;
 const SAMPLE_INTERVAL = 30;
@@ -25,6 +25,8 @@ export class TreeSystem {
   /** True once a counter readback has completed. */
   sampled = false;
   private readonly instances: GPUBuffer;
+  /** One bit per slot: the tree has GI proxies (tree.wgsl crownAo). */
+  private readonly proxied: GPUBuffer;
   private readonly variantTable: GPUBuffer;
   private readonly counters: GPUBuffer;
   private readonly visible: GPUBuffer;
@@ -46,6 +48,7 @@ export class TreeSystem {
     this.bufferBytes = this.instanceBytes + packed.variants.byteLength + visibleBytes + COUNT_BYTES + ARGS_BYTES;
     this.instances = dev.createBuffer({ label: 'tree-instances', size: this.instanceBytes, usage: S | GPUBufferUsage.COPY_DST });
     dev.queue.writeBuffer(this.instances, 0, packed.instances);
+    this.proxied = dev.createBuffer({ label: 'tree-proxied', size: Math.max(16, Math.ceil(packed.slots / 32) * 4), usage: S | GPUBufferUsage.COPY_DST });
     this.variantTable = dev.createBuffer({ label: 'tree-variants', size: packed.variants.byteLength, usage: S | GPUBufferUsage.COPY_DST });
     dev.queue.writeBuffer(this.variantTable, 0, packed.variants);
     this.counters = dev.createBuffer({ label: 'tree-counts', size: COUNT_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
@@ -78,13 +81,24 @@ export class TreeSystem {
             entry(3, this.variantTable),
             { binding: 4, resource: assets.atlasView },
             { binding: 5, resource: assets.atlasDataView },
+            { binding: 6, resource: assets.barkNoiseView },
+            { binding: 7, resource: assets.leafSampler },
+            { binding: 8, resource: assets.barkColourView },
+            { binding: 9, resource: assets.barkSurfaceView },
+            { binding: 10, resource: assets.barkSampler },
+            entry(11, this.proxied),
           ],
         }),
       });
     };
     // Plants grouped by LOD so a pipeline is set once per LOD, rocks last.
-    for (let lod = 0; lod < LOD_COUNT; lod++) for (let v = 0; v < FIRST_ROCK; v++) if (packed.count[v] > 0) addDraw(v, lod);
-    for (let v = FIRST_ROCK; v < VARIANT_COUNT; v++) if (packed.count[v] > 0) for (let lod = 0; lod < LOD_COUNT; lod++) addDraw(v, lod);
+    for (let lod = 0; lod < LOD_COUNT; lod++) for (let v = 0; v < VARIANT_COUNT; v++) if (!isRockVariant(v) && packed.count[v] > 0) addDraw(v, lod);
+    for (let v = 0; v < VARIANT_COUNT; v++) if (isRockVariant(v) && packed.count[v] > 0) for (let lod = 0; lod < LOD_COUNT; lod++) addDraw(v, lod);
+  }
+
+  /** Marks which slots hold a tree with GI proxies: one bit per slot (tree.wgsl crownAo). */
+  setProxied(rc: RenderContext, bits: Uint32Array): void {
+    rc.device.queue.writeBuffer(this.proxied, 0, bits.buffer, bits.byteOffset, Math.min(bits.byteLength, this.proxied.size));
   }
 
   /** Call from update(): finishes the counter readback started by an earlier frame's encodePre, once that frame was submitted. */
@@ -99,7 +113,7 @@ export class TreeSystem {
       this.counts.plantLod.fill(0);
       this.counts.rockLod.fill(0);
       for (let k = 0; k < DRAW_COUNT; k++) {
-        const into = Math.floor(k / LOD_COUNT) >= FIRST_ROCK ? this.counts.rockLod : this.counts.plantLod;
+        const into = isRockVariant(Math.floor(k / LOD_COUNT)) ? this.counts.rockLod : this.counts.plantLod;
         into[k % LOD_COUNT] += c[k];
       }
       this.sampled = true;
@@ -161,6 +175,6 @@ export class TreeSystem {
   }
 
   destroy(): void {
-    for (const buf of [this.instances, this.variantTable, this.counters, this.visible, this.args, this.staging]) buf?.destroy();
+    for (const buf of [this.proxied, this.instances, this.variantTable, this.counters, this.visible, this.args, this.staging]) buf?.destroy();
   }
 }

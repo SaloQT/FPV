@@ -12,6 +12,25 @@ function host(mods: RenderModule[]) {
 }
 
 describe('ModuleHost', () => {
+  it('waits for the background work of every module after all inits, and reports one that fails without holding up the rest', async () => {
+    const log: string[] = [];
+    let finish!: () => void;
+    const slow = new Promise<void>((done) => { finish = done; });
+    const mods: RenderModule[] = [
+      { name: 'objects', init: () => { log.push('init objects'); }, ready: () => slow.then(() => { log.push('objects ready'); }) },
+      { name: 'rt', init: () => { log.push('init rt'); } },
+      { name: 'bad', init: () => {}, ready: () => Promise.reject(new Error('compile failed')) },
+    ];
+    const { h, reports } = host(mods);
+    const done = h.init(rc).then(() => log.push('host ready'));
+    await Promise.resolve();
+    expect(log).toEqual(['init objects', 'init rt']);
+    finish();
+    await done;
+    expect(log).toEqual(['init objects', 'init rt', 'objects ready', 'host ready']);
+    expect(reports.length).toBe(1);
+  });
+
   it('calls hooks in array order', async () => {
     const log: string[] = [];
     const mk = (name: string): RenderModule => ({ name, init: () => { log.push(`init ${name}`); }, encodePre: () => { log.push(`pre ${name}`); } });

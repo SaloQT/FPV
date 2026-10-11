@@ -31,7 +31,7 @@ fn gtVisible(extent : f32, size : f32) -> f32 {
 fn grassClumpTone(xz : vec2f, fp : f32) -> vec3f {
   let tuft = mix(0.5, gtValue(xz * 2.2), gtVisible(fp, 0.45));
   let swath = mix(0.5, gtValue(xz * 0.55 + vec2f(17.0, 5.0)), gtVisible(fp, 1.8));
-  return (0.7 + 0.6 * tuft) * mix(vec3f(0.96, 0.99, 1.07), vec3f(1.04, 1.01, 0.92), swath);
+  return (0.7 + 0.6 * tuft) * mix(vec3f(0.97, 1.0, 0.98), vec3f(1.04, 1.01, 0.88), swath);
 }
 
 // One band of streaks: value noise stretched along e2 (`sv` metres) and narrow across it (`su` metres). The band is resolved only when the

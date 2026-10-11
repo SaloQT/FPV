@@ -80,6 +80,8 @@ function collectStats(ctx: AppCtx): Record<string, unknown> {
     ...ctx.renderer.stats,
     gpuProfiling: ctx.renderer.gpuProfiling,
     errors: ctx.renderer.errors.length,
+    // Wall time of each render module's init and setScene (ms): where a slow start-up goes (tools/shot.mjs prints it).
+    initTimings: ctx.renderer.initTimings.map((t) => ({ stage: t.stage, ms: Math.round(t.ms) })),
     state: s.state,
     physicsMs: s.stats.physicsMs,
     physicsSteps: s.stats.stepsThisFrame,
@@ -102,6 +104,9 @@ function collectStats(ctx: AppCtx): Record<string, unknown> {
     audio: ctx.audio.running,
     builder: ctx.builder.active,
     recipe: w.track.recipe,
+    park: ctx.park ? { recipe: ctx.park.park.recipe, layout: ctx.park.park.layout, elapsed: ctx.park.elapsed, tick: ctx.park.tick,
+      rides: ctx.park.rides.length, bodies: ctx.park.bodies.length,
+      completed: ctx.park.rides.map(s => s.completed), ...ctx.mods.park.stats() } : undefined,
   };
 }
 

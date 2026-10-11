@@ -42,7 +42,7 @@ describe('settings tabs', () => {
     expect(values('targetFps')).toEqual(['0', '60', '120', '144', '165', '240', '360']);
     expect(values('frameCap')).toEqual(['0', '240', '144', '120', '60', '30']);
     expect(values('timeScale')).toEqual(['0', '1', '10', '60', '600']);
-    expect(values('quality')).toEqual(['low', 'medium', 'high', 'ultra', 'perf240']);
+    expect(values('quality')).toEqual(['low', 'medium', 'high', 'ultra', 'extreme', 'perf240']);
     expect(values('quadPreset')).toEqual(['QUAD_5IN_6S', 'QUAD_3IN_4S']);
   });
 

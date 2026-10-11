@@ -170,6 +170,11 @@ export class AudioEngine {
     this.pendingDt = 0;
   }
 
+  /** The race was finished: the landing that follows is not a lost quad, whatever it hit on the way. */
+  flightCompleted(): void {
+    this.events.completed();
+  }
+
   dispose(): void {
     this.disposed = true;
     this.ready = false;

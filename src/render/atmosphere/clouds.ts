@@ -1,4 +1,4 @@
-import type { RenderContext } from '../contracts';
+import { isExtreme, type RenderContext } from '../contracts';
 import { LUNAR_ROWS } from './celestial';
 import { CLOUD_SHADOW_SIZE } from './cloudModel';
 import type { CloudNoise } from './cloudNoise';
@@ -108,6 +108,15 @@ export class CloudLayer {
     this.historyValid = enabled;
   }
 
+  /** Back to a new layer's frame state: no history, the jitter sequence from its start, the first history texture next. */
+  restart(): void {
+    this.historyValid = false;
+    this.frameIndex = 0;
+    this.parity = 0;
+    this.resolvedIndex = 0;
+    this.idle = false;
+  }
+
   destroy(): void {
     this.release();
     this.shadow.destroy();
@@ -122,7 +131,8 @@ export class CloudLayer {
   }
 
   private targetSize(): { width: number; height: number } {
-    const g = this.rc.gbuf, div = this.rc.quality.tier === 'low' ? 4 : 2;
+    // Extreme marches the clouds at full resolution, so fine wisps survive.
+    const g = this.rc.gbuf, div = this.rc.quality.tier === 'low' ? 4 : isExtreme(this.rc.quality) ? 1 : 2;
     return { width: Math.max(1, Math.ceil(g.width / div)), height: Math.max(1, Math.ceil(g.height / div)) };
   }
 

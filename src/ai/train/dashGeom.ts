@@ -4,6 +4,7 @@
  * value is a plain number, string, boolean or null, rounded, so the result goes straight through JSON.stringify.
  */
 import type { TrackGate, Vec3 } from '../../contracts';
+import { shareUrl } from '../../ui/seedModel';
 import { GATE_COLORS } from '../../ui/trackPreviewModel';
 import { isRoundObstacle, trackColliders } from '../../world/track/colliders';
 import { archSpring, trackGateFrame } from '../../world/track/gate';
@@ -85,6 +86,16 @@ export interface DashWorld {
   boxes: DashBox[];
   /** Trees and rocks the drones also collide with (not sent, only counted). */
   vegetationColliders: number;
+  /** The game's URL parameters that rebuild this world (its share link: `seed=…&style=…&quality=low`); absent for a track file. */
+  game?: string;
+  /** For a theme park world, what it is: `compact park 7, coaster 1`. */
+  park?: string;
+}
+
+/** The game's URL parameters for a theme park world at the trainer's low graphics, with the park's usual guests. */
+function parkGame(w: TrainWorld): string {
+  const route = w.parkRoute ?? 'race', coaster = typeof route === 'number';
+  return new URLSearchParams({ world: 'theme-park', seed: String(w.seed), size: w.park ?? 'destination', route: coaster ? 'coaster' : route, ...(coaster ? { coaster: String(route) } : {}), quality: 'low' }).toString();
 }
 
 // `+ 0` turns -0 into 0, which JSON writes as 0 anyway.
@@ -111,6 +122,11 @@ export function worldGeometry(w: TrainWorld, index: number): DashWorld {
     obstacles: track.obstacles.map((o) => ({ kind: o.kind, pos: v2(o.pos), yaw: r4(o.yaw), size: v2(o.size), round: isRoundObstacle(o.kind) })),
     boxes: boxes.map((b) => ({ center: v2(b.center), half: v2(b.half), yaw: r4(b.yaw) })),
     vegetationColliders: Math.max(0, w.colliders.length - boxes.length),
+    ...(w.share ? { game: new URL(shareUrl('http://game.invalid/', w.share)).search.slice(1) } : {}),
+    ...(w.source === 'park' ? {
+      game: parkGame(w),
+      park: `${w.park ?? 'destination'} park ${w.seed}, ${typeof w.parkRoute === 'number' ? `coaster ${w.parkRoute}` : w.parkRoute === 'tour' ? 'tour' : 'race course'}`,
+    } : {}),
   };
 }
 

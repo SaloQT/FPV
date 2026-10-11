@@ -13,8 +13,9 @@ const vec = (s: string): number[] => s.split(',').map((x) => Number(x.trim()));
 // Layer ids of ground_palette.wgsl and the broadband albedo (luminance) each must stay inside.
 const LAYER_RANGE: Record<string, [number, number]> = {
   grass: [0.095, 0.25], hay: [0.2, 0.35], dirt: [0.1, 0.25], gravel: [0.15, 0.3], rock: [0.15, 0.3], sand: [0.2, 0.4], snow: [0.6, 0.9], loam: [0.04, 0.25],
+  moss: [0.05, 0.12], litter: [0.08, 0.16], needles: [0.06, 0.12], mud: [0.04, 0.1], cracked: [0.16, 0.3], scree: [0.15, 0.3],
 };
-const LAYER_NAMES = ['grass', 'hay', 'dirt', 'gravel', 'rock', 'sand', 'snow', 'loam'];
+const LAYER_NAMES = ['grass', 'hay', 'dirt', 'gravel', 'rock', 'sand', 'snow', 'loam', 'moss', 'litter', 'needles', 'mud', 'cracked', 'scree'];
 
 function layerColors(): number[][] {
   const body = palette.slice(palette.indexOf('fn glBaseColor'), palette.indexOf('fn glRoughness'));
@@ -37,12 +38,12 @@ describe('ground palette', () => {
 
   it('keeps the grass tints between living turf and straw', () => {
     const tints = [...palette.matchAll(/const GL_GRASS_(\w+) : vec3f = vec3f\(([^)]*)\);/g)].map((m) => ({ name: m[1], c: vec(m[2]) }));
-    expect(tints.map((t) => t.name)).toEqual(['LUSH', 'YELLOW', 'CLOVER', 'DRY']);
+    expect(tints.map((t) => t.name)).toEqual(['LUSH', 'YELLOW', 'CLOVER', 'RUSSET', 'DRY']);
     for (const t of tints) {
       expect(lum(t.c), t.name).toBeGreaterThanOrEqual(0.07);
       expect(lum(t.c), t.name).toBeLessThanOrEqual(0.26);
     }
-    expect(lum(tints[3].c)).toBeGreaterThan(lum(tints[0].c) * 1.5);
+    expect(lum(tints[4].c)).toBeGreaterThan(lum(tints[0].c) * 1.5);
   });
 
   it('keeps soil brown rather than pink or orange: red leads green by less than 1.5x', () => {
@@ -131,6 +132,7 @@ describe('ground and grass shader assembly', () => {
     ['vegetation/grass.wgsl', { NSEG: 1, HAS_TIP: false }],
     ['vegetation/grass_cull.wgsl', {}],
     ['vegetation/grass_finalize.wgsl', {}],
+    ['vegetation/rock.wgsl', {}],
   ];
 
   it.each(entries)('%s resolves its includes with no duplicate functions', (path, defines) => {
@@ -151,7 +153,7 @@ describe('shared grass tone', () => {
     const terrain = resolveShader('terrain/terrain.wgsl');
     expect(terrain.match(/= grassClumpTone\(/g)).toHaveLength(1);
     expect(terrain).toContain('if (lid[k] <= GL_HAY)');
-    expect(terrain).toContain('tone *= turfTone * (1.0 + GT_STREAK_AMP * streak);');
+    expect(terrain).toContain('tone *= turfTone * (1.0 + GT_STREAK_AMP * streak)');
   });
 });
 
@@ -174,8 +176,8 @@ describe('ground dryness is evaluated once per point', () => {
     const fs = fnBody(resolveShader('terrain/terrain.wgsl'), 'fs');
     expect(fs.match(/glDryness\(/g)).toHaveLength(1);
     expect(fs).toContain('let dryField = glDryness(w.xz, maps.w);');
-    expect(fs).toContain('terrainLayerWeightsDry(w.xz, w.y, ts.normal.y, maps, tp.waterLevel, dryField)');
-    expect(fs).toContain('layerMacroColorDry(lid[k], w.xz, w.y, maps, dryField)');
+    expect(fs).toContain('terrainMaterialWeights(w.xz, w.y, ts.normal.y, maps, tp.waterLevel, dryField, coverHere)');
+    expect(fs).toContain('layerMacroColorDry(lid[k], w.xz, w.y, maps, dryField * (1.0 - lawn))');
   });
 
   it('evaluates it once per grass blade-culling thread', () => {
@@ -183,7 +185,17 @@ describe('ground dryness is evaluated once per point', () => {
     expect(main.match(/glDryness\(/g)).toHaveLength(1);
     expect(main).toContain('let dryField = glDryness(xz, maps.w);');
     expect(main).toContain('terrainLayerWeightsDry(xz, y, nrm.y, maps, vp.grass2.z, dryField)');
-    expect(main).toContain('grassTintFromMapsDry(xz, maps, dryField)');
+    expect(main).toContain('grassTintFromMapsDry(xz, maps, dryField * (1.0 - shade))');
+  });
+
+  it('places grass by the eight base layers and thins it under closed crowns, never by the terrain-only refinements', () => {
+    const main = fnBody(resolveShader('vegetation/grass_cull.wgsl'), 'blades_main');
+    expect(main).not.toContain('terrainMaterialWeights');
+    expect(main).toContain('let cover = (lw.lo.x + lw.lo.y) / max(dot(lw.lo, vec4f(1.0)) + dot(lw.hi, vec4f(1.0)), 1.0e-4);');
+    expect(main).toContain('let density = smoothstep(0.08, 0.62, cover) * (0.45 + 0.55 * wetN) * (1.0 - 0.65 * smoothstep(0.75, 0.98, maps.y)) * (1.0 - underCanopy)');
+    expect(main).toContain('* (1.0 - 0.85 * bedHere);');
+    // The refinement starts from the very same base weights.
+    expect(fnBody(resolveShader('terrain/ground_color.wgsl'), 'terrainMaterialWeights')).toContain('let lw = terrainLayerWeightsDry(xz, y, ny, maps, waterLevel, dry);');
   });
 
   it('keeps the public wrappers bit-identical by delegating to the hoisted bodies', () => {

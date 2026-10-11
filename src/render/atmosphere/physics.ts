@@ -18,6 +18,10 @@ export const RAYLEIGH_SCALE_HEIGHT_KM = 8;
 export const MIE_EXTINCTION = 0.1;
 export const MIE_SCATTER = 0.092;
 export const MIE_SCALE_HEIGHT_KM = 1.4;
+/** Boundary-layer haze over the land: per km at the land datum (the observer's altitude), falling with HAZE_SCALE_HEIGHT_KM above it (atmos_params.wgsl). */
+export const HAZE_SCATTER = 0.055;
+export const HAZE_EXTINCTION = 0.06;
+export const HAZE_SCALE_HEIGHT_KM = 0.5;
 /**
  * Aerosol phase function: a narrow diffraction peak (the glare around the sun and moon), a broad forward lobe, a nearly isotropic side lobe
  * and a weak back lobe. A single g = 0.76 lobe is flat out to 16 degrees and spreads a haze over the whole sun side of the sky. Real
@@ -70,7 +74,7 @@ export const TRANSMITTANCE_SIZE = { width: 256, height: 64 } as const;
 export const MULTISCATTER_SIZE = 32;
 export const SKYVIEW_SIZE = { width: 192, height: 108 } as const;
 export const AP_SLICES = 32;
-export const AP_MAX_DISTANCE_M = 12000;
+export const AP_MAX_DISTANCE_M = 40000;
 export const AP_DEPTH_K = 6;
 
 export interface Medium {
@@ -79,15 +83,17 @@ export interface Medium {
   extinction: Vec3;
 }
 
-export function mediumAt(heightKm: number, out: Medium = { scatterRayleigh: [0, 0, 0], scatterMie: 0, extinction: [0, 0, 0] }): Medium {
+/** Medium at a height above sea level; with hazeDatumKm (the land's altitude) the boundary-layer haze over that land is included. */
+export function mediumAt(heightKm: number, out: Medium = { scatterRayleigh: [0, 0, 0], scatterMie: 0, extinction: [0, 0, 0] }, hazeDatumKm?: number): Medium {
   const h = Math.max(heightKm, 0);
   const dR = Math.exp(-h / RAYLEIGH_SCALE_HEIGHT_KM);
   const dM = Math.exp(-h / MIE_SCALE_HEIGHT_KM);
+  const dH = hazeDatumKm === undefined ? 0 : Math.exp(-Math.max(h - hazeDatumKm, 0) / HAZE_SCALE_HEIGHT_KM);
   const dO = Math.max(0, 1 - Math.abs(h - OZONE_CENTER_KM) / OZONE_HALF_WIDTH_KM);
-  out.scatterMie = MIE_SCATTER * dM;
+  out.scatterMie = MIE_SCATTER * dM + HAZE_SCATTER * dH;
   for (let c = 0; c < 3; c++) {
     out.scatterRayleigh[c] = RAYLEIGH_SCATTER[c] * dR;
-    out.extinction[c] = out.scatterRayleigh[c] + MIE_EXTINCTION * dM + OZONE_ABSORPTION[c] * dO;
+    out.extinction[c] = out.scatterRayleigh[c] + MIE_EXTINCTION * dM + HAZE_EXTINCTION * dH + OZONE_ABSORPTION[c] * dO;
   }
   return out;
 }

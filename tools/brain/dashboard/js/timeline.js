@@ -2,6 +2,7 @@
 // solid band for the recent window, ticks for the older keyframes), the zoomed chart range and the playhead. Click or drag to
 // scrub.
 import { fmt } from './series.js';
+import { FONT, INK } from './theme.js';
 
 const M = { l: 8, r: 8 };
 
@@ -45,7 +46,7 @@ export class Timeline {
     if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
     const g = this.ctx;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.fillStyle = '#1a1a19';
+    g.fillStyle = INK.raised;
     g.fillRect(0, 0, W, H);
     const st = this.app.store;
     const [a, b] = this.range();
@@ -106,7 +107,7 @@ export class Timeline {
       g.strokeStyle = 'rgba(195,194,183,0.6)';
       g.lineWidth = 1;
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
-      g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+      g.font = FONT;
       g.fillStyle = '#ffffff';
       g.textBaseline = 'top';
       const label = `iteration ${st.iters.a[i]} · return ${fmt(st.value('ret', i))}`;

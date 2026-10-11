@@ -12,7 +12,7 @@ const nums = (src: string, re: RegExp): number[] => (src.match(re)?.[1] ?? '').s
 // The mirrors below read the shader's own constants, so a retuned WGSL constant cannot silently diverge from the tested formula.
 const GRADE = nums(tonemapSrc, /const GRADE : Grade = Grade\(([^)]*)\)/);
 const SENSOR = nums(sensorSrc, /const SENSOR : SensorModel = SensorModel\(([^)]*)\)/);
-const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE, DAY_PRE_SCALE, DAY_TOE, DAY_GAIN_LO, DAY_GAIN_HI, HL_SLOPE, HL_SOFT] = GRADE;
+const [PRE_SCALE, SATURATION, CONTRAST, DESAT_START, DESAT_END, GAMUT_CEIL, GAMUT_KNEE, DAY_PRE_SCALE, DAY_TOE, DAY_GAIN_LO, DAY_GAIN_HI, HL_SLOPE, HL_SOFT, MID_SAT, DAY_WHITE] = GRADE;
 const TOE_NIGHT = Number(tonemapSrc.match(/const TOE_NIGHT : f32 = ([^;]*);/)?.[1]);
 
 type V3 = [number, number, number];
@@ -25,19 +25,21 @@ const preScaleFor = (day: number): number => PRE_SCALE + (DAY_PRE_SCALE - PRE_SC
 const toeFor = (day: number): number => TOE_NIGHT + (DAY_TOE - TOE_NIGHT) * day;
 
 // day = 0 is the night curve every legacy test below was written for; the day lift has its own describe.
-const filmicLuma = (x: number, day = 0): number => {
-  const a = Math.abs(x) * preScaleFor(day);
-  return (Math.sign(x) * a * (2.51 * a + toeFor(day))) / (a * (2.43 * a + 0.59) + 0.14);
-};
+const filmicRaw = (a: number, toe: number): number => (a * (2.51 * a + toe)) / (a * (2.43 * a + 0.59) + 0.14);
+const whiteGain = (day: number): number => 1 + (1 / filmicRaw(DAY_WHITE * preScaleFor(day), toeFor(day)) - 1) * day;
+const filmicLuma = (x: number, day = 0): number => Math.sign(x) * filmicRaw(Math.abs(x) * preScaleFor(day), toeFor(day)) * whiteGain(day);
+
+function kneeScale(c: number, room: number): number {
+  const knee = GAMUT_KNEE * room;
+  if (c <= knee) return 1;
+  const over = c - knee;
+  const span = room - knee;
+  return (knee + (span * over) / (over + span)) / c;
+}
 
 function compressGamut(o: V3, y: number): V3 {
   const room = Math.max(GAMUT_CEIL + (1 - GAMUT_CEIL) * y ** 4 - y, 1e-4);
-  const c = Math.max(...o) - y;
-  const knee = GAMUT_KNEE * room;
-  if (c <= knee) return o;
-  const over = c - knee;
-  const span = room - knee;
-  const k = (knee + (span * over) / (over + span)) / c;
+  const k = Math.min(kneeScale(Math.max(...o) - y, room), kneeScale(y - Math.min(...o), Math.max(y, 1e-4)));
   return o.map((x) => y + (x - y) * k) as V3;
 }
 
@@ -48,14 +50,16 @@ function compressHighlights(l: number, knee: number, roll: number): number {
   return knee * 2 ** (p * d + (1 - p) * HL_SOFT * (1 - Math.exp(-d / HL_SOFT)));
 }
 
-function tonemap(scene: V3, saturation = SATURATION, gainEv = Infinity, knee = 1e12, roll = 1): V3 {
+const midTones = (y: number): number => smooth(0, 0.03, y) * (1 - smooth(0.25, 0.75, y));
+
+function tonemap(scene: V3, saturation = SATURATION, gainEv = Infinity, knee = 1e12, roll = 1, midSat = MID_SAT): V3 {
   const day = dayWeight(gainEv);
   const l = luma(scene);
   const y = Math.min(filmicLuma(compressHighlights(l, knee, roll), day), 1);
-  const k = Math.abs(l) > 1e-6 ? y / l : (preScaleFor(day) * toeFor(day)) / 0.14;
+  const k = Math.abs(l) > 1e-6 ? y / l : ((preScaleFor(day) * toeFor(day)) / 0.14) * whiteGain(day);
   const w = smooth(DESAT_START, DESAT_END, l);
   let o = scene.map((x) => (1 - w) * x * k + w * y) as V3;
-  o = o.map((x) => y + (x - y) * saturation) as V3;
+  o = o.map((x) => y + (x - y) * saturation * (1 + midSat * midTones(y) * day)) as V3;
   return compressGamut(o, y).map((x) => clamp(x, 0, 1)) as V3;
 }
 
@@ -270,6 +274,18 @@ describe('tonemap', () => {
     expect(out(100)).toBeGreaterThan(0.97 * room);
   });
 
+  it('keeps a little of the dimmest channel of a saturated colour, with its gradient, instead of clipping it at 0', () => {
+    // Sunlit grass: yellow-green with little blue, which the mid-tone boost would push below 0.
+    const grass = (b: number): V3 => tonemap([0.2, 0.26, b], SATURATION, 0);
+    const blues = [0.0, 0.01, 0.02, 0.03, 0.04].map((b) => grass(b)[2]);
+    for (const x of blues) expect(x).toBeGreaterThan(0);
+    for (let i = 1; i < blues.length; i++) expect(blues[i]).toBeGreaterThan(blues[i - 1]);
+    // The hue stays: red and green keep their order and the colour stays yellow-green.
+    const o = grass(0.02);
+    expect(o[1]).toBeGreaterThan(o[0]);
+    expect(o[0]).toBeGreaterThan(o[2]);
+  });
+
   it('keeps the chromaticity of a colour whatever its brightness: no hue skew towards cyan or yellow', () => {
     const sky: V3 = [0.1, 0.25, 0.9];
     const dir = (o: V3): number => (o[2] - luma(o)) / (o[0] - luma(o));
@@ -294,16 +310,25 @@ describe('tonemap', () => {
     expect(sat(tonemap(c.map((x) => x * 6) as V3))).toBeGreaterThan(sat(tonemap(c.map((x) => x * 60) as V3)));
   });
 
-  it('applies the grade saturation to a mid-tone colour and keeps it a camera-like 1.0 to 1.08', () => {
+  it('applies the grade saturation to a mid-tone colour: the camera matrix (1.0 to 1.08) times a filmic mid-tone boost of at most 1.6', () => {
     expect(SATURATION).toBeGreaterThanOrEqual(1);
     expect(SATURATION).toBeLessThanOrEqual(1.08);
+    expect(MID_SAT).toBeGreaterThanOrEqual(0);
+    expect(MID_SAT).toBeLessThanOrEqual(0.6);
     expect(CONTRAST).toBeGreaterThan(0);
     const c: V3 = [0.2, 0.15, 0.12];
-    const flat = tonemap(c, 1);
-    const graded = tonemap(c);
+    const flat = tonemap(c, 1, 0, 1e12, 1, 0);
+    const graded = tonemap(c, SATURATION, 0);
+    expect(tonemap(c)).toEqual(tonemap(c, SATURATION, Infinity, 1e12, 1, 0));
     const chroma = (o: V3): number => o[0] - luma(o);
     expect(chroma(flat)).toBeGreaterThan(0.01);
-    expect(chroma(graded) / chroma(flat)).toBeCloseTo(SATURATION, 6);
+    expect(chroma(graded) / chroma(flat)).toBeCloseTo(SATURATION * (1 + MID_SAT * midTones(luma(flat))), 6);
+  });
+
+  it('boosts mid-tone saturation only: none at black, so shadow noise stays grey, and none near white, so highlights roll off cleanly', () => {
+    expect(midTones(0)).toBe(0);
+    expect(midTones(0.15)).toBe(1);
+    expect(midTones(0.8)).toBe(0);
   });
 });
 
@@ -322,10 +347,15 @@ describe('daylight shadow lift', () => {
     }
   });
 
-  it('lifts deep shade by a good margin and leaves the mid-tones and highlights where they were', () => {
-    expect(code(0.02, 0)).toBeGreaterThanOrEqual(code(0.02, 20) + 6);
+  it('lifts deep shade a little (photographs of sunlit landscapes keep real blacks), leaves the mid-tones and brings the highlights nearer white', () => {
+    expect(code(0.02, 0)).toBeGreaterThanOrEqual(code(0.02, 20) + 1);
+    expect(code(0.02, 0)).toBeLessThanOrEqual(code(0.02, 20) + 5);
     expect(code(0.005, 0)).toBeGreaterThan(code(0.005, 20));
-    for (const v of [0.28, 0.6, 1.2, 4]) expect(Math.abs(code(v, 0) - code(v, 20))).toBeLessThanOrEqual(3);
+    for (const v of [0.28, 0.6]) expect(Math.abs(code(v, 0) - code(v, 20))).toBeLessThanOrEqual(3);
+    for (const v of [1.2, 2.4]) {
+      expect(code(v, 0)).toBeGreaterThan(code(v, 20));
+      expect(code(v, 0)).toBeLessThanOrEqual(code(v, 20) + 10);
+    }
   });
 
   it('does not touch the night camera: from dayGainHi on the curve is exactly the night one', () => {
@@ -343,7 +373,7 @@ describe('daylight shadow lift', () => {
   });
 
   it('keeps a finite slope at black and stays monotonic and odd, in daylight too', () => {
-    const slope = (DAY_PRE_SCALE * DAY_TOE) / 0.14;
+    const slope = ((DAY_PRE_SCALE * DAY_TOE) / 0.14) * whiteGain(1);
     expect(filmicLuma(1e-6, 1) / 1e-6).toBeCloseTo(slope, 3);
     expect(tonemap([1e-4, 1e-4, 1e-4], SATURATION, 0)[0] / 1e-4).toBeCloseTo(slope, 2);
     expect(filmicLuma(-0.02, 1)).toBeCloseTo(-filmicLuma(0.02, 1), 12);
@@ -353,6 +383,13 @@ describe('daylight shadow lift', () => {
       expect(o).toBeGreaterThanOrEqual(prev);
       prev = o;
     }
+  });
+
+  it('reaches display white at dayWhite by day, and keeps the long night shoulder', () => {
+    expect(filmicLuma(DAY_WHITE, 1)).toBeCloseTo(1, 9);
+    expect(filmicLuma(DAY_WHITE / 2, 1)).toBeGreaterThan(0.85);
+    expect(filmicLuma(DAY_WHITE, 0)).toBeLessThan(0.97);
+    expect(whiteGain(0)).toBe(1);
   });
 });
 
@@ -849,10 +886,10 @@ describe('shader sources', () => {
     expect(() => resolveShader('post/composite.wgsl', { OUT_HW_SRGB: false })).toThrow(/DITHER_LSB/);
   });
 
-  it('uses at most eight filtered taps in the fragment path', () => {
+  it('uses at most twelve filtered taps in the fragment path (eight plus the four sharpening neighbours)', () => {
     const taps = resolved.match(/textureSampleLevel\(/g)?.length ?? 0;
     const fetches = resolved.match(/\bfetch\(/g)?.length ?? 0;
     expect(taps).toBe(2);
-    expect(fetches - 1).toBe(7);
+    expect(fetches - 1).toBe(11);
   });
 });

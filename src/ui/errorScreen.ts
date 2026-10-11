@@ -66,6 +66,9 @@ export class ErrorScreen {
   }
 
   private render(m: FailureMessage, actions: FailureActions): void {
+    // Release the flight mouse so the recovery buttons can receive ordinary pointer input.
+    const doc = this.root.ownerDocument;
+    if (doc.pointerLockElement) doc.exitPointerLock();
     this.current = m.kind;
     const title = el('h2', 'fpv-fail-title', m.title);
     title.id = 'fpv-fail-title';

@@ -39,6 +39,9 @@ export function createObjectsModule(): ObjectsModule {
       for (const g of passed) track.setGatePassed(g);
       if (wind) track.setWind(wind.dir, wind.speed);
     },
+    ready() {
+      return track?.ready ?? Promise.resolve();
+    },
     setScene(rc: RenderContext, scene: SceneData) {
       track?.setScene(rc, scene);
     },

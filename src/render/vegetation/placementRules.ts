@@ -1,7 +1,8 @@
 import { deriveSeed } from '../../world/track/rng';
 import { fbm2, hash2, smoothstep, valueNoise2 } from './noise';
 import type { TerrainFields } from './terrainFields';
-import { VARIANTS_OF } from './variants';
+import { KIND } from './meshBuilder';
+import { VARIANTS_OF, variantPlan } from './variants';
 
 export const MAX_SLOPE_DEG = 30;
 const MAX_TAN = Math.tan((MAX_SLOPE_DEG * Math.PI) / 180);
@@ -12,6 +13,13 @@ const WET_BONUS = 1.45;
 const RIVER_FLOW = 0.85;
 export const MIN_TREE_SCALE = 0.32;
 export const MAX_TREE_SCALE = 1.5;
+/**
+ * Most a conifer away from the race line outgrows its placed size, rising as a spire above the broadleaf roof (canopyLayer). It keeps the
+ * room of its placed size, so it may stand closer to a neighbour than its drawn scale's spacing.
+ */
+export const EMERGENT_MAX = 1.3;
+/** Share of a species' trees that take its character form (old drooping spruce, crooked pine, veteran oak, weeping birch). */
+const CHARACTER_SHARE = 0.16;
 
 export interface Pick {
   variant: number;
@@ -20,6 +28,11 @@ export interface Pick {
   yaw: number;
   /** Packed unorm8x4 colour multiplier (decoded as value * 2). */
   tint: number;
+  /**
+   * A tree's scale factor for its storey in the canopy (canopyLayer), kept out of `scale` so spacing, the spots trees take and their
+   * colliders do not depend on it; placement applies it only where trees have no collider.
+   */
+  layer?: number;
 }
 
 const pack = (r: number, g: number, b: number, a: number): number => {
@@ -35,6 +48,23 @@ export interface Canopy {
   tint: number;
 }
 
+/** Crowns spread toward their neighbours at most this much wider than the variant's own (tree.wgsl crownSpread). */
+export const MAX_CROWN_SPREAD = 1.6;
+
+/**
+ * A broadleaf in a closed stand grows its crown out until it meets its neighbours' and they interlock into one roof; one standing in the
+ * open keeps its own. The spread (1 to MAX_CROWN_SPREAD) comes from the stand's tree density `dTree` (trees per 3 m cell, so trees stand about
+ * 3 / sqrt(dTree) m apart) against the variant's crown radius, and goes into the tint's alpha byte (decoded as value * 2, like the colour);
+ * the tree shader widens the crown above the trunk by it. A function of the spot alone, so a smaller tier stays a prefix of a larger one.
+ */
+function withCrownSpread(tint: number, variant: number, scale: number, dTree: number): number {
+  const plan = variantPlan(variant);
+  if (!plan || plan.foliage !== KIND.leaf || plan.clusters.length === 0) return tint;
+  const spacing = 3 / Math.sqrt(Math.max(dTree, 0.02)), own = Math.max(plan.crownR[0], plan.crownR[2]) * scale;
+  const spread = Math.min(Math.max((0.6 * spacing) / Math.max(own, 0.1), 1), MAX_CROWN_SPREAD);
+  return ((tint & 0x00ffffff) | (Math.round(spread * 127.5) << 24)) >>> 0;
+}
+
 /** Scene-independent density fields and species rules for trees, bushes and rocks; every draw is a hash of the cell, so results do not depend on visit order. */
 export class PlacementRules {
   private readonly sStand: number;
@@ -45,13 +75,14 @@ export class PlacementRules {
   private readonly sDraw: number;
   private readonly sAge: number;
   private readonly sGlade: number;
+  private readonly sBeech: number;
   private readonly lo: number;
   private readonly range: number;
   private readonly water: number;
 
   constructor(private readonly f: TerrainFields, seed: number) {
     const s = (k: number): number => deriveSeed(seed, k) | 0;
-    this.sStand = s(1); this.sLine = s(2); this.sBush = s(3); this.sConifer = s(4); this.sClump = s(5); this.sDraw = s(6); this.sAge = s(7); this.sGlade = s(8);
+    this.sStand = s(1); this.sLine = s(2); this.sBush = s(3); this.sConifer = s(4); this.sClump = s(5); this.sDraw = s(6); this.sAge = s(7); this.sGlade = s(8); this.sBeech = s(9);
     this.lo = f.data.minHeight;
     this.range = Math.max(f.data.maxHeight - f.data.minHeight, 1);
     this.water = f.data.waterLevel;
@@ -99,28 +130,50 @@ export class PlacementRules {
     out.yaw = this.draw(cx, cz, 5) * Math.PI * 2;
     const b = 0.85 + 0.3 * r5, hue = (this.draw(cx, cz, 6) - 0.5) * 0.16;
     if (u < dTree) {
-      if (r2 < conifer) {
-        const pine = 0.15 + 0.7 * (1 - smoothstep(0.3, 0.7, soil)) * (1 - wet);
-        out.variant = r3 < pine ? VARIANTS_OF.pine[0] : VARIANTS_OF.spruce[(r3 - pine) / (1 - pine) < 0.5 ? 0 : 1];
-        out.tint = pack(b * (1 + 0.4 * hue), b, b * (1 - 0.4 * hue), 1);
-      } else {
-        const birch = 0.08 + 0.4 * wet;
-        out.variant = r3 < birch ? VARIANTS_OF.birch[0] : VARIANTS_OF.oak[(r3 - birch) / (1 - birch) < 0.5 ? 0 : 1];
-        out.tint = pack(b * (1 + hue), b, b * (1 - hue), 1);
-      }
+      const old = this.draw(cx, cz, 7) < 0.03;
+      out.variant = this.species(x, z, r2 < conifer, r3, soil, wet, smoothstep(0.12, 0.55, dTree), old);
+      // A few trees in closed stands have died and stand as snags.
+      if (this.draw(cx, cz, 8) < 0.006 + 0.02 * smoothstep(0.2, 0.6, dTree)) out.variant = VARIANTS_OF.snag[r2 < conifer ? 0 : 1];
+      out.tint = this.crownTint(cx, cz, x, z, r2 < conifer, b, hue);
       // Stands have an age: young ones are all saplings and poles, old ones mostly big trees; every stand mixes sizes and has the odd veteran.
       const age = smoothstep(0.35, 0.65, fbm2(x / 170, z / 170, this.sAge, 2));
-      const veteran = this.draw(cx, cz, 7) < 0.03 ? 1.25 : 1;
+      const veteran = old ? 1.25 : 1;
+      // A snag stands at the size it died at.
+      out.layer = (VARIANTS_OF.snag as readonly number[]).includes(out.variant) ? 1 : this.canopyLayer(cx, cz, r2 < conifer, smoothstep(0.12, 0.55, dTree));
       out.scale = Math.min(Math.max((0.62 + 0.5 * age) * (0.6 + 0.8 * Math.pow(r4, 0.8)) * veteran * (1 - 0.3 * smoothstep(line - 0.25, line, hRel)), MIN_TREE_SCALE), MAX_TREE_SCALE);
+      out.tint = withCrownSpread(out.tint, out.variant, out.scale, dTree);
       return 1;
     }
     if (u < dTree + dBush) {
       out.variant = r3 < 0.2 + 0.5 * conifer ? VARIANTS_OF.juniper[0] : VARIANTS_OF.bush[0];
       out.scale = 0.6 + r4;
+      out.layer = 1;
       out.tint = pack(b * (1 + hue), b, b * (1 - hue), 1);
       return 2;
     }
     return 0;
+  }
+
+  /**
+   * Species and growth form of a tree from the draw `r3`: pine on poor dry soil and spruce elsewhere among conifers; birch on wet ground, beech
+   * in its own stands on deep drained soil and oak elsewhere among broadleaves. In a closed stand (`closure` near 1) trees are mostly
+   * forest-grown, in the open mostly open-grown; a share of them, and every `old` one, takes the species' character form.
+   */
+  private species(x: number, z: number, conifer: boolean, r3: number, soil: number, wet: number, closure: number, old: boolean): number {
+    let list: readonly number[], u: number;
+    if (conifer) {
+      const pine = 0.15 + 0.7 * (1 - smoothstep(0.3, 0.7, soil)) * (1 - wet);
+      list = r3 < pine ? VARIANTS_OF.pine : VARIANTS_OF.spruce;
+      u = r3 < pine ? r3 / pine : (r3 - pine) / (1 - pine);
+    } else {
+      const birch = 0.08 + 0.4 * wet;
+      const beech = (1 - birch) * 0.55 * smoothstep(0.48, 0.6, fbm2(x / 300, z / 300, this.sBeech, 2)) * (1 - wet) * smoothstep(0.35, 0.6, soil);
+      list = r3 < birch ? VARIANTS_OF.birch : r3 < birch + beech ? VARIANTS_OF.beech : VARIANTS_OF.oak;
+      u = r3 < birch ? r3 / birch : r3 < birch + beech ? (r3 - birch) / beech : (r3 - birch - beech) / (1 - birch - beech);
+    }
+    if (list.length > 2 && (old || u < CHARACTER_SHARE)) return list[2];
+    const v = list.length > 2 ? (u - CHARACTER_SHARE) / (1 - CHARACTER_SHARE) : u;
+    return v < closure ? list[1] : list[0];
   }
 
   /**
@@ -148,17 +201,35 @@ export class PlacementRules {
     const r2 = this.draw(cx, cz, 1), r3 = this.draw(cx, cz, 2), r4 = this.draw(cx, cz, 3), r5 = this.draw(cx, cz, 4);
     const conifer = this.conifer(x, z, hRel, wet);
     const b = 0.85 + 0.3 * r5, hue = (this.draw(cx, cz, 6) - 0.5) * 0.16;
-    if (r2 < conifer) {
-      const pine = 0.15 + 0.7 * (1 - smoothstep(0.3, 0.7, soil)) * (1 - wet);
-      out.variant = r3 < pine ? VARIANTS_OF.pine[0] : VARIANTS_OF.spruce[(r3 - pine) / (1 - pine) < 0.5 ? 0 : 1];
-      out.tint = pack(b * (1 + 0.4 * hue), b, b * (1 - 0.4 * hue), 1);
-    } else {
-      const birch = 0.08 + 0.4 * wet;
-      out.variant = r3 < birch ? VARIANTS_OF.birch[0] : VARIANTS_OF.oak[(r3 - birch) / (1 - birch) < 0.5 ? 0 : 1];
-      out.tint = pack(b * (1 + hue), b, b * (1 - hue), 1);
-    }
+    out.variant = this.species(x, z, r2 < conifer, r3, soil, wet, smoothstep(0.12, 0.55, out.density), false);
+    out.tint = this.crownTint(cx, cz, x, z, r2 < conifer, b, hue);
     const age = smoothstep(0.35, 0.65, fbm2(x / 170, z / 170, this.sAge, 2));
-    out.scale = Math.min(Math.max((0.62 + 0.5 * age) * (0.6 + 0.8 * Math.pow(r4, 0.8)) * (1 - 0.3 * smoothstep(line - 0.25, line, hRel)), MIN_TREE_SCALE), MAX_TREE_SCALE);
+    // A card stands for the canopy top, so it takes the emergent conifers' height but not the suppressed trees' (canopyLayer).
+    const emergent = r2 < conifer ? 1.05 + (EMERGENT_MAX - 1.05) * this.draw(cx, cz, 17) : 1;
+    out.scale = Math.min(Math.max((0.62 + 0.5 * age) * (0.6 + 0.8 * Math.pow(r4, 0.8)) * emergent * (1 - 0.3 * smoothstep(line - 0.25, line, hRel)), MIN_TREE_SCALE), MAX_TREE_SCALE);
+  }
+
+  /**
+   * A tree's colour multiplier. Seen from above a forest is a patchwork: neighbouring stands differ in shade and hue (age, soil, the mix of
+   * species and their health), and within a stand each crown differs again. A stand patch tens of metres across sets a brightness and a
+   * yellow-to-blue cast; each tree adds its own on top. Broadleaf crowns differ most (a shaded or sickly crown is a third darker than a
+   * vigorous one beside it); conifers' dark needles vary less in hue but still in shade.
+   */
+  private crownTint(cx: number, cz: number, x: number, z: number, conifer: boolean, b: number, hue: number): number {
+    const patch = fbm2(x / 45, z / 45, this.sAge + 9, 2) - 0.5, cast = fbm2(x / 60 + 31, z / 60 - 17, this.sAge + 21, 2) - 0.5;
+    const pb = b * (1 + 0.8 * patch) * (conifer ? 0.82 + 0.3 * this.draw(cx, cz, 9) : 0.72 + 0.46 * this.draw(cx, cz, 9));
+    const ph = hue * 1.6 + 0.5 * cast;
+    return conifer ? pack(pb * (1 + 0.4 * ph), pb, pb * (1 - 0.4 * ph), 1) : pack(pb * (1 + ph), pb, pb * (1 - ph), 1);
+  }
+
+  /**
+   * Scale factor for a tree's place in the canopy's layers. A closed stand (`closure` near 1) is not one even roof: about a quarter of its
+   * trees are suppressed, a storey below their neighbours, which opens dark gaps between the crowns that reach the light; conifers rise as
+   * spires above the broadleaf roof (a Norway spruce outgrows an oak by a third).
+   */
+  private canopyLayer(cx: number, cz: number, conifer: boolean, closure: number): number {
+    const suppressed = this.draw(cx, cz, 16) < 0.28 * closure ? 0.62 : 1;
+    return suppressed * (conifer ? 1.05 + (EMERGENT_MAX - 1.05) * this.draw(cx, cz, 17) : 1);
   }
 
   /** Rock candidate of fine cell (cx, cz): steep, bare or stream-side ground, in clumps. Fills `out` (scale = radius) and returns whether one is wanted. */

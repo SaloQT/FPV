@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createPlacement, gatePlacement, padPlacement, respawnPlacement, RESPAWN_BACK_M, RESPAWN_MIN_AGL } from './checkpoint';
+import { checkpointPlacement, createPlacement, gatePlacement, padPlacement, respawnPlacement, RESPAWN_BACK_M, RESPAWN_MIN_AGL } from './checkpoint';
 import { makeGate, makeTrack } from './testKit';
 
 describe('respawn placement', () => {
@@ -50,6 +50,14 @@ describe('respawn placement', () => {
     const p = respawnPlacement(track, 2, undefined, createPlacement());
     expect(p.pos[2]).toBeCloseTo(track.gates[2].pos[2] + RESPAWN_BACK_M);
     expect(p.airborne).toBe(true);
+  });
+
+  it('puts a quad before the gate due next instead, for brains whose training started there, and on the pad before any gate', () => {
+    const track = makeTrack(4);
+    expect(checkpointPlacement(track, 2, 3, false, undefined, createPlacement()).pos[2]).toBeCloseTo(track.gates[2].pos[2] + RESPAWN_BACK_M);
+    expect(checkpointPlacement(track, 2, 3, true, undefined, createPlacement()).pos[2]).toBeCloseTo(track.gates[3].pos[2] + RESPAWN_BACK_M);
+    const pad = padPlacement(track, createPlacement());
+    expect(checkpointPlacement(track, -1, 0, true, undefined, createPlacement())).toEqual(pad);
   });
 
   it('falls back to the origin without a track', () => {

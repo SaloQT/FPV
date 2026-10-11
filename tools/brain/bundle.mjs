@@ -2,6 +2,7 @@
 // import, under .bench/brain/bundle. The bundler runs in a child process: Vite's native bundler loaded next to Dawn crashes
 // Dawn's pipeline compiler.
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,14 +32,17 @@ async function buildBundle() {
   }
 }
 
-/** Rebuilds the bundle in a child process and imports it. */
+/**
+ * Rebuilds the bundle in a child process and imports it. A file named FROZEN next to the bundle keeps the last build instead, so a long
+ * training campaign keeps the same worlds while the source is being edited; delete it to build from the source again.
+ */
 export async function loadTrainer() {
-  execFileSync(process.execPath, [SELF, '--build'], { stdio: 'inherit' });
+  if (!(existsSync(resolve(OUT, 'FROZEN')) && existsSync(resolve(OUT, 'trainer.mjs')))) execFileSync(process.execPath, [SELF, '--build'], { stdio: 'inherit' });
   return import(`${pathToFileURL(resolve(OUT, 'trainer.mjs')).href}?t=${Date.now()}`);
 }
 
 /** A Dawn device for compute (D3D12 by default on Windows, `backend` or FPV_GPU_BACKEND overrides). */
-export async function gpuDevice(backend = process.env.FPV_GPU_BACKEND ?? (process.platform === 'win32' ? 'd3d12' : 'vulkan')) {
+export async function gpuDevice(backend = process.env.FPV_GPU_BACKEND ?? (process.platform === 'win32' ? 'd3d12' : 'vulkan'), { profile = false } = {}) {
   const { create, globals } = await import('webgpu');
   Object.assign(globalThis, globals);
   const gpu = create([`backend=${backend}`]);
@@ -49,6 +53,7 @@ export async function gpuDevice(backend = process.env.FPV_GPU_BACKEND ?? (proces
   const l = adapter.limits;
   const big = Math.min(l.maxStorageBufferBindingSize, l.maxBufferSize, 2 ** 30);
   const device = await adapter.requestDevice({
+    requiredFeatures: profile && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
     requiredLimits: {
       maxStorageBuffersPerShaderStage: l.maxStorageBuffersPerShaderStage,
       maxStorageBufferBindingSize: big,

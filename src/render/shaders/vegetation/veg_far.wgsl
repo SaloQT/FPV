@@ -24,6 +24,8 @@ const FADE_START : f32 = 0.86;
 const FADE_END_START : f32 = 0.88;
 // Far-LOD blobs of the real trees are painted this much darker than the leaf tone (tree.wgsl BLOB_DARKEN).
 const DARKEN : f32 = 0.78;
+// Conifer needles are shaded darker and less blue than their tone (tree.wgsl NEEDLE_SHADE).
+const NEEDLE_SHADE : vec3f = vec3f(0.55, 0.6, 0.4);
 const SINK : f32 = 0.05;
 
 struct VsOut {
@@ -80,16 +82,18 @@ fn ditherThreshold(px : vec2u, id : u32) -> f32 {
 struct Crown {
   inside : bool,
   local : vec2f,   // x in -1..1 across the crown, y in 0..1 up it
+  shade : f32,     // the crown's own brightness: neighbouring trees in one card differ in vigour and light
 };
 
 fn noise2(p : vec2f, s : f32) -> f32 { return vnoise3(vec3f(p, s)); }
 
 // Is metre position `p` inside crown `k` of the card? Conifers are cones with a serrated edge, broadleaves lumpy ellipses.
-fn crown(k : u32, lobes : u32, conifer : bool, p : vec2f, width : f32, height : f32, rnd : u32) -> Crown {
+fn crown(k : u32, lobes : u32, conifer : bool, p : vec2f, width : f32, height : f32, rnd : u32, fine : bool) -> Crown {
   var r = vec3f(u01(pcg(rnd * 7u + k * 131u + 1u)), u01(pcg(rnd * 13u + k * 17u + 5u)), u01(pcg(rnd * 29u + k * 61u + 9u)));
   var cr : Crown;
   cr.inside = false;
   cr.local = vec2f(0.0);
+  cr.shade = 0.72 + 0.5 * u01(pcg(rnd * 41u + k * 977u + 3u));
   let cx = select((r.x - 0.5) * 0.55 * width, 0.0, lobes == 1u && k == 0u);
   let h = height * select(0.62 + 0.38 * r.y, 1.0, k == 0u);
   let jag = noise2(p * select(1.3, 0.9, conifer), f32(k) * 3.7 + 1.0) - 0.5;
@@ -97,10 +101,18 @@ fn crown(k : u32, lobes : u32, conifer : bool, p : vec2f, width : f32, height : 
     let base = 0.07 * h;
     let ly = (p.y - base) / max(h - base, 1.0e-3);
     if (ly < 0.0 || ly > 1.0) { return cr; }
-    let half = (0.17 + 0.05 * r.z) * h * pow(1.0 - ly, 0.8) + 0.4;
+    var half = (0.17 + 0.05 * r.z) * h * pow(1.0 - ly, 0.8) + 0.4;
+    var edge = 0.45 * jag * (1.0 - ly * 0.6);
+    if (fine) {
+      // Whorls: each ring of branches droops out wide at its tip and the next ring starts narrower, a saw-toothed spruce outline, and the
+      // needle sprays fray the edge finely.
+      let tier = fract((p.y - base) / 1.1 + r.x);
+      half *= 0.72 + 0.38 * smoothstep(0.0, 0.85, tier);
+      edge += 0.35 * (noise2(p * 3.3, f32(k) * 5.1 + 9.0) - 0.5);
+    }
     let x = (p.x - cx) / half;
     cr.local = vec2f(clamp(x, -1.0, 1.0), ly);
-    cr.inside = abs(x) < 1.0 + 0.45 * jag * (1.0 - ly * 0.6);
+    cr.inside = abs(x) < 1.0 + edge;
   } else {
     let a = (0.36 + 0.1 * r.z) * h + 0.5;
     let b = 0.36 * h;
@@ -109,7 +121,10 @@ fn crown(k : u32, lobes : u32, conifer : bool, p : vec2f, width : f32, height : 
     let y = (p.y - cy) / b;
     let rr = length(vec2f(x, y));
     cr.local = vec2f(clamp(x, -1.0, 1.0), clamp(0.5 + 0.5 * y, 0.0, 1.0));
-    cr.inside = rr < 1.0 + 0.5 * jag;
+    var edge = 0.5 * jag;
+    // A broadleaf crown is a heap of leaf clumps a metre or two across: their bulges and notches break the outline at a finer scale.
+    if (fine) { edge += 0.3 * (noise2(p * 1.9, f32(k) * 7.3 + 3.0) - 0.5) + 0.12 * (noise2(p * 4.5, f32(k) + 21.0) - 0.5); }
+    cr.inside = rr < 1.0 + edge;
   }
   return cr;
 }
@@ -127,13 +142,30 @@ fn fs(in : VsOut) -> FsOut {
   let width = in.card.z;
   let height = in.card.w;
   let p = in.uv + vec2f(0.0, SINK * height);
+  // The extreme tier (vp.tree.w = 1) draws the cards with a real silhouette: whorled or clumped edges, sky gaps through the crown, lit and
+  // shaded clumps and the trunk below the crown.
+  let fine = vp.tree.w > 0.5;
   var hit : Crown;
   hit.inside = false;
   for (var k = 0u; k < lobes; k++) {
-    let cr = crown(k, lobes, conifer, p, width, height, rnd);
+    let cr = crown(k, lobes, conifer, p, width, height, rnd, fine);
     if (cr.inside && (!hit.inside || cr.local.y > hit.local.y)) { hit = cr; }
   }
-  if (!hit.inside) { discard; }
+  var trunk = false;
+  if (!hit.inside) {
+    // The trunk under the crown: a dark stem a few percent of the tree's height wide, from the ground to where the crown starts.
+    let stem = select(0.035, 0.025, conifer) * height;
+    if (!fine || p.y > select(0.32, 0.12, conifer) * height || abs(p.x) > stem) { discard; }
+    trunk = true;
+    hit.local = vec2f(p.x / stem, 0.0);
+  }
+  var clump = 0.5;
+  if (fine && !trunk) {
+    clump = noise2(p * select(1.4, 2.2, conifer), 31.0 + f32(rnd & 15u));
+    // Gaps: sky shows through between clumps and branch tiers, more toward the rim and the top.
+    let rim = max(abs(hit.local.x), select(abs(hit.local.y * 2.0 - 1.0), hit.local.y, conifer));
+    if (clump < 0.12 + 0.22 * smoothstep(0.55, 1.0, rim)) { discard; }
+  }
 
   // Rounded normal in the card frame (x right, y up, z towards the camera): a sphere for broadleaves, a cone for conifers.
   let lx = hit.local.x;
@@ -147,13 +179,24 @@ fn fs(in : VsOut) -> FsOut {
   }
   let horiz = in.card.xy;
   let right = vec3f(horiz.y, 0.0, -horiz.x);
-  let n = normalize(right * nl.x + vec3f(0.0, nl.y, 0.0) + vec3f(horiz.x, 0.0, horiz.y) * nl.z);
+  var n = normalize(right * nl.x + vec3f(0.0, nl.y, 0.0) + vec3f(horiz.x, 0.0, horiz.y) * nl.z);
+  if (fine && !trunk) {
+    // Each clump bulges toward the light on its own: tilt the normal by the clump noise's slope.
+    let e = 0.35;
+    let gx = noise2((p + vec2f(e, 0.0)) * select(1.4, 2.2, conifer), 31.0 + f32(rnd & 15u)) - clump;
+    let gy = noise2((p + vec2f(0.0, e)) * select(1.4, 2.2, conifer), 31.0 + f32(rnd & 15u)) - clump;
+    n = normalize(n - (right * gx + vec3f(0.0, gy, 0.0)) * 2.5);
+  }
 
   let tone = toneOf(species);
   let tint = unpack4x8unorm(in.ids.x).rgb * 2.0;
   let tex = 0.7 + 0.6 * noise2(p * 0.9, 17.0 + f32(species));
   let ao = mix(0.3, 1.0, smoothstep(0.0, 0.8, ly)) * (1.0 - 0.35 * lx * lx);
-  let col = tone.rgb * tint * tex * (0.3 + 0.7 * ao) * DARKEN;
+  var col = tone.rgb * tint * tex * (0.3 + 0.7 * ao) * DARKEN * select(vec3f(1.0), NEEDLE_SHADE, conifer);
+  // Clumps facing out are brighter, the hollows between them darker.
+  if (fine) { col *= 0.75 + 0.5 * clump; }
+  col *= hit.shade;
+  if (trunk) { col = select(vec3f(0.07, 0.06, 0.05), vec3f(0.08, 0.05, 0.035), conifer); }
 
   var o : FsOut;
   o.albedo = vec4f(clamp(col, vec3f(0.0), vec3f(1.0)), ao);

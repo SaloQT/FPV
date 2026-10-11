@@ -2,7 +2,7 @@
 // neighbourhood (Karis 2014) so a moving cloud edge or a camera turn never smears. Clouds are km away, so the history is reprojected by
 // DIRECTION: a direction (w = 0) carries no camera translation through frame.prevViewProj (previous frame, unjittered).
 //
-// UNIT CHAIN: texels are (rgb = in-scattered radiance [nits] / CLOUD_STORE_SCALE, a = transmittance), linear and never pre-exposed;
+// UNIT CHAIN: texels are (rgb = in-scattered radiance [nits] / cloudStoreScale(), a = transmittance), linear and never pre-exposed;
 // this pass only averages them. AtmosParams.cloudD.x = history weight (0.9), cloudD.y = 1 when the history holds the previous frame.
 //
 // Group 1: 0 linearClamp, 3 output (rgba16float), 5 AtmosParams, 9 this frame's march, 10 history.

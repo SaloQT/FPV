@@ -50,7 +50,9 @@ fn traceBvh(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> BvhHit {
     let count = bvhNodes[n * 2u + 1u].w;
     if (count > 0u) {
       for (var k = 0u; k < count; k++) {
-        let t = intersectPrim(n0.w + k, o, d, best.t);
+        var t = intersectPrim(n0.w + k, o, d, best.t);
+        // A crown sphere the ray starts inside is met at its far side (rt_canopy.wgsl canopyInsideExit).
+        if (t >= best.t && primIsCanopy(n0.w + k)) { t = canopyInsideExit(n0.w + k, o, d, best.t); }
         if (t < best.t) {
           best = BvhHit(t, n0.w + k);
         }
@@ -102,7 +104,9 @@ fn traceBvhTransmit(o : vec3f, d : vec3f, tMax : f32, cap : u32) -> f32 {
       for (var k = 0u; k < count; k++) {
         let i = n0.w + k;
         if (primIsCanopy(i)) {
+#ifndef CANOPY_SHADOW_MAP
           tau += canopyOpticalDepth(i, o, d, tMax);
+#endif
         } else if (intersectPrim(i, o, d, tMax) <= tMax) {
           return 0.0;
         }

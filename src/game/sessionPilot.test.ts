@@ -39,18 +39,31 @@ describe('session pilot hook', () => {
     expect(rig.session.state).toBe('flying');
   });
 
-  it('lets a brain fly on after a knock instead of respawning it', () => {
-    const rig = makeSessionRig({ track: null });
+  it('lets go of a crashed quad and puts it back at its last gate once the crash has played out, auto-respawn or not', () => {
+    const rig = makeSessionRig({ autoRespawn: false });
     const pilot = new FakePilot();
     rig.session.pilot = pilot;
     rig.run(0.05);
+    // Moving, so the stuck watch stays out of it
     rig.physics.state.vel[0] = 5;
     const resets = rig.physics.resets.length;
+    const before = pilot.resets;
     rig.physics.crashOnStep = rig.physics.steps + 1;
     rig.run(0.01);
-    rig.run(STUCK_S + 2);
+    expect(rig.session.state).toBe('crashed');
+    const calls = pilot.calls;
+    rig.run(RESPAWN_OFFER_S - 0.1);
+    // Its training ended the episode at the crash: the brain does not fly on from one
+    expect(pilot.calls).toBe(calls);
+    const idle = rig.physics.inputs.at(-1)!;
+    expect([idle.roll, idle.pitch, idle.yaw, idle.throttle]).toEqual([0, 0, 0, 0]);
     expect(rig.physics.resets.length).toBe(resets);
+    rig.run(0.2);
+    expect(rig.physics.resets.length).toBe(resets + 1);
+    expect(pilot.resets).toBeGreaterThan(before);
     expect(rig.session.state).toBe('flying');
+    rig.run(0.05);
+    expect(pilot.calls).toBeGreaterThan(calls);
   });
 
   it('respawns a stuck brain (even with auto-respawn off) and resets its pilot', () => {
@@ -59,12 +72,13 @@ describe('session pilot hook', () => {
     rig.session.pilot = pilot;
     rig.run(0.05);
     const resets = rig.physics.resets.length;
+    const placements = rig.session.placements;
     const before = pilot.resets;
-    rig.physics.crashOnStep = rig.physics.steps + 1;
-    rig.run(RESPAWN_OFFER_S + 0.1);
+    rig.run(STUCK_S - 0.3);
     expect(rig.physics.resets.length).toBe(resets);
-    rig.run(STUCK_S);
+    rig.run(0.6);
     expect(rig.physics.resets.length).toBe(resets + 1);
+    expect(rig.session.placements).toBe(placements + 1);
     expect(pilot.resets).toBeGreaterThan(before);
   });
 

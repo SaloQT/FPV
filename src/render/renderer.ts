@@ -1,8 +1,9 @@
 import type { AstroState, CameraState, QuadState, Settings } from '../contracts';
-import type { FrameInfo, PostProcessor, RenderContext, RenderModule, SceneData } from './contracts';
+import { isExtreme, type FrameInfo, type PostProcessor, type RenderContext, type RenderModule, type SceneData } from './contracts';
 import { recordError, requestDevice, type AdapterDetails, type DeviceSetup } from './deviceSetup';
 import { DynamicResolutionController, resolveTargetFps } from './dynamicRes';
 import { ExposureController } from './exposure';
+import { LightingCutDetector } from './lightingCut';
 import { FrameGraph } from './frameGraph';
 import {
   FRAME_UNIFORM_BYTES, FrameUniforms, QUALITY_FLAG_BLOOM, QUALITY_FLAG_RT_SPECULAR, QUALITY_FLAG_TAA,
@@ -70,6 +71,11 @@ export interface FrameInput {
 const FPS_SMOOTHING = 0.1;
 const MIN_RENDER_SCALE = 0.25;
 
+/** Extreme has no frame-rate target, so it always renders at the chosen render scale. */
+function dynamicResolution(s: Settings): boolean {
+  return s.dynamicResolution && !isExtreme(s.quality);
+}
+
 /** Owns the device, the swapchain, the shared resources and the frame graph; feature modules plug in through RenderModule hooks. */
 export class Renderer {
   readonly rt = new SceneRegistry();
@@ -88,6 +94,10 @@ export class Renderer {
   private readonly context: GPUCanvasContext;
   private readonly frameUniforms = new FrameUniforms();
   private readonly exposure = new ExposureController();
+  private lightingCut = new LightingCutDetector();
+  private scene: SceneData | null = null;
+  /** Where rc.shader and rc.module read WGSL from (replaceModules can point it at newer sources). */
+  private shaderSource: (path: string, defines?: Defines) => string = resolveShader;
   private readonly dyn = new DynamicResolutionController();
   private readonly graph = new FrameGraph();
   private readonly timer: GpuTimer;
@@ -122,7 +132,7 @@ export class Renderer {
     return r;
   }
 
-  private constructor(private readonly canvas: RenderSurface, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private readonly post: PostProcessor, readonly options: Readonly<RendererOptions>) {
+  private constructor(private readonly canvas: RenderSurface, settings: Settings, setup: DeviceSetup, modules: RenderModule[], private post: PostProcessor, readonly options: Readonly<RendererOptions>) {
     const device = setup.device;
     this.device = device;
     this.adapter = setup.adapter;
@@ -161,7 +171,7 @@ export class Renderer {
       rt: this.rt,
       quality,
       settings,
-      shader: (path, defines) => resolveShader(path, defines),
+      shader: (path, defines) => this.shaderSource(path, defines),
       module: (path, defines) => this.createModule(path, defines),
     };
     this.graph.bind(this.rc.gbuf);
@@ -191,12 +201,72 @@ export class Renderer {
     this.lighting = new DeferredLighting(this.rc, !this.host.drawsSky);
   }
 
+  /** Wall time of each module's init and setScene so far (ms), for the tools' start-up timing lines. */
+  get initTimings(): readonly { stage: string; ms: number }[] { return this.host.timings; }
+
   setScene(scene: SceneData): void {
+    this.scene = scene;
+    this.frameQueue.maxPending = scene.park ? 2 : 1;
+    this.lighting.setScene(scene.park?.park);
     const t = scene.terrain;
     this.world.uploadTerrain(t);
     this.terrainInfo = { resolution: t.resolution, cellSize: t.cellSize, minHeight: t.minHeight, maxHeight: t.maxHeight, origin: t.origin };
     this.frameUniforms.resetHistory();
     this.host.setScene(this.rc, scene);
+  }
+
+  /**
+   * The next frame starts like a new renderer's first frame: frame counter, exposure, the lighting-cut detector, dynamic resolution, the
+   * frame uniforms' history, every module's temporal state (resetLighting) and the post-processing histories. The render server
+   * (tools/render-server.mjs) reuses a renderer between shots with it.
+   */
+  resetHistory(): void {
+    this.frameIndex = -1;
+    this.lastStart = 0;
+    this.last = null;
+    this.lightingCut = new LightingCutDetector();
+    this.exposure.reset();
+    this.dyn.reset();
+    this.frameUniforms.resetHistory();
+    this.host.resetLighting();
+    this.post.resetHistory?.();
+  }
+
+  /**
+   * Swaps render modules for new instances of the same names (ModuleHost.replace), on the current scene. `shaders` replaces the WGSL
+   * resolver from then on, for modules from a newer build whose shaders changed with them.
+   */
+  async replaceModules(fresh: readonly RenderModule[], shaders?: (path: string, defines?: Defines) => string): Promise<void> {
+    if (shaders) this.shaderSource = shaders;
+    await this.host.replace(this.rc, fresh, this.scene);
+    this.retarget(true);
+  }
+
+  /**
+   * Makes every module record its bind groups and render bundles again: a new (equivalent) frame bind group, which caches keyed on it
+   * notice, then the resize notifications. The render server calls it after swapping pipelines that recorded bundles still hold.
+   */
+  rebind(): void {
+    const f = this.rc.frame;
+    f.group = this.device.createBindGroup({ label: 'frame', layout: f.layout, entries: [{ binding: 0, resource: { buffer: f.buffer } }] });
+    this.retarget(true);
+  }
+
+  /**
+   * Swaps the deferred lighting and/or the post-processor for new ones (the render server, after an edit to their code alone). The old
+   * lighting is not destroyed: its park lights (rc.parkLights) are shared with the RT module and carry over to the new one.
+   */
+  async replaceStages(next: { lighting?: typeof DeferredLighting; post?: PostProcessor }): Promise<void> {
+    if (next.post) {
+      this.post.destroy?.();
+      this.post = next.post;
+      await next.post.init(this.rc);
+      next.post.resize(this.rc, { width: this.outW, height: this.outH });
+    }
+    if (next.lighting) {
+      this.lighting = new next.lighting(this.rc, !this.host.drawsSky);
+      this.lighting.setScene(this.scene?.park?.park);
+    }
   }
 
   /** Quality tier or preset, render scale, dynamic resolution, target fps and frame cap can all change at runtime. */
@@ -297,6 +367,7 @@ export class Renderer {
     this.destroyed = true;
     this.host.destroy();
     this.post.destroy?.();
+    this.lighting?.destroy();
     this.timer.destroy();
     destroyGBuffer(this.rc.gbuf);
     this.world.destroy();
@@ -309,8 +380,16 @@ export class Renderer {
     const rc = this.rc, s = rc.settings;
     if (!readback) {
       this.frameIndex++;
-      this.exposure.update(f.dt, f.astro, f.camera.pos[1] + s.observer.altitudeM);
-      this.dyn.update(this.timer.gpuMs, frameMs, resolveTargetFps(s.targetFps, this.stats.displayHz, s.frameCap), s.dynamicResolution);
+      const height = f.camera.pos[1] + s.observer.altitudeM;
+      // A jump in the light (time of day scrubbed, a night session after a day one) restarts every temporal lighting cache and snaps the
+      // pre-exposure, which would otherwise slew 2% a frame for seconds through the new light.
+      if (this.lightingCut.step(f.astro, height)) {
+        this.exposure.reset();
+        this.host.resetLighting();
+        this.post.resetHistory?.();
+      }
+      this.exposure.update(f.dt, f.astro, height);
+      this.dyn.update(this.timer.gpuMs, frameMs, resolveTargetFps(s.targetFps, this.stats.displayHz, s.frameCap), dynamicResolution(s));
       this.retarget(false);
       this.updateStats(frameMs);
     }
@@ -370,7 +449,7 @@ export class Renderer {
     const s = this.rc.settings;
     st.targetFps = resolveTargetFps(s.targetFps, st.displayHz, s.frameCap);
     st.frameCap = s.frameCap;
-    st.dynamicDriver = !s.dynamicResolution ? 'off' : this.dyn.gpuDriven ? 'gpu' : 'frame-time';
+    st.dynamicDriver = !dynamicResolution(s) ? 'off' : this.dyn.gpuDriven ? 'gpu' : 'frame-time';
     st.errorCount = this.errorCount;
     for (let i = 0; i < st.passMs.length; i++) st.passMs[i] = this.timer.passMs[i];
   }
@@ -380,7 +459,7 @@ export class Renderer {
   }
 
   private createModule(path: string, defines?: Defines): GPUShaderModule {
-    const code = resolveShader(path, defines);
+    const code = this.shaderSource(path, defines);
     const module = this.device.createShaderModule({ label: path, code });
     void module.getCompilationInfo().then((info) => {
       const lines = code.split('\n');

@@ -4,7 +4,7 @@ import { placementSeed, regionSeed } from './placement';
 import { PlacementRules, type Canopy } from './placementRules';
 import { COARSE, buildRegion } from './region';
 import { TerrainFields } from './terrainFields';
-import { VARIANTS_OF, VARIANT_DEFS } from './variants';
+import { VARIANTS_OF, VARIANT_DEFS, variantPlan } from './variants';
 
 /** Far-field canopy cards: one billboard per clump of trees, 32 bytes each (layout mirrored by veg_far.wgsl). */
 export const FAR_CARD_BYTES = 32;
@@ -35,10 +35,10 @@ export interface FarForest {
   uncovered: number;
 }
 
-/** Species class stored in a card: 0 spruce, 1 pine, 2 oak, 3 birch. */
+/** Species class stored in a card: 0 spruce, 1 pine, 2 oak and beech (round broadleaf crowns), 3 birch. */
 export function farSpecies(variant: number): number {
-  const name = VARIANT_DEFS[variant].name;
-  return name.startsWith('spruce') ? 0 : name === 'pine' ? 1 : name.startsWith('oak') ? 2 : 3;
+  const species = variantPlan(variant)?.species;
+  return species === 'spruce' ? 0 : species === 'pine' ? 1 : species === 'birch' ? 3 : 2;
 }
 
 /**
@@ -47,7 +47,7 @@ export function farSpecies(variant: number): number {
  */
 export function farToneDefines(): Record<string, string> {
   const out: Record<string, string> = {};
-  const groups: readonly (readonly number[])[] = [VARIANTS_OF.spruce, VARIANTS_OF.pine, VARIANTS_OF.oak, VARIANTS_OF.birch];
+  const groups: readonly (readonly number[])[] = [VARIANTS_OF.spruce, VARIANTS_OF.pine, [...VARIANTS_OF.oak, ...VARIANTS_OF.beech], VARIANTS_OF.birch];
   groups.forEach((variants, k) => {
     const mean = (f: (d: (typeof VARIANT_DEFS)[number]) => number): number => variants.reduce((t, v) => t + f(VARIANT_DEFS[v]), 0) / variants.length;
     out[`TONE${k}`] = [mean((d) => d.tone[0]), mean((d) => d.tone[1]), mean((d) => d.tone[2]), mean((d) => d.translucency)].map((v) => v.toFixed(4)).join(', ');
@@ -81,6 +81,7 @@ export function placeFarForest(terrain: TerrainData, track: TrackData | null, o:
       const fx = ci * SUBCELLS + (s % SUBCELLS), fz = cj * SUBCELLS + Math.floor(s / SUBCELLS);
       const x = (fx + 0.15 + 0.7 * hash2(fx, fz, 31)) * FAR_CELL, z = (fz + 0.15 + 0.7 * hash2(fx, fz, 32)) * FAR_CELL;
       if (!fields.inside(x, z, 6)) continue;
+      if (track?.parkMap && Math.hypot(x, z) < track.parkMap.radius + 20) continue;
       rules.canopy(fx, fz, x, z, c);
       if (c.density < DENSITY_MIN) continue;
       const keep = smoothstep(DENSITY_MIN, DENSITY_FULL, c.density);
@@ -89,7 +90,7 @@ export function placeFarForest(terrain: TerrainData, track: TrackData | null, o:
       const def = VARIANT_DEFS[c.variant];
       const i = count++ * FAR_CARD_WORDS;
       f32[i] = x; f32[i + 1] = fields.height(x, z); f32[i + 2] = z;
-      f32[i + 3] = def.height * c.scale * (c.variant >= 3 && c.variant <= 4 ? 0.85 : 1);
+      f32[i + 3] = def.height * c.scale * (variantPlan(c.variant)?.species === 'oak' ? 0.85 : 1);
       f32[i + 4] = FAR_CELL * (1.05 + 0.4 * hash2(fx, fz, 34));
       words[i + 5] = c.tint;
       f32[i + 6] = far ? o.uncoveredNear : 0;

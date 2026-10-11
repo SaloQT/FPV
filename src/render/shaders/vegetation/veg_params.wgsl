@@ -10,7 +10,7 @@ struct VegParams {
   grass2 : vec4f,   // x,y unused (level of detail is chosen by projected size in grass_cull.wgsl), z = water level (-1e9 when none), w = slots per patch
   cells : vec4i,    // xy = first cell of the camera-centred patch grid, z = cells per side, w = seed
   caps : vec4u,     // xyz = grass instance capacity of LOD0..2, w = chunk capacity
-  tree : vec4f,     // x = LOD distance scale, y = max draw distance (m), z = smallest bounding radius kept (pixels), w = unused
+  tree : vec4f,     // x = LOD distance scale, y = max draw distance (m), z = smallest bounding radius kept (pixels), w = 1 for extreme-tier leaf detail
   treeCount : vec4u, // x = instance slots (padding included; also the visible-list stride per LOD), y = number of draws
   far : vec4f,      // x = canopy-card fade-out distance (m)
 };

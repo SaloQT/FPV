@@ -2,6 +2,7 @@
 // the start pad, traced drones with fading trails and crash marks; wheel zoom, drag pan, double-click to fit) or every world as
 // small multiples with their drones and per-world counts (click one to open it).
 import { SERIES_COLORS } from './series.js';
+import { FONT, INK } from './theme.js';
 import { hillshade, trackBounds } from './terrain.js';
 import { BIT_CRASH, BIT_DONE, BIT_FINISH, crashMarks, dronePos, dronesInWorld, nextOf, trail, worldOf } from './trace.js';
 
@@ -142,7 +143,7 @@ export class TopDown {
     const [W, H, dpr] = this.resize();
     if (!W || !H) return;
     const g = this.ctx;
-    g.fillStyle = '#0d0d0d';
+    g.fillStyle = INK.page;
     g.fillRect(0, 0, W, H);
     const w = this.app.selectedWorld();
     if (w) this.drawWorld(g, w, frame, W, H);
@@ -192,11 +193,11 @@ export class TopDown {
     g.strokeRect(X(sp[0]) - pr, Y(sp[2]) - pr, 2 * pr, 2 * pr);
     for (const gt of w.gates) this.gate(g, X, Y, cam.s, gt);
     if (cam.s > 1.2) {
-      g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+      g.font = FONT;
       g.textAlign = 'left';
       g.textBaseline = 'bottom';
       for (const gt of w.gates) {
-        g.fillStyle = 'rgba(13,13,13,0.7)';
+        g.fillStyle = INK.overlay;
         const label = gt.feature ? `${gt.index} ${gt.feature}` : String(gt.index);
         const x = X(gt.pos[0]) + 6, y = Y(gt.pos[2]) - 6;
         g.fillRect(x - 2, y - 13, g.measureText(label).width + 4, 14);
@@ -278,7 +279,7 @@ export class TopDown {
       }
       g.globalAlpha = 1;
       const hx = X(head[0]), hy = Y(head[2]);
-      g.fillStyle = '#0d0d0d';
+      g.fillStyle = INK.page;
       g.beginPath(); g.arc(hx, hy, 6, 0, 2 * Math.PI); g.fill();
       g.fillStyle = col;
       g.beginPath(); g.arc(hx, hy, 4.5, 0, 2 * Math.PI); g.fill();
@@ -291,6 +292,21 @@ export class TopDown {
     g.strokeStyle = color;
     g.lineWidth = 2.5;
     g.beginPath(); g.moveTo(x - r, y - r); g.lineTo(x + r, y + r); g.moveTo(x + r, y - r); g.lineTo(x - r, y + r); g.stroke();
+  }
+
+  /** Tooltip for the world cell under the pointer in the overview. */
+  hoverCellTip(frame) {
+    const tip = this.tip, k = this.hoverCell, w = this.app.worlds[k];
+    if (!this.mouse || !w) { tip.hidden = true; return; }
+    const lines = [[`World ${k}: ${w.style}`, true], [`${w.closed ? `circuit, ${w.laps} laps` : 'point to point'} · ${w.gates.length} gates`]];
+    const tl = frame.tallies?.[k];
+    if (tl) lines.push([`${tl.drones} drones · ${tl.gates} gates cleared · ${tl.crashes} crashes this trace`]);
+    lines.push(['Click to open this world']);
+    tip.replaceChildren(...lines.map(([text, strong]) => { const el = document.createElement(strong ? 'b' : 'div'); el.textContent = text; return el; }));
+    tip.hidden = false;
+    const r = this.canvas.getBoundingClientRect();
+    tip.style.left = `${Math.min(this.mouse.x + 14, r.width - 260)}px`;
+    tip.style.top = `${Math.max(this.mouse.y - 10, 0)}px`;
   }
 
   /** Tooltip for the drone or gate under the pointer. */
@@ -371,27 +387,36 @@ export class TopDown {
     const cw = Math.floor(W / cols), ch = Math.floor(H / rows);
     this.layout = { cols, rows, cw, ch };
     const cur = frame.chain[frame.chain.length - 1];
-    g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    g.font = FONT;
     g.textBaseline = 'top';
     worlds.forEach((w, k) => {
       const ox = (k % cols) * cw, oy = Math.floor(k / cols) * ch;
       const layer = this.cellLayer(w, cw, ch, dpr);
       g.drawImage(layer, ox, oy, cw, ch);
-      g.strokeStyle = k === this.hoverCell ? '#c3c2b7' : '#2c2c2a';
+      g.strokeStyle = k === this.hoverCell ? INK.text : INK.grid;
       g.lineWidth = 1;
       g.strokeRect(ox + 0.5, oy + 0.5, cw - 1, ch - 1);
-      g.fillStyle = '#ffffff';
+      // The name, then the tallies only in a form that fits beside it (the hover tip has them all).
+      const title = `${k} ${w.style}`;
+      const nameW = g.measureText(title).width;
+      g.save();
+      g.beginPath(); g.rect(ox, oy, cw, 18); g.clip();
+      g.fillStyle = INK.overlay;
+      g.fillRect(ox + 1, oy + 1, cw - 2, 17);
+      g.fillStyle = INK.strong;
       g.textAlign = 'left';
-      g.fillText(`${k} ${w.style}`, ox + 5, oy + 4);
+      g.fillText(title, ox + 5, oy + 4);
       const tl = frame.tallies?.[k];
       if (tl) {
         g.textAlign = 'right';
-        g.fillStyle = '#c3c2b7';
-        const long = `${tl.drones} drones · ${tl.gates} gates · ${tl.crashes} crashes`;
-        const fits = g.measureText(long).width + g.measureText(`${k} ${w.style}`).width + 24 < cw;
-        g.fillText(fits ? long : `${tl.drones} · ${tl.gates} g · ${tl.crashes} x`, ox + cw - 5, oy + 4);
+        g.fillStyle = INK.text;
+        const fit = [`${tl.drones} drones · ${tl.gates} gates · ${tl.crashes} crashes`, `${tl.gates} g · ${tl.crashes} x`]
+          .find((s) => g.measureText(s).width + nameW + 16 < cw);
+        if (fit) g.fillText(fit, ox + cw - 5, oy + 4);
       }
+      g.restore();
     });
+    this.hoverCellTip(frame);
     if (!cur) return;
     // Drones: a short trail and the head in their world's cell.
     const t = frame.t;

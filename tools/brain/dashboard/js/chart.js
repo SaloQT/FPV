@@ -1,9 +1,9 @@
 // One metric chart on a canvas: raw values faint, EMA-smoothed line on top, a shared x range (iterations) with Ctrl/Shift + wheel zoom, drag
 // pan and double-click reset, a crosshair synced across every chart, click to scrub, legend toggles and a log-y switch.
 import { SERIES_COLORS, decimate, fmt, logTicks, niceTicks } from './series.js';
+import { FONT, FONT_BOLD, INK } from './theme.js';
 
 const M = { l: 50, r: 10, t: 8, b: 20 };
-const INK = { grid: '#2c2c2a', axis: '#383835', muted: '#898781', text: '#c3c2b7', strong: '#ffffff', surface: '#1a1a19', cursor: '#c3c2b7' };
 
 export class Chart {
   /** app: { store, view: {x0,x1}|null, hover, scrub, setView(v), setHover(it, chart), scrubTo(it) }. */
@@ -153,7 +153,7 @@ export class Chart {
     const g = this.ctx;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
-    g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    g.font = FONT;
     const st = this.app.store;
     const smooth = st.weight > 0;
     const [x0, x1] = this.domain();
@@ -306,14 +306,14 @@ export class Chart {
     const st = this.app.store;
     const rows = [[`iteration ${st.iters.a[i]}`, null, null]];
     for (const it of shown) rows.push([fmt(st.value(it.s.key, i, smooth && it.s.smooth !== false), 4), it.s.label, it.color]);
-    g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    g.font = FONT;
     const widths = rows.map(([v, l]) => g.measureText(v).width + (l ? g.measureText(l).width + 26 : 0));
     const w = Math.max(...widths) + 16, h = rows.length * 16 + 8;
     let x = this.mouse.x + 12, y = this.mouse.y - h - 8;
     if (x + w > W - 2) x = this.mouse.x - w - 12;
     if (y < 2) y = Math.min(this.mouse.y + 12, H - h - 2);
-    g.fillStyle = 'rgba(13,13,13,0.94)';
-    g.strokeStyle = 'rgba(255,255,255,0.10)';
+    g.fillStyle = INK.overlay;
+    g.strokeStyle = INK.overlayEdge;
     g.beginPath(); g.roundRect(x, y, w, h, 6); g.fill(); g.stroke();
     g.textBaseline = 'middle';
     g.textAlign = 'left';
@@ -323,10 +323,10 @@ export class Chart {
       g.strokeStyle = col; g.lineWidth = 2;
       g.beginPath(); g.moveTo(x + 8, yy); g.lineTo(x + 18, yy); g.stroke();
       g.fillStyle = INK.strong;
-      g.font = 'bold 11px system-ui, -apple-system, "Segoe UI", sans-serif';
+      g.font = FONT_BOLD;
       g.fillText(v, x + 24, yy);
       const vw = g.measureText(v).width;
-      g.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+      g.font = FONT;
       g.fillStyle = INK.text;
       g.fillText(l, x + 30 + vw, yy);
     });

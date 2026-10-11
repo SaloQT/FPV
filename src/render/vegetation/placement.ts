@@ -2,6 +2,7 @@ import type { RenderQuality, TerrainData, TrackData } from '../../contracts';
 import { obstacleKeepOuts, tunnelKeepOuts } from '../../world/track/kindGeometry';
 import { PathIndex } from '../../world/track/pathIndex';
 import { deriveSeed } from '../../world/track/rng';
+import { TREE_COLLIDER_RANGE } from './colliders';
 import { hash2, smoothstep } from './noise';
 import { MAX_TREE_SCALE, MIN_TREE_SCALE, PlacementRules, type Pick } from './placementRules';
 import { COARSE, buildRegion, type Region } from './region';
@@ -9,7 +10,7 @@ import { rockAssets } from './rockGen';
 import { KIND } from './meshBuilder';
 import { SpatialHash } from './spatialHash';
 import { TerrainFields } from './terrainFields';
-import { VARIANT_DEFS, VARIANTS_OF, variantPlan } from './variants';
+import { VARIANT_DEFS, VARIANTS_OF, layoutCrown, variantPlan } from './variants';
 
 export interface PlacementLimits {
   /** Trees and bushes together. */
@@ -17,12 +18,18 @@ export interface PlacementLimits {
   rocks: number;
 }
 
-/** Instance budgets per quality tier; the smaller tiers are prefixes of the larger ones (the walk is nearest-track first). */
+const ULTRA_LIMITS: PlacementLimits = { plants: 40000, rocks: 4000 };
+
+/**
+ * Instance budgets per quality tier; the smaller tiers are prefixes of the larger ones (the walk is nearest-track first). Extreme always
+ * equals ultra: placement and colliders are built from the ultra limits, and trained brains and saved tracks depend on them.
+ */
 export const TIER_LIMITS: Readonly<Record<RenderQuality, PlacementLimits>> = {
   low: { plants: 16000, rocks: 2000 },
   medium: { plants: 22000, rocks: 2600 },
   high: { plants: 30000, rocks: 3200 },
-  ultra: { plants: 40000, rocks: 4000 },
+  ultra: ULTRA_LIMITS,
+  extreme: ULTRA_LIMITS,
 };
 
 /** Struct-of-arrays instance list; `variant` indexes VARIANT_DEFS. */
@@ -68,6 +75,8 @@ const PLANT_PER_COARSE = COARSE / PLANT_CELL;
 const ROCK_PER_COARSE = COARSE / ROCK_CELL;
 /** Fraction of candidates kept right at the racing line, rising to 1 at CORRIDOR_WIDTH. */
 const CORRIDOR_DENSITY = 0.55;
+/** Share of trees beyond the collider range that stand dead, on top of the snags of closed stands (placementRules.ts): 5 to 8 % in all. */
+const EXTRA_SNAGS = 0.05;
 const CORRIDOR_WIDTH = 70;
 const TREE_TRUNK = 0.3;
 /** Unit colour multiplier (decoded as value * 2). */
@@ -101,6 +110,7 @@ function push(s: InstanceSet, x: number, y: number, z: number, p: Pick, nrm: num
 function buildBlockers(track: TrackData | null, x0: number, z0: number, x1: number, z1: number): SpatialHash {
   const h = new SpatialHash(x0, z0, x1, z1, 32, 64);
   if (!track) return h;
+  // Keep the graded park interior and every attraction envelope free of unrelated terrain scatter.
   for (const g of track.gates) {
     h.add(g.pos[0], g.pos[2], 0.5 * Math.hypot(g.width, g.height) + 2, 0);
     if (g.kind === 'tunnel') for (const d of tunnelKeepOuts(g)) h.add(d.x, d.z, d.r, 0);
@@ -112,7 +122,7 @@ function buildBlockers(track: TrackData | null, x0: number, z0: number, x1: numb
 }
 
 interface Tables {
-  /** Horizontal crown radius (m at scale 1) per plant variant, so trees keep their branches out of gates. */
+  /** Horizontal crown radius (m at scale 1) per plant variant, so trees keep their branches out of gates (the settled layout's, layoutCrown). */
   crown: number[];
   /** Height in metres of each rock mesh at scale 1. */
   rockHeight: number[];
@@ -125,10 +135,10 @@ let tables: Tables | null = null;
 
 function lookup(): Tables {
   tables ??= {
-    crown: VARIANT_DEFS.map((_, v) => { const p = variantPlan(v); return p ? Math.max(p.crownR[0], p.crownR[2]) : 0; }),
+    crown: VARIANT_DEFS.map((_, v) => layoutCrown(v)?.crown ?? 0),
     rockHeight: VARIANT_DEFS.map((d) => (d.rock >= 0 ? rockAssets()[d.rock].height : 0)),
-    trunk: VARIANT_DEFS.map((_, v) => variantPlan(v)?.trunkRadius ?? 0),
-    top: VARIANT_DEFS.map((_, v) => { const p = variantPlan(v); return p ? (p.foliage === KIND.leaf ? p.crownC[1] + p.crownR[1] - 0.8 : p.height) : 0; }),
+    trunk: VARIANT_DEFS.map((_, v) => layoutCrown(v)?.trunk ?? 0),
+    top: VARIANT_DEFS.map((_, v) => layoutCrown(v)?.top ?? 0),
   };
   return tables;
 }
@@ -187,6 +197,7 @@ class Placer {
         const x = (cx + 0.1 + 0.8 * hash2(cx, cz, this.sJit + 1)) * ROCK_CELL, z = (cz + 0.1 + 0.8 * hash2(cx, cz, this.sJit + 2)) * ROCK_CELL;
         if (!f.inside(x, z, 6) || !this.rules.rock(cx, cz, x, z, pick)) continue;
         const rad = pick.scale;
+        if (this.track?.parkMap && Math.hypot(x, z) < this.track.parkMap.radius + rad) continue;
         const d = this.pathDistance(x, z, cellDist);
         if (d < ROCK_PATH_CLEARANCE + rad) continue;
         if (this.blockers.overlaps(x, z, rad, 0.5) || this.rockHash.conflicts(x, z, rad, 0, 1.3, 1.3)) continue;
@@ -240,6 +251,7 @@ class Placer {
         const cx = ci * PLANT_PER_COARSE + (k % PLANT_PER_COARSE), cz = cj * PLANT_PER_COARSE + Math.floor(k / PLANT_PER_COARSE);
         const x = (cx + 0.1 + 0.8 * hash2(cx, cz, this.sJit)) * PLANT_CELL, z = (cz + 0.1 + 0.8 * hash2(cx, cz, this.sJit + 7)) * PLANT_CELL;
         if (!f.inside(x, z, 6)) continue;
+        if (this.track?.parkMap && Math.hypot(x, z) < this.track.parkMap.radius + 10) continue;
         const kind = this.rules.plant(cx, cz, x, z, pick);
         if (kind === 0) continue;
         const d = this.pathDistance(x, z, cellDist);
@@ -251,7 +263,18 @@ class Placer {
         if (this.plantHash.conflicts(x, z, def.spacing * scale, group, 1, 0.6)) continue;
         const nrm = packNormal(f.gx, f.gz);
         ring[out.count] = cellDist;
-        push(out, x, f.height(x, z) - 0.05 * scale, z, pick, nrm, d);
+        // Away from the race line, where trees have no collider, the canopy gets its storeys (a suppressed tree a storey down, a conifer rising
+        // as a spire: placementRules.ts canopyLayer), and more trees have died and stand as snags, as in an unmanaged forest. Each tree keeps
+        // the spot and spacing of the tree it would have been, so nothing else moves and no collider changes; a snag that needs more room than
+        // the live tree had (a dead birch would) is left alive.
+        if (group === 0 && d > TREE_COLLIDER_RANGE + 5) {
+          pick.scale = Math.min(Math.max(scale * (pick.layer ?? 1), MIN_TREE_SCALE), MAX_TREE_SCALE);
+          if (!(VARIANTS_OF.snag as readonly number[]).includes(pick.variant) && hash2(cx, cz, this.sJit + 11) < EXTRA_SNAGS) {
+            const snag = VARIANTS_OF.snag[variantPlan(pick.variant)?.foliage === KIND.needle ? 0 : 1];
+            if (VARIANT_DEFS[snag].spacing <= def.spacing) { pick.variant = snag; pick.scale = scale; }
+          }
+        }
+        push(out, x, f.height(x, z) - 0.05 * pick.scale, z, pick, nrm, d);
         this.plantHash.add(x, z, def.spacing * scale, group);
       }
     }
@@ -265,6 +288,40 @@ class Placer {
  * density rules, walked from the racing line outwards so `limits` keeps the nearest ground and smaller tiers are prefixes.
  */
 export function placeVegetation(terrain: TerrainData, track: TrackData | null, limits: PlacementLimits): VegPlacement {
+  // The last few placements, by the content of what they were placed on: a vegetation module set up again on the same world (a tier
+  // switch, a render-server module swap) gets the same result back instead of placing again. Callers only read it.
+  const key = placementKey(terrain, track, limits);
+  const hit = recent.find((r) => r.key === key);
+  if (hit) return hit.place;
+  const place = placeFresh(terrain, track, limits);
+  recent.unshift({ key, place });
+  recent.length = Math.min(recent.length, 3);
+  return place;
+}
+
+const recent: { key: string; place: VegPlacement }[] = [];
+
+/**
+ * Everything placement reads, as a key: every typed array in the terrain (heights, maps) by an FNV-1a hash of its bytes, the rest of the
+ * terrain, the track and the limits as JSON.
+ */
+function placementKey(terrain: TerrainData, track: TrackData | null, limits: PlacementLimits): string {
+  const arrays: string[] = [];
+  const hashArray = (v: ArrayBufferView): string => {
+    const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength), words = new Uint32Array(v.buffer, v.byteOffset, v.byteLength >> 2);
+    let a = 0x811c9dc5, b = 0x9747b28c;
+    for (let i = 0; i < words.length; i++) { a = Math.imul(a ^ words[i], 0x01000193) >>> 0; b = Math.imul(b ^ words[i], 0x01000197) >>> 0; }
+    for (let i = words.length * 4; i < bytes.length; i++) a = Math.imul(a ^ bytes[i], 0x01000193) >>> 0;
+    return `${v.constructor.name}:${v.byteLength}:${a}:${b}`;
+  };
+  const rest = JSON.stringify(terrain, (_, v) => {
+    if (ArrayBuffer.isView(v)) { arrays.push(hashArray(v)); return `#${arrays.length - 1}`; }
+    return v;
+  });
+  return `${rest}|${arrays.join(',')}|${JSON.stringify([limits, track], (_, v) => (ArrayBuffer.isView(v) ? hashArray(v) : v))}`;
+}
+
+function placeFresh(terrain: TerrainData, track: TrackData | null, limits: PlacementLimits): VegPlacement {
   const e = (terrain.resolution - 1) * terrain.cellSize;
   const [ox, oz] = terrain.origin;
   const region = buildRegion(track, [ox + e / 2, oz + e / 2], REGION_RADIUS, [ox, oz, ox + e, oz + e], regionSeed(terrain));

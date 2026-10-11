@@ -8,8 +8,8 @@ const UP: Vec3 = [0, 1, 0];
 const GOLDEN = 2.399963;
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
-/** The end of a branch: a foliage cluster goes here. `order` is the branching order of the limb that ends in it. */
-export interface Tip { p: Vec3; r: number; order: number }
+/** The end of a branch: a foliage cluster goes here. `order` is the branching order of the limb that ends in it, `limb` that limb. */
+export interface Tip { p: Vec3; r: number; order: number; limb?: Limb }
 
 /** How the branches of one order sprout from their parent. */
 export interface Level {
@@ -77,7 +77,7 @@ export interface SproutOptions {
  */
 export function sprout(rng: Rng, parent: Limb, o: SproutOptions): void {
   const lv = o.levels[parent.order - o.order0];
-  if (parent.order >= o.tipFrom) o.tips.push({ p: parent.pts[parent.pts.length - 1], r: o.tipRadius[parent.order] ?? 0.5, order: parent.order });
+  if (parent.order >= o.tipFrom) o.tips.push({ p: parent.pts[parent.pts.length - 1], r: o.tipRadius[parent.order] ?? 0.5, order: parent.order, limb: parent });
   if (!lv) return;
   const len = limbLength(parent);
   const az0 = rng.range(0, TAU);
@@ -91,8 +91,49 @@ export function sprout(rng: Rng, parent: Limb, o: SproutOptions): void {
     const dir = norm(add(mul(tg, Math.cos(el)), mul(perp, Math.sin(el))));
     const length = Math.max(0.25, len * rng.range(lv.length[0], lv.length[1]) * (1 - 0.35 * s));
     const pts = growPath(rng, base, dir, length, lv.segs, lv.bend, lv.wobble);
-    const limb: Limb = { pts, radii: taperRadii(Math.max(radiusAt(parent, s) * lv.radius, lv.tipRadius), lv.tipRadius, pts.length, 0.85), order: parent.order + 1 };
+    // A visibility floor must never make a child thicker than the parent tip it grows from.
+    const radius = radiusAt(parent, s) * Math.min(lv.radius, 0.9), tipRadius = Math.min(lv.tipRadius, radius * 0.8);
+    const limb: Limb = { pts, radii: taperRadii(radius, tipRadius, pts.length, 0.85), order: parent.order + 1, parent };
     o.limbs.push(limb);
     sprout(rng, limb, o);
   }
 }
+
+/** Whether `limb` is `root` or grows from it. */
+function descends(limb: Limb | undefined, root: Limb): boolean {
+  for (let l = limb; l; l = l.parent) if (l === root) return true;
+  return false;
+}
+
+/**
+ * Kills a limb and everything that grows from it, as on an old or crowded tree: it keeps its wood (grey and bare in the shader), loses its
+ * finer twigs (orders above `keepOrder`) and every leaf tip, and when `broken` is below 1 it has snapped off at that fraction of its length,
+ * taking whatever grew beyond the break with it.
+ */
+export function killLimb(limbs: Limb[], tips: Tip[], limb: Limb, keepOrder: number, broken = 1): void {
+  const gone = new Set<Limb>();
+  if (broken < 1) {
+    const n = Math.max(2, Math.round(limb.pts.length * broken));
+    limb.pts.length = n; limb.radii.length = n;
+    // The snapped end is ragged and narrower than the wood below it.
+    limb.radii[n - 1] *= 0.45;
+    for (const l of limbs) if (l.parent === limb && nearestIndex(limb, l.pts[0]) >= n - 1) gone.add(l);
+  }
+  for (let i = limbs.length - 1; i >= 0; i--) {
+    const l = limbs[i];
+    if (!descends(l, limb)) continue;
+    let fallen = false;
+    for (const g of gone) if (descends(l, g)) fallen = true;
+    if (fallen || (l.order > keepOrder && l !== limb)) { gone.add(l); limbs.splice(i, 1); }
+    else l.dead = true;
+  }
+  for (let i = tips.length - 1; i >= 0; i--) if (descends(tips[i].limb, limb)) tips.splice(i, 1);
+}
+
+/** Index of the point of `limb` nearest `p`. */
+function nearestIndex(limb: Limb, p: Vec3): number {
+  let best = 0, bestD = Infinity;
+  limb.pts.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]); if (d < bestD) { bestD = d; best = i; } });
+  return best;
+}
+

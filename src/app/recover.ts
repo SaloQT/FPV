@@ -11,6 +11,7 @@ import { Renderer } from '../render/renderer';
 import { createRTModule } from '../render/rt';
 import { createTerrainModule } from '../render/terrain';
 import { createVegetationModule } from '../render/vegetation';
+import { createParkModule } from '../render/park';
 import { failApp } from './failure';
 import { SETTLE_RENDERS } from './frame';
 import type { Loop } from './loop';
@@ -20,8 +21,8 @@ import { advanceFrames } from './testHooks';
 
 /** The app's render modules: the handles the app talks to, and the list in the order the frame graph runs them. */
 export function createAppModules(): { mods: AppMods; list: RenderModule[] } {
-  const mods: AppMods = { atmosphere: createAtmosphereModule(), objects: createObjectsModule(), vegetation: createVegetationModule() };
-  return { mods, list: [mods.atmosphere, createTerrainModule(), mods.vegetation, mods.objects, createRTModule()] };
+  const mods: AppMods = { atmosphere: createAtmosphereModule(), objects: createObjectsModule(), vegetation: createVegetationModule(), park: createParkModule() };
+  return { mods, list: [mods.atmosphere, createTerrainModule(), mods.vegetation, mods.objects, mods.park, createRTModule()] };
 }
 
 /**
@@ -44,7 +45,7 @@ export async function rebuildRenderer(ctx: AppCtx): Promise<Renderer> {
     Object.assign(ctx.mods, mods);
     (ctx as { renderer: Renderer }).renderer = renderer;
     const w = ctx.world;
-    renderer.setScene({ terrain: w.terrain, sampler: w.sampler, track: w.track });
+    renderer.setScene({ terrain: w.terrain, sampler: w.sampler, track: w.track, park: ctx.park });
     applyWind(ctx);
     refreshColliders(ctx);
     // Forces the module setters (quad visibility, active gate) to run again on the fresh modules.

@@ -11,6 +11,20 @@ export const NIGHT_TOTAL_EXPOSURE = 2 ** (EXPOSURE_TUNING.maxGainEv + DAY_TOTAL_
 /** Share of the emissive strength a glow ribbon radiates (a stand-in for the bloom of a real lens). */
 export const GLOW_EMISSION_SHARE = 0.35;
 
+/**
+ * Camera distance (metres) over which a gate's glow ribbons fade in: gone at the near end, full from the far end. A ribbon a metre from
+ * the lens would otherwise sweep across most of the screen at full strength, and at night that whites out the frame as the drone flies
+ * through the gate; the LED strip itself stays lit.
+ */
+export const GLOW_NEAR_FADE_M = [1, 5] as const;
+
+/** How much of a glow ribbon shows at this camera distance (0 inside the near end of GLOW_NEAR_FADE_M, 1 beyond its far end). */
+export function glowNearFade(dist: number): number {
+  const [near, far] = GLOW_NEAR_FADE_M;
+  const t = Math.min(Math.max((dist - near) / (far - near), 0), 1);
+  return t * t * (3 - 2 * t);
+}
+
 /** Display level (after exposure, 1 is the camera's clipping point) the core of a glow may reach for an LED of this emissive strength. */
 export function ledDisplay(strength: number): number {
   return Math.min(Math.max(strength * 4, 0.15), 2.2);

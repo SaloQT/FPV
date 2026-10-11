@@ -1,12 +1,57 @@
 import { describe, expect, it } from 'vitest';
+import { capsuleRegressionCases } from './capsuleFixtures';
 import type { Vec3 } from '../../contracts';
 import type { RTMaterial, RTPrimitive } from '../contracts';
 import { fromHalf } from '../half';
 import { BvhBuilder, NODE_WORDS, NO_ROOT, morton3, type BvhTarget } from './bvh';
 import { bruteForce, intersectPrim, randomUnit, traverseBvh } from './cpuReference';
-import { PRIM_WORDS, PrimKind, primBounds } from './prims';
+import { PRIM_WORDS, PrimKind, primBounds, packPrim } from './prims';
 
 const mat: RTMaterial = { albedo: [0.2, 0.4, 0.8], emissive: [0.5, 0.25, 2], roughness: 0.5, metalness: 1 };
+
+describe('park analytic primitives and moving BVHs', () => {
+  it('retains in-place albedo, emission and canopy changes while refitting dynamic primitives', () => {
+    const material: RTMaterial = { albedo: [0.08, 0.18, 0.06], roughness: 0.95, metalness: 0 };
+    const prim: RTPrimitive = { type: 'sphere', center: [0, 0, 0], radius: 1, material }, cached = target(1), direct = target(1);
+    const builder = new BvhBuilder(); builder.build([prim], cached, 0, 0);
+    const check = () => { builder.refit([prim]); packPrim(direct.primsF, direct.primsU, 0, prim); expect(cached.primsU).toEqual(direct.primsU); };
+    check(); check(); expect(cached.primsU[15]).toBe(1);
+    prim.center[0] = 12; material.albedo[0] = 0.35; check(); expect(cached.primsU[15]).toBe(0);
+    material.albedo[0] = 0.08; material.emissive = [0, 0, 0]; check(); expect(cached.primsU[15]).toBe(0);
+    material.emissive[1] = 0.25; material.metalness = 0.7; material.roughness = 0.15; check();
+    material.emissive = undefined; check(); material.albedo[2] = 0.7; check();
+  });
+  it('intersects cone sides, base, apex and rotated shells while ignoring inside rays', () => {
+    const cone: RTPrimitive = { type: 'cone', center: [0, 0, 0], half: [2, 2, 2], rot: [0, 0, 0, 1], material: mat };
+    expect(intersectPrim(cone, [3, 0, 0], [-1, 0, 0], 20)).toBeCloseTo(2);
+    expect(intersectPrim(cone, [0, 4, 0], [0, -1, 0], 20)).toBeCloseTo(2);
+    expect(intersectPrim(cone, [0, -5, 0], [0, 1, 0], 20)).toBeCloseTo(3);
+    expect(intersectPrim(cone, [1.5, 4, 1.5], [0, -1, 0], 20)).toBe(Infinity);
+    expect(intersectPrim(cone, [0, 0, 0], [1, 0, 0], 20)).toBe(Infinity);
+    cone.rot = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+    expect(intersectPrim(cone, [-5, 0, 0], [1, 0, 0], 20)).toBeCloseTo(3);
+    const t = target(1); new BvhBuilder().build([cone], t, 0, 0);
+    expect(t.primsU[3]).toBe(PrimKind.Cone);
+  });
+  it('intersects the curved side and end caps without hitting a cylinder bounding-box corner', () => {
+    const cylinder: RTPrimitive = { type: 'cylinder', center: [0, 0, 0], half: [1, 2, 1], rot: [0, 0, 0, 1], material: mat };
+    expect(intersectPrim(cylinder, [3, 0, 0], [-1, 0, 0], 20)).toBeCloseTo(2);
+    expect(intersectPrim(cylinder, [0, 5, 0], [0, -1, 0], 20)).toBeCloseTo(3);
+    expect(intersectPrim(cylinder, [0.9, 5, 0.9], [0, -1, 0], 20)).toBe(Infinity);
+    expect(intersectPrim(cylinder, [0, 0, 0], [1, 0, 0], 20)).toBe(Infinity);
+    const ellipsoid: RTPrimitive = { ...cylinder, type: 'ellipsoid', half: [1, 2, 3] };
+    expect(intersectPrim(ellipsoid, [0, 0, 5], [0, 0, -1], 20)).toBeCloseTo(2);
+  });
+  it('refits every one of 1000 movers and preserves primitive identities', () => {
+    const rand = rng(985), prims = scene(1000, rand), t = target(1000), builder = new BvhBuilder();
+    const original = builder.build(prims, t, 0, 0), order = [...builder.sortedOrder];
+    for (const p of prims) { if (p.type === 'capsule') { p.a[0] += 80; p.b[0] += 80; } else p.center[0] += 80; }
+    const next = builder.refit(prims); expect(next).toEqual(original); expect([...builder.sortedOrder]).toEqual(order);
+    for (let i = 0; i < 250; i++) { const o: Vec3 = [rand() * 120 + 20, rand() * 30, rand() * 120 - 60], d = randomUnit(rand);
+      expect(traverseBvh(t.nodesF, t.nodesU, next.root, prims, builder.sortedOrder, 0, o, d, 500)).toEqual(bruteForce(prims, o, d, 500));
+    }
+  });
+});
 
 function rng(seed: number): () => number {
   let s = seed >>> 0;
@@ -155,6 +200,13 @@ describe('BvhBuilder', () => {
 
 describe('cpu intersections', () => {
   const d: Vec3 = [0, 0, 1];
+  it('preserves thin capsule entries, both axial caps, misses and interior rejection', () => {
+    for (const probe of capsuleRegressionCases()) {
+      const t = intersectPrim(probe.primitive, probe.origin, probe.direction, 400);
+      expect(Number.isFinite(t)).toBe(probe.hit);
+      if (probe.distance !== undefined) expect(t).toBeCloseTo(probe.distance, 9);
+    }
+  });
   it('sphere, capsule and obb report the entry distance and ignore rays starting inside', () => {
     expect(intersectPrim({ type: 'sphere', center: [0, 0, 10], radius: 2, material: mat }, [0, 0, 0], d, 100)).toBeCloseTo(8, 9);
     expect(intersectPrim({ type: 'sphere', center: [0, 0, 0], radius: 2, material: mat }, [0, 0, 0], d, 100)).toBe(Infinity);

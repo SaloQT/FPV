@@ -11,7 +11,7 @@ function setup() {
   const writes: { label: string; data: Float32Array }[] = [];
   const object = (desc: { label?: string } = {}) => ({ ...desc, destroy() {} });
   const device = {
-    createBindGroupLayout: object, createPipelineLayout: object, createRenderPipeline: object, createBuffer: object, createBindGroup: object,
+    createBindGroupLayout: object, createPipelineLayout: object, createRenderPipeline: object, createRenderPipelineAsync: async (desc: { label?: string }) => object(desc), createBuffer: object, createBindGroup: object,
     queue: { writeBuffer(buffer: { label: string }, _offset: number, data: Float32Array) { writes.push({ label: buffer.label, data: new Float32Array(data) }); } },
   } as unknown as GPUDevice;
   const rc = { device, frame: { layout: {} }, world: { layout: {} }, module: () => ({}), rt: { remove() {}, setStatic() {} } } as unknown as RenderContext;
